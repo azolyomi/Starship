@@ -1,26 +1,26 @@
 import discord
+from discord.ext import commands
 import logging
 import os
+from database import db
+from dotenv import load_dotenv
 
 # load bot token and other .env data
-from dotenv import load_dotenv
 load_dotenv()
 
-BOT_TOKEN = os.getenv('BOT_TOKEN')
-
+# logging setup
 logging.basicConfig(level=logging.INFO)
-client = discord.Client()
 
-@client.event
+# create bot
+BOT_TOKEN = os.getenv('BOT_TOKEN')
+bot = commands.Bot(command_prefix='.')
+
+# cog registration
+bot.load_extension("cogs.help")
+bot.load_extension("cogs.test")
+
+@bot.event
 async def on_ready():
-    print('We have logged in as {0.user}'.format(client))
+    print('We have logged in as {0.user}'.format(bot))
 
-@client.event
-async def on_message(message):
-    if message.author == client.user:
-        return
-
-    if message.content.startswith('$hello'):
-        await message.channel.send('Hello!')
-
-client.run(BOT_TOKEN)
+bot.run(BOT_TOKEN)
