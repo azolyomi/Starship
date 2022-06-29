@@ -5,4 +5,5 @@ load_dotenv()
 
 connectionString = os.getenv('DB_CONNECT_STRING')
 client = pymongo.MongoClient(connectionString)
-db = client.GalaxyRaiderDB
+db = client.StarshipDB
+ServerConfigs = {}
