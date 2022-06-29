@@ -1,12 +1,11 @@
 DEFAULT_VCLESS_CATEGORIES = ["oryx3", "shatters", "void", "cult", "fungal", "nest", "realmclear", "misc"]
 
-
 DEFAULT_SERVERCONFIG = {
         "guildID": "",
         "modroles": [],
         "adminroles": [],
         "staffroles": [],
-        "logchannel_id": "",
+        "log_channel_id": "",
         "raiding": {
             "vcless": {
                 "control": {

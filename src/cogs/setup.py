@@ -2,7 +2,8 @@ import discord
 import asyncio
 from discord.ext import commands
 from discord.ext.commands import has_permissions, MissingPermissions
-from database import db
+from database import db, ServerConfigs
+from permissions import is_urul
 
 from emoji import starship
 
@@ -15,6 +16,26 @@ class Setup(commands.Cog):
     """A cog with one command for speedy setup of the bot."""
     def __init__(self, bot):
         self.bot = bot
+
+    @commands.command(pass_context=True, aliases=["reconfig"])
+    @commands.check(is_urul)
+    async def reconfigure(self, ctx):
+        if (ctx.guild.id in ServerConfigs):
+            # not been cleared already
+            for channel in ctx.guild.channels:
+                if (channel.id == ctx.message.channel.id): continue
+                await channel.delete()
+            await ctx.send("All channels deleted.")
+            for role in ctx.guild.roles:
+                try:
+                    await role.delete()
+                except Exception as e:
+                    print(e)
+            await ctx.send("All roles deleted.")
+            db.ServerConfigs.delete_one({ "guildID": ctx.guild.id })
+            del ServerConfigs[ctx.guild.id]
+        # been cleared already or never existed
+        await self.configure(ctx)
     
     @commands.command(pass_context=True, aliases=['setup', 'config'])
     @commands.has_permissions(administrator=True)
@@ -39,7 +60,7 @@ class Setup(commands.Cog):
         await admin_role.edit(color=discord.Color.orange())
         await ctx.message.author.add_roles(admin_role)
         await ctx.send("Administrative role created.")
-        await ctx.send(embed=discord.Embed(title="Warning:", description="The {} role will be added to the database as an \`admin\` role. All future commands with the Starship bot will be role-restricted.".format(admin_role.mention), color=discord.Color.red()))
+        await ctx.send(embed=discord.Embed(title="Warning:", description="The {} role will be added to the database as an `admin` role. All future commands with the Starship bot will be role-restricted.".format(admin_role.mention), color=discord.Color.red()))
 
         # create log channel
         await ctx.send("Creating log channel...")

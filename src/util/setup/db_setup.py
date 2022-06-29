@@ -8,7 +8,7 @@ async def initialize_db_serverconfig(ctx, control_channel_id, raiding_channel_id
     data["adminroles"].append(admin_role_id)
     data["modroles"].append(admin_role_id)
     data["staffroles"].append(admin_role_id)
-    data["logchannel_id"] = log_channel_id
+    data["log_channel_id"] = log_channel_id
     data["raiding"]["vcless"]["control"]["channel_id"] = control_channel_id
     for raidType in raiding_channel_ids.keys():
         data["raiding"]["vcless"]["categories"][raidType]["channel_id"] = raiding_channel_ids[raidType]
