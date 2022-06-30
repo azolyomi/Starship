@@ -1,5 +1,4 @@
 DEFAULT_VCLESS_CATEGORIES = ["oryx3", "shatters", "void", "cult", "fungal", "nest", "realmclear", "misc"]
-
 DEFAULT_SERVERCONFIG = {
         "guildID": "",
         "modroles": [],

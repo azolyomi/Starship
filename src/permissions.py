@@ -1,8 +1,9 @@
 import discord
 from database import ServerConfigs
+from util.constants import THEURUL_USER_ID
 
 def is_urul(ctx):
-    return ctx.author.id == 942320785287184464
+    return ctx.author.id == THEURUL_USER_ID
 
 def has_config(ctx):
     return (ServerConfigs[ctx.guild.id] is not None)
