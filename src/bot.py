@@ -46,14 +46,10 @@ async def on_command_error(ctx, error):
 
     if isinstance(error, commands.NoPrivateMessage):
         await reply(ERROR_NOT_IN_GUILD)
-    elif isinstance(error, errors.NotAdminError):
-        await reply(errors.NotAdminError.message)
-    elif isinstance(error, errors.NotModError):
-        await reply(errors.NotModError.message)
-    elif isinstance(error, errors.NotStaffError):
-        await reply(errors.NotStaffError.message)
+    elif isinstance(error, errors.StarshipRoleMissingError):
+        await reply(error.message)
     elif isinstance(error, errors.StarshipPermissionsError):
-        await reply(errors.StarshipPermissionsError.message)
+        await reply(error.message)
     elif isinstance(error, commands.MissingPermissions):
         await reply(ERROR_NO_PERMISSION)
     elif (isinstance(error, commands.MissingRequiredArgument)):

@@ -18,21 +18,21 @@ def has_admin_role(ctx):
     for role in ctx.author.roles:
         if role.id in ServerConfigs[ctx.guild.id]['adminroles']:
             return True
-    raise errors.NotAdminError()
+    raise errors.StarshipRoleMissingError("admin")
 
 def has_mod_role(ctx):
     if not has_config(ctx): return False
     for role in ctx.author.roles:
         if role.id in ServerConfigs[ctx.guild.id]['modroles']:
             return True
-    raise errors.NotModError()
+    raise errors.StarshipRoleMissingError("mod")
 
 def has_staff_role(ctx):
     if not has_config(ctx): return False
     for role in ctx.author.roles:
         if role.id in ServerConfigs[ctx.guild.id]['staffroles']:
             return True
-    raise errors.NotStaffError()
+    raise errors.StarshipRoleMissingError("staff")
 
 # def has_vcless_organizer_role(ctx, member, category):
 #     if not has_config(ctx): return False
