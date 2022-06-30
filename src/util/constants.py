@@ -1,4 +1,3 @@
 THEURUL_USER_ID = 942320785287184464
-
 PREFIX="!"
 GLOBAL_ROLE_TYPES = ["staff", "mod", "admin"]

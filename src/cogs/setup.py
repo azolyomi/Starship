@@ -1,16 +1,13 @@
 import discord
-import asyncio
+from util import logger
 from discord.ext import commands
-from discord.ext.commands import has_permissions, MissingPermissions
 from database import db, ServerConfigs
-from permissions import is_urul
+from permissions.checks import is_urul
 
 from emoji import starship
 
 from util.setup.db_setup import initialize_db_serverconfig
 from util.setup.vcless_setup import create_vcless_channels_interactive
-
-from emoji import a, b
 
 class Setup(commands.Cog):
     """A cog with one command for speedy setup of the bot."""
@@ -18,8 +15,8 @@ class Setup(commands.Cog):
         self.bot = bot
 
     @commands.command(pass_context=True, aliases=["reconfig"])
-    @commands.guild_only()
     @commands.check(is_urul)
+    @commands.guild_only()
     async def reconfigure(self, ctx):
         if (ctx.guild.id in ServerConfigs):
             # not been cleared already
@@ -39,8 +36,8 @@ class Setup(commands.Cog):
         await self.configure(ctx)
     
     @commands.command(pass_context=True, aliases=['setup', 'config'])
-    @commands.guild_only()
     @commands.has_permissions(administrator=True)
+    @commands.guild_only()
     async def configure(self, ctx):
         """Begin configuration process for the bot."""
         config = db.ServerConfigs.find_one({ "guildID": ctx.guild.id })
@@ -74,13 +71,6 @@ class Setup(commands.Cog):
         await initialize_db_serverconfig(ctx, control_channel_id, raiding_channel_ids, admin_role_id = admin_role.id, log_channel_id = log_channel.id)
         await ctx.send("Database entry created.")
 
-
-    @configure.error
-    async def configure_error(self, ctx, error):
-        if isinstance(error, MissingPermissions):
-            await ctx.send("Sorry {}, you do not have permissions to do that!".format(ctx.message.author))
-        else:
-            print(error)
 
 def setup(bot):
     bot.add_cog(Setup(bot))
