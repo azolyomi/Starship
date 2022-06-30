@@ -17,6 +17,7 @@ bot = commands.Bot(command_prefix='!')
 
 # cog registration
 bot.load_extension("cogs.help")
+bot.load_extension("cogs.ping")
 bot.load_extension("cogs.setup")
 bot.load_extension("cogs.config")
 
