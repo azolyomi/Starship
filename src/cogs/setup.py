@@ -18,6 +18,7 @@ class Setup(commands.Cog):
         self.bot = bot
 
     @commands.command(pass_context=True, aliases=["reconfig"])
+    @commands.guild_only()
     @commands.check(is_urul)
     async def reconfigure(self, ctx):
         if (ctx.guild.id in ServerConfigs):
@@ -38,8 +39,8 @@ class Setup(commands.Cog):
         await self.configure(ctx)
     
     @commands.command(pass_context=True, aliases=['setup', 'config'])
-    @commands.has_permissions(administrator=True)
     @commands.guild_only()
+    @commands.has_permissions(administrator=True)
     async def configure(self, ctx):
         """Begin configuration process for the bot."""
         config = db.ServerConfigs.find_one({ "guildID": ctx.guild.id })
