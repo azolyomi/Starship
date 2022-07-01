@@ -9,7 +9,7 @@ ca-certificates=2022.6.15=h4653dfc_0
 chardet=4.0.0=py310hbe9552e_3
 click=8.1.3=py310hbe9552e_0
 discord-pretty-help=1.3.4=pypi_0
-discord.py=1.7.3=pyhd8ed1ab_0
+discord-py=2.0.0a4385+gb3a24846=pypi_0
 dnspython=2.2.1=pypi_0
 idna=3.3=pyhd8ed1ab_0
 libcxx=14.0.6=h04bba0f_0

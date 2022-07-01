@@ -17,14 +17,30 @@ load_dotenv()
 
 # create bot
 BOT_TOKEN = os.getenv('BOT_TOKEN')
-bot = commands.Bot(command_prefix='!')
 
-# cog registration
-bot.load_extension("cogs.help")
-bot.load_extension("cogs.patreon")
-bot.load_extension("cogs.ping")
-bot.load_extension("cogs.setup")
-bot.load_extension("cogs.config")
+
+
+class StarshipBot(commands.Bot):
+    def __init__(self):
+        intents = discord.Intents.default()
+        intents.message_content = True
+        intents.dm_messages = True
+        intents.guild_messages = True
+        super().__init__(command_prefix=PREFIX, intents=intents)
+        self.initial_extensions = [
+            'cogs.help',
+            'cogs.patreon',
+            'cogs.ping',
+            'cogs.setup',
+            'cogs.config'
+        ]
+
+    async def setup_hook(self):
+        for ext in self.initial_extensions:
+            await self.load_extension(ext)
+            logging.info("Loaded extension: {}".format(ext))
+
+bot = StarshipBot()
 
 @bot.event
 async def on_ready():
@@ -59,6 +75,5 @@ async def on_command_error(ctx, error):
         await reply(error)
     else:
         await logger.err(ctx, title= "Unknown Error", description=error)
-    
 
 bot.run(BOT_TOKEN)

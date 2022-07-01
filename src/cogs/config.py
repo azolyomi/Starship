@@ -6,6 +6,7 @@ from util.converters import GlobalRoleType
 from emoji import check
 from util import logger
 from bson.json_util import dumps
+from util.constants import CONFIG_COLOR
 
 ADDROLE_USAGE_STRING = "<roleType> <@role>"
 SETLOGCHANNEL_USAGE_STRING = "<#channel>"
@@ -19,8 +20,20 @@ class Config(commands.Cog):
     async def showconfig(self, ctx):
         """Show the current configuration for this server."""
         if (ctx.invoked_subcommand is None):
-            # show config pretty embed
-            pass
+            description =f"""
+            **Admin Roles**: [{', '.join(map(lambda role: f"<@&{role}>", ServerConfigs[ctx.guild.id]['adminroles']))}]
+            **Mod Roles**: [{', '.join(map(lambda role: f"<@&{role}>", ServerConfigs[ctx.guild.id]['modroles']))}]
+            **Staff Roles**: [{', '.join(map(lambda role: f"<@&{role}>", ServerConfigs[ctx.guild.id]['staffroles']))}]
+            **Log Channel**: {f"<#{ServerConfigs[ctx.guild.id]['log_channel_id'] if ServerConfigs[ctx.guild.id]['log_channel_id'] is not None else 'None'}>"}
+
+            __**Raiding**__ (do `{ctx.prefix}showconfig raiding` for more info)
+
+            **Vcless Categories**: `[{', '.join(ServerConfigs[ctx.guild.id]["raiding"]['vcless']['categories'].keys())}]`
+            **RL-led Categories**: `COMING SOON`
+            """
+            embed = discord.Embed(title="Server Configuration", description=description, color=CONFIG_COLOR)
+            embed.set_footer(text="Starship Raiding", icon_url=ctx.guild.icon)
+            await ctx.send(embed=embed)
     
     @showconfig.command(pass_context=True)
     @commands.check(is_urul)
@@ -87,7 +100,7 @@ class Config(commands.Cog):
         await ctx.message.add_reaction(check)
         await logger.info(ctx, title="Global role config updated", description="{0} was removed from `{1}` roles.".format(role.mention, roleType))
 
-def setup(bot):
-    bot.add_cog(Config(bot))
+async def setup(bot):
+    await bot.add_cog(Config(bot))
 
 
