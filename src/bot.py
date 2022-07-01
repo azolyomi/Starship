@@ -42,7 +42,8 @@ async def on_command_error(ctx, error):
         await reply(ERROR_NOT_FOUND)
         return
     
-    usage = f'{bot.command_prefix}{ctx.command.name} {ctx.command.usage}'
+    ancestry = "{0}{1}".format(ctx.command.full_parent_name, " " if len(ctx.command.full_parent_name) > 0 else "")
+    usage = f'{bot.command_prefix}{ancestry}{ctx.command.name} {ctx.command.usage}'
 
     if isinstance(error, commands.NoPrivateMessage):
         await reply(ERROR_NOT_IN_GUILD)

@@ -1,12 +1,13 @@
 import discord
 from util import logger
+from util.constants import PREFIX
 from discord.ext import commands
-from database import db, ServerConfigs
+from database import db, ServerConfigs, updateConfig, deleteConfig
 from permissions.checks import is_urul
 
 from emoji import starship
 
-from util.setup.db_setup import initialize_db_serverconfig
+from util.setup.db_setup import create_local_config
 from util.setup.vcless_setup import create_vcless_channels_interactive
 
 class Setup(commands.Cog):
@@ -30,7 +31,7 @@ class Setup(commands.Cog):
                 except Exception as e:
                     print(e)
             await ctx.send("All roles deleted.")
-            db.ServerConfigs.delete_one({ "guildID": ctx.guild.id })
+            deleteConfig(ctx.guild.id)
             del ServerConfigs[ctx.guild.id]
         # been cleared already or never existed
         await self.configure(ctx)
@@ -46,6 +47,11 @@ class Setup(commands.Cog):
             return
 
         await ctx.send("Configuring your server...")
+
+        # create db entry
+        await ctx.send("Creating local configuration...")
+        create_local_config(ctx.guild.id)
+        await ctx.send("Local configuration created.")
 
         # create vcless channels
         await ctx.send("Creating vcless channels...")
@@ -66,10 +72,19 @@ class Setup(commands.Cog):
         await log_channel.edit(position=0)
         await ctx.send("Log channel created.")
 
-        # create default db entry
-        await ctx.send("Initializing database entry...")
-        await initialize_db_serverconfig(ctx, control_channel_id, raiding_channel_ids, admin_role_id = admin_role.id, log_channel_id = log_channel.id)
-        await ctx.send("Database entry created.")
+        # update db config
+        await ctx.send("Updating database entry...")
+        ServerConfigs[ctx.guild.id]["raiding"]["vcless"]["control"]["channel_id"] = control_channel_id
+        for raidType in raiding_channel_ids.keys():
+            ServerConfigs[ctx.guild.id]["raiding"]["vcless"]["categories"][raidType]["channel_id"] = raiding_channel_ids[raidType]
+        ServerConfigs[ctx.guild.id]["adminroles"].append(admin_role.id)
+        ServerConfigs[ctx.guild.id]["log_channel_id"] = log_channel.id
+        updateConfig(ctx.guild.id)
+        await ctx.send("Database entry updated.")
+
+        await ctx.send("Complete. You can now use the `{}help` command to see the list of commands.".format(PREFIX))
+        
+
 
 
 def setup(bot):
