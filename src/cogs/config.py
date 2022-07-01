@@ -32,7 +32,7 @@ class Config(commands.Cog):
             **RL-led Categories**: `COMING SOON`
             """
             embed = discord.Embed(title="Server Configuration", description=description, color=CONFIG_COLOR)
-            embed.set_footer(text="Starship Raiding", icon_url=ctx.guild.icon)
+            embed.set_footer(text=ctx.guild.name, icon_url=ctx.guild.icon)
             await ctx.send(embed=embed)
     
     @showconfig.command(pass_context=True)
