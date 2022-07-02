@@ -1,3 +1,5 @@
+import emoji
+
 DEFAULT_VCLESS_CATEGORIES = ["oryx3", "shatters", "void", "cult", "fungal", "nest", "realmclear", "misc"]
 DEFAULT_VCLESS_DESCRIPTION = """
 This is a **VCLESS** run. React below with what you will bring to the run. 
@@ -20,7 +22,7 @@ DEFAULT_VCLESS_CATEGORY = {
 
 REACTION_TEMPLATE = {
     "display": "Run Participant",
-    "emoji": "",
+    "emoji": emoji.check,
     "num_required": 10,
     "confirm": False,
 }
@@ -40,6 +42,7 @@ DEFAULT_SERVERCONFIG = {
                 },
                 "categories": {
                     "oryx3": {
+                        "emoji": emoji.oryx_3,
                         "organizer_roles": [],
                         "channel_id": "",
                         "message": {
@@ -52,31 +55,32 @@ DEFAULT_SERVERCONFIG = {
                         "reactions": {
                             "interest": {
                                 "display": "Oryx 3 Participant",
-                                "emoji": "",
+                                "emoji": emoji.oryx_3,
                                 "num_required": 10,
                                 "confirm": False,
                             },
                             "helmet_rune": {
                                 "display": "Helmet Rune",
                                 "num_required": 1,
-                                "emoji": "",
+                                "emoji": emoji.helm_rune,
                                 "confirm": True,
                             },
                             "sword_rune": {
                                 "display": "Sword Rune",
                                 "num_required": 1,
-                                "emoji": "",
+                                "emoji": emoji.sword_rune,
                                 "confirm": True,
                             },
                             "shield_rune": {
                                 "display": "Shield Rune",
                                 "num_required": 1,
-                                "emoji": "",
+                                "emoji": emoji.shield_rune,
                                 "confirm": True,
                             }
                         },
                     },
                     "shatters": {
+                        "emoji": emoji.shatters,
                         "organizer_roles": [],
                         "channel_id": "",
                         "message": {
@@ -89,25 +93,20 @@ DEFAULT_SERVERCONFIG = {
                         "reactions": {
                             "interest": {
                                 "display": "Shatters Participant",
-                                "emoji": "",
+                                "emoji": emoji.shatters,
                                 "num_required": 10,
                                 "confirm": False,
                             },
                             "key": {
                                 "display": "Shatters Key",
-                                "emoji": "",
-                                "num_required": 1,
-                                "confirm": True
-                            },
-                            "vial": {
-                                "display": "Vial of Darkness",
-                                "emoji": "",
+                                "emoji": emoji.shatters_key,
                                 "num_required": 1,
                                 "confirm": True
                             },
                         },
                     },
                     "void": {
+                        "emoji": emoji.void,
                         "organizer_roles": [],
                         "channel_id": "",
                         "message": {
@@ -120,25 +119,26 @@ DEFAULT_SERVERCONFIG = {
                         "reactions": {
                             "interest": {
                                 "display": "Void Participant",
-                                "emoji": "",
+                                "emoji": emoji.void,
                                 "num_required": 10,
                                 "confirm": False,
                             },
                             "key": {
                                 "display": "Lost Halls Key",
-                                "emoji": "",
+                                "emoji": emoji.lost_halls_key,
                                 "num_required": 1,
                                 "confirm": True
                             },
                             "vial": {
                                 "display": "Vial of Darkness",
-                                "emoji": "",
+                                "emoji": emoji.vial,
                                 "num_required": 1,
                                 "confirm": True
                             },
                         },
                     },
                     "cult": {
+                        "emoji": emoji.cult,
                         "organizer_roles": [],
                         "channel_id": "",
                         "message": {
@@ -151,19 +151,20 @@ DEFAULT_SERVERCONFIG = {
                         "reactions": {
                             "interest": {
                                 "display": "Cultist Hideout Participant",
-                                "emoji": "",
+                                "emoji": emoji.cult,
                                 "num_required": 10,
                                 "confirm": False,
                             },
                             "key": {
                                 "display": "Lost Halls Key",
-                                "emoji": "",
+                                "emoji": emoji.lost_halls_key,
                                 "num_required": 1,
                                 "confirm": True
                             },
                         },
                     },
                     "fungal": {
+                        "emoji": emoji.fungal,
                         "organizer_roles": [],
                         "channel_id": "",
                         "message": {
@@ -176,19 +177,20 @@ DEFAULT_SERVERCONFIG = {
                         "reactions": {
                             "interest": {
                                 "display": "Fungal Cavern Participant",
-                                "emoji": "",
+                                "emoji": emoji.fungal,
                                 "num_required": 10,
                                 "confirm": False,
                             },
                             "key": {
                                 "display": "Fungal Cavern Key",
-                                "emoji": "",
+                                "emoji": emoji.fungal_key,
                                 "num_required": 1,
                                 "confirm": True
                             },
                         },
                     },
                     "nest": {
+                        "emoji": emoji.nest,
                         "organizer_roles": [],
                         "channel_id": "",
                         "message": {
@@ -201,19 +203,20 @@ DEFAULT_SERVERCONFIG = {
                         "reactions": {
                             "interest": {
                                 "display": "Nest Participant",
-                                "emoji": "",
+                                "emoji": emoji.nest,
                                 "num_required": 10,
                                 "confirm": False,
                             },
                             "key": {
                                 "display": "Nest Key",
-                                "emoji": "",
+                                "emoji": emoji.nest_key,
                                 "num_required": 1,
                                 "confirm": True
                             },
                         }
                     },
                     "realmclear": {
+                        "emoji": emoji.whitebag,
                         "organizer_roles": [],
                         "channel_id": "",
                         "message": {
@@ -226,13 +229,14 @@ DEFAULT_SERVERCONFIG = {
                         "reactions": {
                             "interest": {
                                 "display": "Realm Clearing Participant",
-                                "emoji": "",
+                                "emoji": emoji.whitebag,
                                 "num_required": 10,
                                 "confirm": False,
                             },
                         }
                     },
                     "misc": {
+                        "emoji": emoji.nexus,
                         "organizer_roles": [],
                         "channel_id": "",
                         "message": {
@@ -245,13 +249,13 @@ DEFAULT_SERVERCONFIG = {
                         "reactions": {
                             "interest": {
                                 "display": "Miscellaneous Participant",
-                                "emoji": "",
+                                "emoji": emoji.nexus,
                                 "num_required": 10,
                                 "confirm": False,
                             },
                             "key": {
                                 "display": "Miscellaneous Key",
-                                "emoji": "",
+                                "emoji": emoji.legendary_key,
                                 "num_required": 1,
                                 "confirm": True,
                             },
