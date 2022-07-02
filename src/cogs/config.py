@@ -60,9 +60,9 @@ class Config(commands.Cog):
     @commands.group(pass_context=True, )
     @commands.check(has_mod_role)
     async def role(self, ctx):
+        """Configure roles in the server's global configuration."""
         if ctx.invoked_subcommand is None:
                 await ctx.message.reply('Invalid role command. Use `{}help role` for more information.'.format(ctx.prefix))
-    
     
     @role.command(pass_context=True, aliases=["access"], usage="<roleType> <@role>")
     async def add(self, ctx, roleType: GlobalRoleType, *, role: discord.Role):
