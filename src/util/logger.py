@@ -6,9 +6,7 @@ import logging
 # logging setup
 logging.basicConfig(level=logging.INFO)
 
-
-
-async def log(ctx, level = logging.INFO, message = None, embed = None):
+async def log(ctx, level = logging.INFO, embed = None, message = None):
     if (message is None and embed is None): return
 
     if (ctx.guild is None):
@@ -23,6 +21,7 @@ async def log(ctx, level = logging.INFO, message = None, embed = None):
     # guild exists
     if ctx.guild.id in ServerConfigs and ServerConfigs[ctx.guild.id]['log_channel_id'] is not None:
         channel = ctx.guild.get_channel(ServerConfigs[ctx.guild.id]['log_channel_id'])
+        if channel is None: return
 
         if (message):
             await channel.send(message)
