@@ -1,4 +1,9 @@
 DEFAULT_VCLESS_CATEGORIES = ["oryx3", "shatters", "void", "cult", "fungal", "nest", "realmclear", "misc"]
+DEFAULT_VCLESS_DESCRIPTION = """
+This is a **VCLESS** run. React below with what you will bring to the run. 
+
+**Fake reactions will be punished with an automatic timeout.** Do not react if you are not **absolutely certain** that you can bring the item to the run.
+"""
 DEFAULT_SERVERCONFIG = {
         "guildID": "",
         "modroles": [],
@@ -16,8 +21,8 @@ DEFAULT_SERVERCONFIG = {
                         "organizer_roles": [],
                         "channel_id": "",
                         "message": {
-                            "title": "",
-                            "description": "",
+                            "title": "An Oryx 3 run is brewing...",
+                            "description": DEFAULT_VCLESS_DESCRIPTION,
                             "color": "",
                             "thumbnail": "",
                             "image": "",
@@ -53,8 +58,8 @@ DEFAULT_SERVERCONFIG = {
                         "organizer_roles": [],
                         "channel_id": "",
                         "message": {
-                            "title": "",
-                            "description": "",
+                            "title": "A Shatters run is brewing...",
+                            "description": DEFAULT_VCLESS_DESCRIPTION,
                             "color": "",
                             "thumbnail": "",
                             "image": "",
@@ -84,8 +89,8 @@ DEFAULT_SERVERCONFIG = {
                         "organizer_roles": [],
                         "channel_id": "",
                         "message": {
-                            "title": "",
-                            "description": "",
+                            "title": "A Void run is brewing...",
+                            "description": DEFAULT_VCLESS_DESCRIPTION,
                             "color": "",
                             "thumbnail": "",
                             "image": "",
@@ -115,8 +120,8 @@ DEFAULT_SERVERCONFIG = {
                         "organizer_roles": [],
                         "channel_id": "",
                         "message": {
-                            "title": "",
-                            "description": "",
+                            "title": "A Cultist Hideout run is brewing...",
+                            "description": DEFAULT_VCLESS_DESCRIPTION,
                             "color": "",
                             "thumbnail": "",
                             "image": "",
@@ -140,8 +145,8 @@ DEFAULT_SERVERCONFIG = {
                         "organizer_roles": [],
                         "channel_id": "",
                         "message": {
-                            "title": "",
-                            "description": "",
+                            "title": "A Fungal Cavern run is brewing...",
+                            "description": DEFAULT_VCLESS_DESCRIPTION,
                             "color": "",
                             "thumbnail": "",
                             "image": "",
@@ -165,8 +170,8 @@ DEFAULT_SERVERCONFIG = {
                         "organizer_roles": [],
                         "channel_id": "",
                         "message": {
-                            "title": "",
-                            "description": "",
+                            "title": "A Nest run is brewing...",
+                            "description": DEFAULT_VCLESS_DESCRIPTION,
                             "color": "",
                             "thumbnail": "",
                             "image": "",
@@ -190,8 +195,8 @@ DEFAULT_SERVERCONFIG = {
                         "organizer_roles": [],
                         "channel_id": "",
                         "message": {
-                            "title": "",
-                            "description": "",
+                            "title": "A Realm Clearing session is brewing...",
+                            "description": DEFAULT_VCLESS_DESCRIPTION,
                             "color": "",
                             "thumbnail": "",
                             "image": "",
@@ -209,8 +214,8 @@ DEFAULT_SERVERCONFIG = {
                         "organizer_roles": [],
                         "channel_id": "",
                         "message": {
-                            "title": "",
-                            "description": "",
+                            "title": "A Miscellaneous run is brewing...",
+                            "description": DEFAULT_VCLESS_DESCRIPTION,
                             "color": "",
                             "thumbnail": "",
                             "image": "",
