@@ -51,26 +51,22 @@ class Setup(commands.Cog):
         # create db entry
         await ctx.send("Creating local configuration...")
         create_local_config(ctx.guild.id)
-        await ctx.send("Local configuration created.")
 
         # create vcless channels
         await ctx.send("Creating vcless channels...")
         control_channel_id, raiding_channel_ids = await create_vcless_channels_interactive(ctx)
-        await ctx.send("Vcless channels created.")
 
         # create administrative role
         await ctx.send("Creating administrative role...")
         admin_role = await ctx.guild.create_role(name="Starship Admin")
         await admin_role.edit(color=discord.Color.orange())
         await ctx.message.author.add_roles(admin_role)
-        await ctx.send("Administrative role created.")
         await ctx.send(embed=discord.Embed(title="Warning:", description="The {} role will be added to the database as an `admin` role. All future commands with the Starship bot will be role-restricted.".format(admin_role.mention), color=discord.Color.red()))
 
         # create log channel
         await ctx.send("Creating log channel...")
         log_channel = await ctx.guild.create_text_channel("{}starship-log".format(starship))
         await log_channel.edit(position=0)
-        await ctx.send("Log channel created.")
 
         # update db config
         await ctx.send("Updating database entry...")
@@ -80,7 +76,6 @@ class Setup(commands.Cog):
         ServerConfigs[ctx.guild.id]["adminroles"].append(admin_role.id)
         ServerConfigs[ctx.guild.id]["log_channel_id"] = log_channel.id
         updateConfig(ctx.guild.id)
-        await ctx.send("Database entry updated.")
 
         await ctx.send("Complete. You can now use the `{}help` command to see the list of commands.".format(PREFIX))
         
