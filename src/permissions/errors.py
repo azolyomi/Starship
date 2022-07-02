@@ -16,3 +16,7 @@ class StarshipPermissionsError(CommandError):
 class StarshipRoleMissingError(StarshipPermissionsError):
     def __init__(self, role):
         self.message = ERROR_MISSING_ROLE(role)
+
+class StarshipCategoryNotFoundError(StarshipPermissionsError):
+    def __init__(self, category):
+        self.message = "Category `{}` not found.".format(category)

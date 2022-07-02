@@ -48,9 +48,11 @@ def has_staff_role(ctx):
             return True
     raise errors.StarshipRoleMissingError("staff")
 
-# def has_vcless_organizer_role(ctx, member, category):
-#     if not has_config(ctx): return False
-#     for role in member.roles:
-#         if role.id in ServerConfigs[ctx.guild.id]['raiding']['vcless']['categories'][category]['roles']:
-#             return True
-#     return False
+def has_vcless_organizer_role(ctx, member, category):
+    if not has_config(ctx): return False
+    elif category not in ServerConfigs[ctx.guild.id]["raiding"]["vcless"]["categories"]:
+        raise errors.StarshipCategoryNotFoundError(category)
+    for role in member.roles:
+        if role.id in ServerConfigs[ctx.guild.id]['raiding']['vcless']['categories'][category]['organizer_roles']:
+            return True
+    raise errors.StarshipRoleMissingError("{} organizer".format(category))

@@ -63,8 +63,6 @@ async def on_command_error(ctx, error):
 
     if isinstance(error, commands.NoPrivateMessage):
         await reply(ERROR_NOT_IN_GUILD)
-    elif isinstance(error, errors.StarshipRoleMissingError):
-        await reply(error.message)
     elif isinstance(error, errors.StarshipPermissionsError):
         await reply(error.message)
     elif isinstance(error, commands.MissingPermissions):
