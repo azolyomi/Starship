@@ -13,10 +13,7 @@ DEFAULT_SERVERCONFIG = {
                 },
                 "categories": {
                     "oryx3": {
-                        "emoji": "",
-                        "num_reactions_required": 10,
-                        "display": "Oryx 3",
-                        "roles": [],
+                        "organizer_roles": [],
                         "channel_id": "",
                         "message": {
                             "title": "",
@@ -25,29 +22,35 @@ DEFAULT_SERVERCONFIG = {
                             "thumbnail": "",
                             "image": "",
                         },
-                        "item_config": {
+                        "reactions": {
+                            "interest": {
+                                "display": "Oryx 3 Participant",
+                                "emoji": "",
+                                "num_required": 10,
+                                "confirm": False,
+                            },
                             "helmet_rune": {
                                 "display": "Helmet Rune",
-                                "num_required": 0,
-                                "emoji": ""
+                                "num_required": 1,
+                                "emoji": "",
+                                "confirm": True,
                             },
                             "sword_rune": {
                                 "display": "Sword Rune",
-                                "num_required": 0,
-                                "emoji": ""
+                                "num_required": 1,
+                                "emoji": "",
+                                "confirm": True,
                             },
                             "shield_rune": {
                                 "display": "Shield Rune",
-                                "num_required": 0,
-                                "emoji": ""
+                                "num_required": 1,
+                                "emoji": "",
+                                "confirm": True,
                             }
                         },
                     },
                     "shatters": {
-                        "emoji": "",
-                        "num_reactions_required": 10,
-                        "display": "Shatters",
-                        "roles": [],
+                        "organizer_roles": [],
                         "channel_id": "",
                         "message": {
                             "title": "",
@@ -56,19 +59,29 @@ DEFAULT_SERVERCONFIG = {
                             "thumbnail": "",
                             "image": "",
                         },
-                        "item_config": {
+                        "reactions": {
+                            "interest": {
+                                "display": "Shatters Participant",
+                                "emoji": "",
+                                "num_required": 10,
+                                "confirm": False,
+                            },
                             "key": {
                                 "display": "Shatters Key",
-                                "num_required": 0,
-                                "emoji": ""
+                                "emoji": "",
+                                "num_required": 1,
+                                "confirm": True
+                            },
+                            "vial": {
+                                "display": "Vial of Darkness",
+                                "emoji": "",
+                                "num_required": 1,
+                                "confirm": True
                             },
                         },
                     },
                     "void": {
-                        "emoji": "",
-                        "num_reactions_required": 10,
-                        "display": "Void",
-                        "roles": [],
+                        "organizer_roles": [],
                         "channel_id": "",
                         "message": {
                             "title": "",
@@ -77,24 +90,29 @@ DEFAULT_SERVERCONFIG = {
                             "thumbnail": "",
                             "image": "",
                         },
-                        "item_config": {
+                        "reactions": {
+                            "interest": {
+                                "display": "Void Participant",
+                                "emoji": "",
+                                "num_required": 10,
+                                "confirm": False,
+                            },
                             "key": {
                                 "display": "Lost Halls Key",
-                                "num_required": 0,
-                                "emoji": ""
+                                "emoji": "",
+                                "num_required": 1,
+                                "confirm": True
                             },
                             "vial": {
                                 "display": "Vial of Darkness",
-                                "num_required": 0,
-                                "emoji": ""
+                                "emoji": "",
+                                "num_required": 1,
+                                "confirm": True
                             },
                         },
                     },
                     "cult": {
-                        "emoji": "",
-                        "num_reactions_required": 10,
-                        "display": "Cultist Hideout",
-                        "roles": [],
+                        "organizer_roles": [],
                         "channel_id": "",
                         "message": {
                             "title": "",
@@ -103,19 +121,23 @@ DEFAULT_SERVERCONFIG = {
                             "thumbnail": "",
                             "image": "",
                         },
-                        "item_config": {
+                        "reactions": {
+                            "interest": {
+                                "display": "Cultist Hideout Participant",
+                                "emoji": "",
+                                "num_required": 10,
+                                "confirm": False,
+                            },
                             "key": {
                                 "display": "Lost Halls Key",
-                                "num_required": 0,
-                                "emoji": ""
+                                "emoji": "",
+                                "num_required": 1,
+                                "confirm": True
                             },
                         },
                     },
                     "fungal": {
-                        "emoji": "",
-                        "num_reactions_required": 10,
-                        "display": "Fungal Cavern",
-                        "roles": [],
+                        "organizer_roles": [],
                         "channel_id": "",
                         "message": {
                             "title": "",
@@ -124,19 +146,23 @@ DEFAULT_SERVERCONFIG = {
                             "thumbnail": "",
                             "image": "",
                         },
-                        "item_config": {
+                        "reactions": {
+                            "interest": {
+                                "display": "Fungal Cavern Participant",
+                                "emoji": "",
+                                "num_required": 10,
+                                "confirm": False,
+                            },
                             "key": {
                                 "display": "Fungal Cavern Key",
-                                "num_required": 0,
-                                "emoji": ""
+                                "emoji": "",
+                                "num_required": 1,
+                                "confirm": True
                             },
                         },
                     },
                     "nest": {
-                        "emoji": "",
-                        "num_reactions_required": 10,
-                        "display": "Nest",
-                        "roles": [],
+                        "organizer_roles": [],
                         "channel_id": "",
                         "message": {
                             "title": "",
@@ -145,19 +171,23 @@ DEFAULT_SERVERCONFIG = {
                             "thumbnail": "",
                             "image": "",
                         },
-                        "item_config": {
+                        "reactions": {
+                            "interest": {
+                                "display": "Nest Participant",
+                                "emoji": "",
+                                "num_required": 10,
+                                "confirm": False,
+                            },
                             "key": {
                                 "display": "Nest Key",
-                                "num_required": 0,
-                                "emoji": ""
+                                "emoji": "",
+                                "num_required": 1,
+                                "confirm": True
                             },
-                        },
+                        }
                     },
                     "realmclear": {
-                        "emoji": "",
-                        "num_reactions_required": 10,
-                        "display": "Realm Clearing",
-                        "roles": [],
+                        "organizer_roles": [],
                         "channel_id": "",
                         "message": {
                             "title": "",
@@ -166,13 +196,17 @@ DEFAULT_SERVERCONFIG = {
                             "thumbnail": "",
                             "image": "",
                         },
-                        "item_config": {},
+                        "reactions": {
+                            "interest": {
+                                "display": "Realm Clearing Participant",
+                                "emoji": "",
+                                "num_required": 10,
+                                "confirm": False,
+                            },
+                        }
                     },
                     "misc": {
-                        "emoji": "",
-                        "num_reactions_required": 10,
-                        "display": "Miscellaneous",
-                        "roles": [],
+                        "organizer_roles": [],
                         "channel_id": "",
                         "message": {
                             "title": "",
@@ -181,11 +215,18 @@ DEFAULT_SERVERCONFIG = {
                             "thumbnail": "",
                             "image": "",
                         },
-                        "item_config": {
+                        "reactions": {
+                            "interest": {
+                                "display": "Miscellaneous Participant",
+                                "emoji": "",
+                                "num_required": 10,
+                                "confirm": False,
+                            },
                             "key": {
                                 "display": "Miscellaneous Key",
-                                "num_required": 0,
-                                "emoji": ""
+                                "emoji": "",
+                                "num_required": 1,
+                                "confirm": True,
                             },
                         },
                     },
