@@ -12,6 +12,7 @@ ADDROLE_USAGE_STRING = "<roleType> <@role>"
 SETLOGCHANNEL_USAGE_STRING = "<#channel>"
 
 class Config(commands.Cog):
+    """A cog with everything relating to server configuration."""
     def __init__(self, bot):
         self.bot = bot
 

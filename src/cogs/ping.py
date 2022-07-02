@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 
 class Ping(commands.Cog):
+    """A cog with tools to evaluate bot latency."""
     def __init__(self, bot):
         self.bot = bot
 
