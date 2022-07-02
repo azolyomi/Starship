@@ -48,7 +48,7 @@ class Setup(commands.Cog):
 
         await ctx.send("Configuring your server...")
 
-        # create db entry
+        # create local config
         await ctx.send("Creating local configuration...")
         create_local_config(ctx.guild.id)
 
