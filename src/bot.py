@@ -28,11 +28,12 @@ class StarshipBot(commands.Bot):
         intents.guild_messages = True
         super().__init__(command_prefix=PREFIX, intents=intents)
         self.initial_extensions = [
+            'cogs.config',
             'cogs.help',
             'cogs.patreon',
             'cogs.ping',
+            'cogs.raiding',
             'cogs.setup',
-            'cogs.config'
         ]
 
     async def setup_hook(self):
