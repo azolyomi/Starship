@@ -4,6 +4,28 @@ This is a **VCLESS** run. React below with what you will bring to the run.
 
 **Fake reactions will be punished with an automatic timeout.** Do not react if you are not **absolutely certain** that you can bring the item to the run.
 """
+
+DEFAULT_VCLESS_CATEGORY = {
+    "organizer_roles": [],
+    "channel_id": "",
+    "message": {
+        "title": "A run is brewing...",
+        "description": DEFAULT_VCLESS_DESCRIPTION,
+        "color": "",
+        "thumbnail": "",
+        "image": "",
+    },
+    "reactions": {},
+},
+
+REACTION_TEMPLATE = {
+    "display": "Run Participant",
+    "emoji": "",
+    "num_required": 10,
+    "confirm": False,
+}
+
+
 DEFAULT_SERVERCONFIG = {
         "guildID": "",
         "modroles": [],
