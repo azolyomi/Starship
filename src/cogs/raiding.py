@@ -21,6 +21,8 @@ class Reaction:
         self.confirm = reaction_as_dict.get('confirm')
 
 class ReactionMenu(discord.ui.View):
+    #TODO: Reaction button functionality 
+    
     def __init__(self, reactions: List[Reaction]):
         super().__init__(timeout=None)
         self.reactions = reactions
@@ -63,10 +65,15 @@ class Raiding(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
+    #TODO: Headcount
+
+    #TODO: Headcount -> AFK
+
     @commands.command(pass_context=True, aliases=['raid'], usage="<category> <location>")
     @commands.check(has_staff_role)
     @commands.guild_only()
     async def afk(self, ctx, category_name: ExistingCategory, location):
+        #TODO: check permissions
         category = ServerConfigs[ctx.guild.id]["raiding"]["categories"][category_name]
         reactions = list(map(lambda reaction: Reaction(reaction), category["reactions"].values()))
         menu = ReactionMenu(reactions)
