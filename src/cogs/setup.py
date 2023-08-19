@@ -4,15 +4,15 @@ from util.constants import PREFIX
 from discord.ext import commands
 from database import db, ServerConfigs, updateConfig, deleteConfig
 from permissions.checks import is_urul
+from permissions.errors import StarshipConfigError
 
 from emoji import starship
 
-from util.setup.db_setup import create_local_config
-from util.setup.vcless_setup import create_vcless_channels_interactive
+from util.setup.db import create_local_config
 
 class Setup(commands.Cog):
     """A cog with one command for speedy setup of the bot."""
-    def __init__(self, bot):
+    def __init__(self, bot: commands.Bot):
         self.bot = bot
 
     @commands.command(pass_context=True, aliases=["reconfig"])
@@ -52,13 +52,10 @@ class Setup(commands.Cog):
         await ctx.send("Creating local configuration...")
         create_local_config(ctx.guild.id)
 
-        # create vcless channels
-        await ctx.send("Creating vcless channels...")
-        control_channel_id, raiding_channel_ids = await create_vcless_channels_interactive(ctx)
-
         # create administrative role
         await ctx.send("Creating administrative role...")
         admin_role = await ctx.guild.create_role(name="Starship Admin")
+        ServerConfigs[ctx.guild.id]["adminroles"].append(admin_role.id)
         await admin_role.edit(color=discord.Color.orange())
         await ctx.message.author.add_roles(admin_role)
         await ctx.send(embed=discord.Embed(title="Warning:", description="The {} role will be added to the database as an `admin` role. All future commands with the Starship bot will be role-restricted.".format(admin_role.mention), color=discord.Color.red()))
@@ -67,19 +64,14 @@ class Setup(commands.Cog):
         await ctx.send("Creating log channel...")
         log_channel = await ctx.guild.create_text_channel("{}starship-log".format(starship))
         await log_channel.edit(position=0)
+        ServerConfigs[ctx.guild.id]["log_channel_id"] = log_channel.id
 
         # update db config
         await ctx.send("Updating database entry...")
-        ServerConfigs[ctx.guild.id]["raiding"]["vcless"]["control"]["channel_id"] = control_channel_id
-        for raidType in raiding_channel_ids.keys():
-            ServerConfigs[ctx.guild.id]["raiding"]["vcless"]["categories"][raidType]["channel_id"] = raiding_channel_ids[raidType]
-        ServerConfigs[ctx.guild.id]["adminroles"].append(admin_role.id)
-        ServerConfigs[ctx.guild.id]["log_channel_id"] = log_channel.id
         updateConfig(ctx.guild.id)
 
         await ctx.send("Complete. You can now use the `{}help` command to see the list of commands.".format(PREFIX))
         
-
 
 
 async def setup(bot):

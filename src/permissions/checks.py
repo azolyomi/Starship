@@ -24,7 +24,10 @@ def is_staff(ctx, roleid):
 def has_config(ctx):
     if (ctx.guild is None): 
         raise NoPrivateMessage()
-    return (ServerConfigs[ctx.guild.id] is not None)
+    if ctx.guild.id not in ServerConfigs.keys():
+        raise errors.StarshipConfigMissingError()
+    return True
+    
     
 # equivalent to guild_only() + check config exists + check admin role in config
 def has_admin_role(ctx):
@@ -48,11 +51,11 @@ def has_staff_role(ctx):
             return True
     raise errors.StarshipRoleMissingError("staff")
 
-def has_vcless_organizer_role(ctx, member, category):
+def has_organizer_role(ctx, member, category):
     if not has_config(ctx): return False
-    elif category not in ServerConfigs[ctx.guild.id]["raiding"]["vcless"]["categories"]:
+    elif category not in ServerConfigs[ctx.guild.id]["raiding"]["categories"]:
         raise errors.StarshipCategoryNotFoundError(category)
     for role in member.roles:
-        if role.id in ServerConfigs[ctx.guild.id]['raiding']['vcless']['categories'][category]['organizer_roles']:
+        if role.id in ServerConfigs[ctx.guild.id]['raiding']['categories'][category]['organizer_roles']:
             return True
     raise errors.StarshipRoleMissingError("{} organizer".format(category))

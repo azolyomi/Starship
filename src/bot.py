@@ -8,9 +8,10 @@ from database import db, ServerConfigs
 from dotenv import load_dotenv
 from util import logger
 import logging
+import traceback
 
-# logging setup
-logging.basicConfig(level=logging.INFO)
+# # logging setup
+# logging.basicConfig(level=logging.INFO)
 
 # load bot token and other .env data
 load_dotenv()
@@ -37,6 +38,7 @@ class StarshipBot(commands.Bot):
         ]
 
     async def setup_hook(self):
+        # load extensions
         for ext in self.initial_extensions:
             await self.load_extension(ext)
             logging.info("Loaded extension: {}".format(ext))
@@ -64,6 +66,8 @@ async def on_command_error(ctx, error):
 
     if isinstance(error, commands.NoPrivateMessage):
         await reply(ERROR_NOT_IN_GUILD)
+    elif isinstance(error, errors.StarshipConfigError):
+        await reply(error.message)
     elif isinstance(error, errors.StarshipPermissionsError):
         await reply(error.message)
     elif isinstance(error, commands.MissingPermissions):
@@ -73,6 +77,7 @@ async def on_command_error(ctx, error):
     elif (isinstance(error, commands.BadArgument)):
         await reply(error)
     else:
+        raise error
         await logger.err(ctx, title= "Unknown Error", description=error)
 
 bot.run(BOT_TOKEN)

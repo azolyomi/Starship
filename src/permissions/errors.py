@@ -10,8 +10,15 @@ vowel = "aeiouy"
 def ERROR_MISSING_ROLE(role):
     return "You must have a{} `{}` role configured with the bot to use this command.".format(('n' if role[0].lower() in vowel else ''), role)
 
+class StarshipConfigError(CommandError):
+    message = "Server configuration happened improperly."
+
 class StarshipPermissionsError(CommandError):
     message = ERROR_NO_PERMISSION
+
+class StarshipConfigMissingError(StarshipPermissionsError):
+    def __init__(self):
+        self.message = "You need to configure the server first."
 
 class StarshipRoleMissingError(StarshipPermissionsError):
     def __init__(self, role):

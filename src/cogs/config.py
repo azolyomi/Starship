@@ -2,7 +2,7 @@ import discord
 from discord.ext import commands
 from permissions.checks import has_admin_role, has_mod_role, is_urul
 from database import ServerConfigs, updateConfig
-from util.converters import GlobalRoleType
+from util.converters import GlobalRoleType, ValidNewCategoryID, ExistingCategory
 from emoji import check
 from util import logger
 from bson.json_util import dumps
@@ -29,8 +29,7 @@ class Config(commands.Cog):
 
             __**Raiding**__ (do `{ctx.prefix}showconfig raiding` for more info)
 
-            **Vcless Categories**: `[{', '.join(ServerConfigs[ctx.guild.id]["raiding"]['vcless']['categories'].keys())}]`
-            **RL-led Categories**: `COMING SOON`
+            **Categories**: `[{', '.join(ServerConfigs[ctx.guild.id]["raiding"]['categories'].keys())}]`
             """
             embed = discord.Embed(title="Server Configuration", description=description, color=CONFIG_COLOR)
             embed.set_footer(text=ctx.guild.name, icon_url=ctx.guild.icon)
@@ -56,8 +55,10 @@ class Config(commands.Cog):
 
         await ctx.send("Log channel set to {}.".format(channel.mention))
         await logger.info(ctx, title="Log channel changed", description="Log channel set to {}.".format(channel.mention))
+        
 
-    @commands.group(pass_context=True, )
+
+    @commands.group(pass_context=True)
     @commands.check(has_mod_role)
     async def role(self, ctx):
         """Configure roles in the server's global configuration."""
