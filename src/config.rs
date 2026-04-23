@@ -7,7 +7,6 @@ pub struct Config {
     pub discord_test_guild_id: Option<u64>,
     pub database_url: String,
     pub realmeye_user_agent: String,
-    pub emoji_guild_id: Option<u64>,
 }
 
 impl std::fmt::Debug for Config {
@@ -24,7 +23,6 @@ impl std::fmt::Debug for Config {
             .field("discord_test_guild_id", &self.discord_test_guild_id)
             .field("database_url", &mask(&self.database_url))
             .field("realmeye_user_agent", &self.realmeye_user_agent)
-            .field("emoji_guild_id", &self.emoji_guild_id)
             .finish()
     }
 }
@@ -48,12 +46,6 @@ impl Config {
             std::env::var("DATABASE_URL").context("DATABASE_URL must be set")?;
         let realmeye_user_agent = std::env::var("REALMEYE_USER_AGENT")
             .unwrap_or_else(|_| "starship-bot/0.1".to_string());
-        let emoji_guild_id = std::env::var("EMOJI_GUILD_ID")
-            .ok()
-            .filter(|s| !s.is_empty())
-            .map(|s| s.parse::<u64>())
-            .transpose()
-            .context("EMOJI_GUILD_ID must be a valid u64 if set")?;
 
         Ok(Config {
             discord_token,
@@ -61,7 +53,6 @@ impl Config {
             discord_test_guild_id,
             database_url,
             realmeye_user_agent,
-            emoji_guild_id,
         })
     }
 }

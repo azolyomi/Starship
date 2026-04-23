@@ -7,7 +7,6 @@
 // Run as: starship sync-wiki
 
 use anyhow::{Context, Result};
-use base64::Engine as _;
 use image::imageops::FilterType;
 use reqwest::Client;
 use scraper::{Html, Selector};
@@ -15,6 +14,7 @@ use tracing::{info, warn};
 
 use crate::config::Config;
 use crate::db;
+use crate::db::emoji::ApplicationEmojiClient;
 
 // ---------------------------------------------------------------------------
 // Selector constants — update these if RealmEye changes their HTML.
@@ -79,39 +79,41 @@ pub async fn run() -> Result<()> {
     sqlx::migrate!("./migrations").run(&pool).await?;
     db::dungeon::seed_builtins(&pool).await?;
 
-    let emoji_guild_id = match config.emoji_guild_id {
-        Some(id) => id,
-        None => {
-            warn!("EMOJI_GUILD_ID not set — emoji upload step will be skipped");
-            warn!("Set EMOJI_GUILD_ID in .env to the ID of your emoji hosting server");
-            0
-        }
-    };
-
     let client = Client::builder()
         .user_agent(&config.realmeye_user_agent)
         .build()?;
 
+    let emoji_api = ApplicationEmojiClient::new(
+        client.clone(),
+        &config.discord_token,
+        config.discord_application_id,
+    );
+
+    // Build a set of emojis already registered to this application so we can
+    // skip unchanged ones and reconcile manual Developer-Portal edits.
+    info!("fetching existing application emojis…");
+    let existing = emoji_api.list().await.unwrap_or_else(|e| {
+        warn!("could not list application emojis: {e:#} — will attempt all uploads");
+        std::collections::HashMap::new()
+    });
+    info!("{} emojis already registered", existing.len());
+
     info!("scraping dungeon list from RealmEye wiki…");
     let dungeons = scrape_dungeon_list(&client).await?;
     info!("found {} dungeons", dungeons.len());
-
-    if emoji_guild_id != 0 {
-        db::emoji::register_emoji_server(&pool, emoji_guild_id as i64, Some("sync-wiki target"))
-            .await?;
-    }
 
     for dungeon in &dungeons {
         info!("processing: {}", dungeon.display_name);
 
         // Upload portal emoji.
         let portal_emoji_name = format!("portal_{}", dungeon.name);
+        let portal_discord_name = discord_name(&portal_emoji_name);
         if let Some(url) = &dungeon.portal_img_url {
-            if let Ok(emoji_id) = upload_emoji(
+            if let Ok((emoji_id, animated)) = upload_if_new(
                 &client,
-                &config.discord_token,
-                emoji_guild_id,
-                &portal_emoji_name,
+                &emoji_api,
+                &existing,
+                &portal_discord_name,
                 url,
             )
             .await
@@ -120,7 +122,9 @@ pub async fn run() -> Result<()> {
                     &pool,
                     &portal_emoji_name,
                     emoji_id as i64,
-                    Some(emoji_guild_id as i64),
+                    &portal_discord_name,
+                    animated,
+                    None,
                     Some("portal"),
                     Some(url),
                 )
@@ -132,11 +136,12 @@ pub async fn run() -> Result<()> {
         let mut key_emoji_name = None;
         if let Some(url) = &dungeon.key_img_url {
             let name = format!("key_{}", dungeon.name);
-            if let Ok(emoji_id) = upload_emoji(
+            let discord_name = discord_name(&name);
+            if let Ok((emoji_id, animated)) = upload_if_new(
                 &client,
-                &config.discord_token,
-                emoji_guild_id,
-                &name,
+                &emoji_api,
+                &existing,
+                &discord_name,
                 url,
             )
             .await
@@ -145,7 +150,9 @@ pub async fn run() -> Result<()> {
                     &pool,
                     &name,
                     emoji_id as i64,
-                    Some(emoji_guild_id as i64),
+                    &discord_name,
+                    animated,
+                    None,
                     Some("key"),
                     Some(url),
                 )
@@ -159,20 +166,18 @@ pub async fn run() -> Result<()> {
             Ok(d) => d,
             Err(e) => {
                 warn!("failed to scrape {}: {e:#}", dungeon.display_name);
-                DungeonDetails {
-                    showcase_emoji: vec![],
-                    drop_items: vec![],
-                }
+                DungeonDetails { showcase_emoji: vec![], drop_items: vec![] }
             }
         };
 
-        // Upload drop item emoji.
+        // Upload drop item emojis.
         for item in &details.drop_items {
-            if let Ok(emoji_id) = upload_emoji(
+            let discord_name = discord_name(&item.logical_name);
+            if let Ok((emoji_id, animated)) = upload_if_new(
                 &client,
-                &config.discord_token,
-                emoji_guild_id,
-                &item.logical_name,
+                &emoji_api,
+                &existing,
+                &discord_name,
                 &item.img_url,
             )
             .await
@@ -182,7 +187,9 @@ pub async fn run() -> Result<()> {
                     &pool,
                     &item.logical_name,
                     emoji_id as i64,
-                    Some(emoji_guild_id as i64),
+                    &discord_name,
+                    animated,
+                    None,
                     Some(category),
                     Some(&item.img_url),
                 )
@@ -241,6 +248,38 @@ pub async fn run() -> Result<()> {
 
     info!("sync-wiki complete");
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Upload helper.
+// ---------------------------------------------------------------------------
+
+/// Upload an emoji to the application if `discord_name` is not already in
+/// `existing`. Returns `(emoji_id, animated)` from either the existing record
+/// or the newly uploaded one.
+async fn upload_if_new(
+    http: &Client,
+    api: &ApplicationEmojiClient,
+    existing: &std::collections::HashMap<String, (u64, bool)>,
+    discord_name: &str,
+    img_url: &str,
+) -> Result<(u64, bool)> {
+    if let Some(&(id, animated)) = existing.get(discord_name) {
+        info!("skipping {discord_name} (already registered as {id})");
+        return Ok((id, animated));
+    }
+
+    let image_bytes = download_and_resize(http, img_url).await?;
+    let result = api.create(discord_name, &image_bytes).await?;
+    info!("uploaded emoji {discord_name} -> {}", result.0);
+
+    // Brief pause to stay under the application emoji rate limits.
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    // TODO: overflow path — if we hit the 2000 application emoji cap, fall
+    // back to uploading to a guild emoji server and set source_guild_id.
+
+    Ok(result)
 }
 
 // ---------------------------------------------------------------------------
@@ -354,10 +393,7 @@ async fn scrape_dungeon_page(client: &Client, wiki_path: &str) -> Result<Dungeon
         });
     }
 
-    Ok(DungeonDetails {
-        showcase_emoji,
-        drop_items,
-    })
+    Ok(DungeonDetails { showcase_emoji, drop_items })
 }
 
 // ---------------------------------------------------------------------------
@@ -388,72 +424,6 @@ async fn download_and_resize(client: &Client, url: &str) -> Result<Vec<u8>> {
 }
 
 // ---------------------------------------------------------------------------
-// Discord emoji upload.
-// ---------------------------------------------------------------------------
-
-/// Upload an emoji image to a Discord guild. Returns the new emoji's snowflake ID.
-/// Skips the upload if emoji_guild_id is 0 (not configured).
-async fn upload_emoji(
-    client: &Client,
-    token: &str,
-    guild_id: u64,
-    emoji_name: &str,
-    img_url: &str,
-) -> Result<u64> {
-    if guild_id == 0 {
-        anyhow::bail!("emoji upload skipped: EMOJI_GUILD_ID not set");
-    }
-
-    let image_bytes = download_and_resize(client, img_url).await?;
-    let b64 = base64::engine::general_purpose::STANDARD.encode(&image_bytes);
-    let data_uri = format!("data:image/png;base64,{}", b64);
-
-    let body = serde_json::json!({ "name": emoji_name, "image": data_uri });
-    let url = format!("https://discord.com/api/v10/guilds/{}/emojis", guild_id);
-
-    let resp = client
-        .post(&url)
-        .header("Authorization", format!("Bot {}", token))
-        .header("Content-Type", "application/json")
-        .json(&body)
-        .send()
-        .await
-        .context("uploading emoji to Discord")?;
-
-    if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
-        let retry_after: f64 = resp
-            .json::<serde_json::Value>()
-            .await
-            .ok()
-            .and_then(|v| v["retry_after"].as_f64())
-            .unwrap_or(5.0);
-        warn!("rate limited uploading emoji {emoji_name}, sleeping {retry_after}s");
-        tokio::time::sleep(std::time::Duration::from_secs_f64(retry_after)).await;
-        anyhow::bail!("rate limited — re-run sync-wiki to continue");
-    }
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        anyhow::bail!("Discord emoji upload failed ({status}): {body}");
-    }
-
-    let json: serde_json::Value = resp.json().await?;
-    let id: u64 = json["id"]
-        .as_str()
-        .context("emoji id not a string")?
-        .parse()
-        .context("parsing emoji id")?;
-
-    info!("uploaded emoji {emoji_name} -> {id}");
-
-    // Brief pause to avoid hammering the endpoint (50 emoji/day limit per guild).
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-
-    Ok(id)
-}
-
-// ---------------------------------------------------------------------------
 // Utilities.
 // ---------------------------------------------------------------------------
 
@@ -466,6 +436,19 @@ fn slug_from_display(name: &str) -> String {
         .filter(|s| !s.is_empty())
         .collect::<Vec<_>>()
         .join("_")
+}
+
+/// Convert a logical name to a Discord-safe emoji name (alphanumeric + underscore,
+/// max 32 chars, must start with alphanumeric).
+fn discord_name(logical: &str) -> String {
+    let safe: String = logical
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' })
+        .collect();
+    // Discord names must be 2-32 chars and start with alphanumeric.
+    let trimmed = safe.trim_start_matches('_');
+    let s = if trimmed.is_empty() { "emoji" } else { trimmed };
+    s.chars().take(32).collect()
 }
 
 fn absolute_url(src: &str) -> String {

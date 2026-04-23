@@ -57,9 +57,12 @@ pub struct BotEmoji {
     pub id: i32,
     pub logical_name: String,
     pub discord_emoji_id: i64,
+    pub name_on_discord: String,
+    pub animated: bool,
     pub source_guild_id: Option<i64>,
     pub category: Option<String>,
     pub realmeye_url: Option<String>,
+    pub uploaded_at: DateTime<Utc>,
 }
 
 #[derive(Debug, sqlx::FromRow)]

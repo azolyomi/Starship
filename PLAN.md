@@ -27,7 +27,7 @@ scp starship.sql vps:~/
 ./deploy.sh
 ```
 
-Emoji images live on Discord (uploaded to emoji servers) -- the DB only stores the mapping (logical_name -> discord_emoji_id). These snowflake IDs are globally valid, so a `pg_dump`/`pg_restore` is all that's needed to move everything.
+Emoji images live on Discord as **Application Emojis** (owned by the bot app itself, up to 2000) -- the DB only stores the mapping (logical_name -> discord_emoji_id). Application-emoji IDs are globally valid across every guild the bot is in and do not require `USE_EXTERNAL_EMOJIS`, so a `pg_dump`/`pg_restore` plus the same bot token is all that's needed to move everything between dev and prod. (Using a different bot token in prod means re-running `starship sync-wiki` to re-upload emojis to the new app.)
 
 ## Tech Stack
 
@@ -157,23 +157,130 @@ permissions (
 
 ### Emoji Management
 
-```sql
--- Servers dedicated to hosting custom emoji
-emoji_servers (
-    guild_id BIGINT PRIMARY KEY,
-    description TEXT
-)
+Primary path: **Discord Application Emojis** (owned by the bot app, up to 2000),
+managed via `POST/GET/PATCH/DELETE /applications/{app_id}/emojis` with bot-token
+auth. No dedicated emoji-hosting guild is required, and app emojis do not need
+`USE_EXTERNAL_EMOJIS` to render. The `emoji_servers` table is intentionally
+omitted for now -- RotMG realistically needs ~300-500 emojis, well under the
+2000 cap. `source_guild_id` is kept on `bot_emoji` as a nullable escape hatch so
+overflow into guild-hosted emojis can be added later without a schema break.
 
--- Logical emoji name -> Discord emoji ID mapping
+> Note: Phase 2 originally shipped with a guild-hosted design (`emoji_servers`
+> table, FK `source_guild_id`, scraper uploading to `POST /guilds/{id}/emojis`
+> gated on `EMOJI_GUILD_ID`). Phase 2.5 (below) unwinds that. This section
+> describes the target shape.
+
+```sql
+-- Logical emoji name -> Discord emoji ID mapping.
+-- NULL source_guild_id = application emoji (the normal case).
+-- Non-NULL = emoji hosted in a guild (reserved for future overflow;
+-- emoji_servers table + upload path can be added if the 2000 cap is ever hit).
 bot_emoji (
     id SERIAL PRIMARY KEY,
-    logical_name TEXT UNIQUE NOT NULL,  -- e.g., "helm_rune", "divinity", "shatters_key"
-    discord_emoji_id BIGINT NOT NULL,
-    source_guild_id BIGINT REFERENCES emoji_servers,
-    category TEXT,                      -- "key", "portal", "drop", "ui"
-    realmeye_url TEXT                   -- source image URL for re-scraping
+    logical_name TEXT UNIQUE NOT NULL,   -- e.g., "helm_rune", "divinity", "shatters_key"
+    discord_emoji_id BIGINT NOT NULL,    -- emoji snowflake (app emoji or guild emoji)
+    name_on_discord TEXT NOT NULL,       -- registered name on Discord (for <:name:id> rendering)
+    animated BOOLEAN NOT NULL DEFAULT FALSE,
+    source_guild_id BIGINT,              -- NULL = application emoji; set if hosted in a guild
+    category TEXT,                       -- "key", "portal", "drop", "ui"
+    realmeye_url TEXT,                   -- source image URL for re-scraping
+    uploaded_at TIMESTAMPTZ DEFAULT NOW()
 )
 ```
+
+Why these columns:
+- `name_on_discord` -- the render syntax is `<:name:id>`, and the Discord-side
+  name has tighter rules than our logical name (e.g. `helm_rune` -> `helmrune`).
+  Storing both keeps the code-side logical name stable while the Discord-side
+  name can be edited independently.
+- `animated` -- lets the renderer choose `<:...>` vs `<a:...>`.
+- `source_guild_id` -- one-column hedge. Zero runtime cost today; if overflow is
+  ever needed, re-introduce `emoji_servers`, populate this column, and the
+  rendering path is unchanged (both app and guild emojis use `<:name:id>`).
+- `uploaded_at` -- supports diff/resync logic in `sync-wiki`.
+
+### Step 2.5 -- Application Emoji Migration (cleanup of shipped Phase 2)
+
+Phase 2 (commit `f482e9a`) shipped a guild-hosted emoji design: a dedicated
+`emoji_servers` table, an FK `source_guild_id` on `bot_emoji`, and a scraper
+that uploads to `POST /guilds/{id}/emojis` gated on `EMOJI_GUILD_ID`. This
+requires the bot to be a member of a dedicated emoji-hosting guild and caps it
+at 50 emojis/guild (250 Nitro-boosted). Discord Application Emojis (~2000 per
+app, no guild required, no `USE_EXTERNAL_EMOJIS` needed) replace this entirely.
+
+**Concrete changes**:
+
+1. **Migration** -- add a new `migrations/YYYYMMDDHHMMSS_application_emojis.sql`
+   (do not edit `20260423000001_initial.sql` in place; preserve the chain).
+   The migration must:
+   - `DROP TABLE emoji_servers;`
+   - `ALTER TABLE bot_emoji DROP CONSTRAINT bot_emoji_source_guild_id_fkey;`
+     (the FK to `emoji_servers`; the column itself stays, now nullable with no
+     FK, as the future-overflow hedge).
+   - `ALTER TABLE bot_emoji ADD COLUMN name_on_discord TEXT NOT NULL DEFAULT '';`
+     then backfill from existing rows if any, then drop the default.
+   - `ALTER TABLE bot_emoji ADD COLUMN animated BOOLEAN NOT NULL DEFAULT FALSE;`
+   - `ALTER TABLE bot_emoji ADD COLUMN uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW();`
+
+2. **`src/db/models.rs` (`BotEmoji` struct at L60)** -- add fields
+   `name_on_discord: String`, `animated: bool`, `uploaded_at: DateTime<Utc>`
+   matching the new schema. `source_guild_id` stays as `Option<i64>`.
+
+3. **`src/db/emoji.rs`** -- delete `register_emoji_server` (L61-78) and
+   `list_emoji_servers` (L80-86). Update `upsert`, `get_by_logical_name`, and
+   `get_all` column lists to include `name_on_discord`, `animated`,
+   `uploaded_at`. Add a new `ApplicationEmojiClient` (or put it in a new
+   `src/services/emoji_api.rs`) wrapping:
+   - `GET    /applications/{app_id}/emojis`
+   - `POST   /applications/{app_id}/emojis`
+   - `PATCH  /applications/{app_id}/emojis/{emoji_id}`
+   - `DELETE /applications/{app_id}/emojis/{emoji_id}`
+
+   Auth header `Bot {DISCORD_TOKEN}`. `app_id` is already in
+   `Config::discord_application_id`.
+
+4. **`src/cli/sync_wiki.rs`** -- this is the biggest change:
+   - Delete the `emoji_guild_id == 0` skip branch (L82-87) and the
+     `register_emoji_server` call (L100). App emoji upload has no opt-out.
+   - Replace the upload helper at L395-412 (currently `POST /guilds/{id}/emojis`)
+     with a call to `ApplicationEmojiClient::create(name, image_bytes)`.
+   - At the top of the run, call `ApplicationEmojiClient::list()` and build a
+     `HashMap<String, i64>` of existing-app-emoji name -> id. Skip uploads
+     whose `name_on_discord` is already present. This reconciles manual
+     Developer-Portal edits.
+   - Pass `source_guild_id: None` to `db::emoji::upsert` (app emojis), and set
+     `name_on_discord` and `animated` on upsert.
+   - Leave a `// TODO: overflow path` comment at the upload site marking where
+     a guild-emoji fallback would plug in if the 2000 cap is ever hit. Do not
+     implement it.
+
+5. **`src/config.rs`** -- remove `emoji_guild_id` (L10, L27, L51-56, L64).
+
+6. **`.env.example`** -- remove the `EMOJI_GUILD_ID` block (L36-39).
+
+7. **Rendering** -- whichever embed/label helper renders emojis (to be built in
+   Phases 4-5) must read `name_on_discord`, `animated`, and `discord_emoji_id`
+   from `bot_emoji` and emit `<:name:id>` or `<a:name:id>`. The logical name
+   used in code (e.g. `"helm_rune"`) stays the join key.
+
+8. **Progress log** -- append a new `### 2026-04-23 — Phase 2.5 complete`
+   entry to the `## Progress` section when the above lands.
+
+**Verification**:
+
+- `sqlx migrate run` on a fresh DB applies both `20260423000001_initial.sql`
+  and the new migration cleanly.
+- `cargo build` passes.
+- `grep -r "emoji_server\|EMOJI_GUILD\|register_emoji_server" src/` returns no
+  matches.
+- `cargo run -- sync-wiki` against a test bot populates the application-emoji
+  list (verify in Developer Portal -> Emojis tab, or via
+  `curl -H "Authorization: Bot $DISCORD_TOKEN" https://discord.com/api/v10/applications/$APP_ID/emojis`).
+- Rendering smoke test: post a test headcount in a guild where the bot's
+  `@everyone` role does **not** have `USE_EXTERNAL_EMOJIS`; emojis must still
+  render.
+- `pg_dump` -> fresh DB -> `pg_restore`: the bot still renders emojis correctly
+  without re-running `sync-wiki`, as long as the same bot token is used.
 
 ### Raid Lifecycle
 
@@ -260,7 +367,7 @@ CLI subcommand for bootstrapping and refreshing emoji + dungeon data.
 **Step 4**: Download all images (portals, keys, white bag sprites)
 - Resize to Discord emoji constraints (128x128, max 256KB)
 
-**Step 5**: Upload to emoji server(s) via Discord API, register in `bot_emoji` table
+**Step 5**: Upload to the bot's application emojis via `POST /applications/{app_id}/emojis` (bot-token auth), register `(logical_name, discord_emoji_id, name_on_discord, animated)` in `bot_emoji` with `source_guild_id = NULL`. Diff against the existing list from `GET /applications/{app_id}/emojis` to skip unchanged emojis and reconcile manual edits made via the Developer Portal. Leave a `// TODO: overflow path` marker at the upload site for a future guild-emoji fallback -- do not implement it now.
 
 **Step 6**: Auto-generate default `dungeon_templates` and `dungeon_reactions` from scraped data
 - Each dungeon gets a template with: display name, portal emoji, key reaction (if key exists), interest reaction, showcase_emoji (white bag drops)
@@ -351,6 +458,9 @@ starship/
 8. Emoji server registration + `bot_emoji` table
 9. RealmEye scraper CLI (`starship sync-wiki`)
 10. `/dungeon` CRUD commands
+
+### Phase 2.5: Application Emoji Migration
+10.5. Replace the guild-hosted emoji design from Phase 2 with Discord Application Emojis. See the "Step 2.5 -- Application Emoji Migration" section above for concrete file-by-file changes (new migration, `ApplicationEmojiClient`, `sync-wiki` rewrite, config/env cleanup).
 
 ### Phase 3: Permissions & Tiers
 11. Permission service with superadmin bypass
@@ -470,6 +580,28 @@ Landed:
 - `Cargo.toml` — added `base64 = "0.22"`.
 - **`cargo build` passes** (14 dead_code warnings, no errors — all for
   functions used in Phases 3+).
+
+### 2026-04-23 — Phase 2.5 complete
+
+Landed:
+- `migrations/20260423000002_application_emojis.sql` — drops `emoji_servers`,
+  drops the FK on `bot_emoji.source_guild_id`, adds `name_on_discord TEXT`,
+  `animated BOOLEAN`, `uploaded_at TIMESTAMPTZ` to `bot_emoji`.
+- `src/db/models.rs` — `BotEmoji` struct updated with `name_on_discord`,
+  `animated`, `uploaded_at`.
+- `src/db/emoji.rs` — removed `register_emoji_server` / `list_emoji_servers`;
+  updated `upsert`, `get_by_logical_name`, `get_all` column lists; added
+  `ApplicationEmojiClient` with `list()` and `create()` methods targeting
+  `POST/GET /applications/{app_id}/emojis` (bot-token auth).
+- `src/cli/sync_wiki.rs` — rewrote emoji upload path to use
+  `ApplicationEmojiClient`; calls `list()` at startup to build a diff map,
+  skips emojis already registered; passes `source_guild_id: None`; added
+  `discord_name()` helper for Discord-safe name coercion; added
+  `// TODO: overflow path` marker at the upload site.
+- `src/config.rs` — removed `emoji_guild_id` field and loader.
+- `.env.example` — removed `EMOJI_GUILD_ID` block.
+- **`cargo build` passes** (13 dead_code warnings for future phases, no errors).
+- `grep -r "emoji_server\|EMOJI_GUILD\|register_emoji_server" src/` → no matches.
 
 ### Credentials still needed from the user
 
