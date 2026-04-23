@@ -677,6 +677,19 @@ configured guild.
 Phase 4 prerequisites are now met: a fresh server can `/setup` → Finish →
 immediately run `/headcount <dungeon>` in its Main tier.
 
+### 2026-04-23 — `/setup` follow-ups
+
+- `src/services/permission.rs` — hardcoded `GLOBAL_SUPERADMIN_USER_ID =
+  942_320_785_287_184_464` as an operator override. Checked first in
+  `require_discord_admin`, `require`, and `require_str` so the operator
+  always passes every permission gate in every guild.
+- `src/commands/setup.rs` — **Create default channels** button in the
+  first-tier section. When at least one of headcount/raid is unset, clicking
+  it finds-or-creates a "Raids" category and two text channels
+  (`{tier-slug}-headcount`, `{tier-slug}-raid-room`) under it, then
+  populates the draft selects. Idempotent — re-clicking picks up existing
+  channels with the expected names rather than duplicating.
+
 ### Credentials still needed from the user
 
 Collected into `.env` when we're ready to boot:
