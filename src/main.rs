@@ -74,6 +74,22 @@ async fn run_bot(config: config::Config) -> Result<()> {
             commands: commands::all(),
             command_check: Some(|ctx| Box::pin(ensure_setup(ctx))),
             on_error: |err| Box::pin(on_error(err)),
+            event_handler: |ctx, event, _framework, data| {
+                Box::pin(async move {
+                    if let serenity::FullEvent::InteractionCreate { interaction } = event {
+                        match interaction {
+                            serenity::Interaction::Component(mci) => {
+                                handlers::component::handle(ctx, mci, data).await?;
+                            }
+                            serenity::Interaction::Modal(modal) => {
+                                handlers::modal::handle(ctx, modal, data).await?;
+                            }
+                            _ => {}
+                        }
+                    }
+                    Ok(())
+                })
+            },
             ..Default::default()
         })
         .setup(move |ctx, _ready, framework| {

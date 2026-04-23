@@ -101,6 +101,22 @@ pub async fn get_by_name(
     Ok(row)
 }
 
+/// Fetch a template by its primary key (used by component handlers).
+pub async fn get_by_id(pool: &PgPool, id: i32) -> Result<Option<DungeonTemplate>> {
+    let row = sqlx::query_as::<_, DungeonTemplate>(
+        r#"
+        SELECT id, guild_id, name, display_name, emoji, color,
+               message_title, message_description, thumbnail_url, image_url,
+               requires_vc, notification_role_id, showcase_emoji, created_at
+        FROM dungeon_templates WHERE id = $1
+        "#,
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row)
+}
+
 /// Reactions for a template, ordered by sort_order.
 pub async fn get_reactions(pool: &PgPool, template_id: i32) -> Result<Vec<DungeonReaction>> {
     let rows = sqlx::query_as::<_, DungeonReaction>(

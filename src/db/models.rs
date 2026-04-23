@@ -11,7 +11,7 @@ pub struct Guild {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, sqlx::FromRow)]
+#[derive(Debug, Clone, sqlx::FromRow)]
 pub struct Tier {
     pub id: i32,
     pub guild_id: i64,
@@ -87,6 +87,16 @@ pub struct Headcount {
     pub status: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+pub struct HeadcountReaction {
+    pub id: i32,
+    pub headcount_id: i32,
+    pub dungeon_reaction_id: i32,
+    pub user_id: i64,
+    pub confirmed: bool,
+    pub confirmed_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, sqlx::FromRow)]

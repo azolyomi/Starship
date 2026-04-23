@@ -64,6 +64,11 @@ pub async fn get_by_logical_name(pool: &PgPool, name: &str) -> Result<Option<Bot
     Ok(row)
 }
 
+pub async fn get_all_as_map(pool: &PgPool) -> Result<HashMap<String, BotEmoji>> {
+    let all = get_all(pool).await?;
+    Ok(all.into_iter().map(|e| (e.logical_name.clone(), e)).collect())
+}
+
 pub async fn get_all(pool: &PgPool) -> Result<Vec<BotEmoji>> {
     let rows = sqlx::query_as::<_, BotEmoji>(
         r#"

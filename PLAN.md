@@ -690,6 +690,36 @@ immediately run `/headcount <dungeon>` in its Main tier.
   populates the draft selects. Idempotent — re-clicking picks up existing
   channels with the expected names rather than duplicating.
 
+### 2026-04-23 — Phase 4 complete
+
+Landed:
+- `src/db/headcount.rs` — DB layer: `create`, `set_message_id`, `get`, `set_status`,
+  `list_active`, `reaction_counts`, `get_user_reaction`, `add_reaction`, `remove_reaction`.
+- `src/db/models.rs` — added `HeadcountReaction` struct; added `#[derive(Clone)]` to `Tier`.
+- `src/db/dungeon.rs` — added `get_by_id` (used by component handlers).
+- `src/db/emoji.rs` — added `get_all_as_map` (builds a `HashMap<logical_name, BotEmoji>`).
+- `src/db/mod.rs` — exposes `headcount` module.
+- `src/embeds/headcount.rs` — full embed builder: `emoji_str`, `emoji_rt`, `build`
+  (embed + reaction/leader buttons), `build_closed` (grey=cancelled / green=converted).
+- `src/commands/headcount.rs` — `/headcount <dungeon> [tier]` command: autocomplete for
+  both args, permission check (`StartHeadcount`), tier auto-resolve when only one exists,
+  delegates to `services::raid::start_headcount`.
+- `src/commands/mod.rs` — `/headcount` registered.
+- `src/services/raid.rs` — `start_headcount`: creates DB row, posts embed to headcount
+  channel, updates `message_id` after send.
+- `src/handlers/component.rs` — stateless `custom_id` routing for `hc:*` buttons:
+  `hc:<id>:react:<rid>` (toggle or open confirmation modal), `hc:<id>:start` (leader only,
+  marks converted + closes embed), `hc:<id>:cancel` (leader only, marks cancelled +
+  closes embed). Setup wizard `setup:*` clicks pass through silently.
+- `src/handlers/modal.rs` — `hc:<id>:confirm:<rid>`: records confirmed reaction in DB,
+  edits headcount message via HTTP, acknowledges with ephemeral "✅ Confirmed!".
+- `src/main.rs` — global `event_handler` in `FrameworkOptions` dispatches `Component`
+  and `Modal` interactions to their handlers.
+- **`cargo build` passes** (15 dead-code warnings for Phase 5+ scaffolding, no errors).
+
+Phase 5 prerequisites are now met: the `/headcount` command works end-to-end.
+The `hc:<id>:start` handler has a `// TODO Phase 5` marker where `start_run` will plug in.
+
 ### Credentials still needed from the user
 
 Collected into `.env` when we're ready to boot:
