@@ -1,3 +1,5 @@
+pub mod dungeon;
+pub mod emoji;
 pub mod models;
 
 use anyhow::Result;

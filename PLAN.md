@@ -438,6 +438,39 @@ Landed:
 - **`cargo build` passes** (7 dead_code warnings, no errors). Rust 1.95.0,
   sqlx 0.8, serenity 0.12, poise 0.6.
 
+### 2026-04-23 — Phase 2 complete
+
+Landed:
+- `src/templates/mod.rs` + `src/templates/dungeons.rs` — 8 built-in dungeon
+  templates as compile-time `&'static` data: O3, Void, Shatters, Lost Halls,
+  Cultist, Nest, Fungal Cavern, Crystal Cavern. Each has interest + key/rune
+  reactions with sort order and confirm flags.
+- `src/db/dungeon.rs` — DB query layer: `seed_builtins` (upsert-on-conflict
+  global templates at startup), `list_for_guild` (DISTINCT ON with guild
+  override precedence), `get_by_name`, `get_reactions`, `insert_guild_template`,
+  `update_guild_template`, `delete_guild_template`, `upsert_global_template`,
+  `upsert_reaction` (used by sync-wiki).
+- `src/db/emoji.rs` — `upsert`, `get_by_logical_name`, `get_all`,
+  `register_emoji_server`, `list_emoji_servers`.
+- `src/db/mod.rs` — exposes dungeon and emoji submodules.
+- `src/commands/dungeon.rs` — `/dungeon list`, `/dungeon create`, `/dungeon edit`,
+  `/dungeon delete` slash commands. Color parsed from hex string. Handles
+  uniqueness conflict on create with a user-friendly message.
+- `src/commands/mod.rs` — adds `/dungeon` to the command list.
+- `src/cli/sync_wiki.rs` — full RealmEye scraper: fetches dungeon index table,
+  scrapes per-dungeon drop pages, downloads+resizes images (128×128 PNG),
+  uploads to Discord emoji server via REST, upserts `bot_emoji` and
+  `dungeon_templates`. Selector constants grouped at top for easy maintenance.
+  Respects Discord rate limit headers. Skips emoji upload if `EMOJI_GUILD_ID`
+  not set.
+- `src/config.rs` — added `emoji_guild_id: Option<u64>`.
+- `.env.example` — documented `EMOJI_GUILD_ID`.
+- `src/main.rs` — `mod templates` added; calls `db::dungeon::seed_builtins`
+  after migrations on every startup.
+- `Cargo.toml` — added `base64 = "0.22"`.
+- **`cargo build` passes** (14 dead_code warnings, no errors — all for
+  functions used in Phases 3+).
+
 ### Credentials still needed from the user
 
 Collected into `.env` when we're ready to boot:

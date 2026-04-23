@@ -11,6 +11,7 @@ mod db;
 mod embeds;
 mod handlers;
 mod services;
+mod templates;
 
 pub struct BotData {
     pub db: PgPool,
@@ -61,6 +62,9 @@ async fn run_bot(config: config::Config) -> Result<()> {
 
     sqlx::migrate!("./migrations").run(&pool).await?;
     info!("migrations applied");
+
+    db::dungeon::seed_builtins(&pool).await?;
+    info!("built-in dungeon templates seeded");
 
     let token = config.discord_token.clone();
     let test_guild = config.discord_test_guild_id.map(serenity::GuildId::new);
