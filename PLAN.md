@@ -404,3 +404,48 @@ Architecture already supports this:
 - Manual testing of each interaction flow (headcount -> confirm -> convert -> run -> control panel -> end)
 - Test crash recovery by killing the bot mid-run and restarting
 - Test permission denials for unauthorized users
+
+## Progress
+
+Append-only log of what has landed, so a fresh Claude context can pick up
+from here without re-reading transcripts.
+
+### 2026-04-23 — Phase 1 scaffolding (partial)
+
+Landed:
+- Legacy Python `src/`, `requirements.txt`, `README.md` removed.
+- `.gitignore` rewritten for Rust (keeps `.env` out of git).
+- `Cargo.toml` — serenity 0.12 + poise 0.6 + songbird 0.4 + sqlx 0.8 + tokio
+  + tracing + reqwest + scraper + image + clap.
+- `.env.example` — documents every env var the bot reads.
+- `setup.sh` (chmod +x) — idempotent: installs rustup, postgresql,
+  sqlx-cli; creates `starship` DB user with a generated password; writes
+  `DATABASE_URL` into `.env` (mode 600); runs migrations; supports
+  `--restore <dump>`.
+- `migrations/20260423000001_initial.sql` — full schema per PLAN (guilds,
+  tiers, tier_roles, dungeon_templates + reactions, tier_dungeons,
+  permissions, emoji_servers, bot_emoji, headcounts + reactions, runs +
+  participants, `touch_updated_at` trigger).
+- `CLAUDE.md` — project rules: breakpoint cadence, credential management.
+
+Not yet done in Phase 1:
+- `src/` Rust skeleton (main.rs, config.rs, db module, commands module,
+  handlers module, embeds module, services module).
+- `/setup` command implementation.
+- First successful `cargo build`.
+- First successful bot login to Discord (needs `.env` credentials from
+  user).
+
+### Credentials still needed from the user
+
+Collected into `.env` when we're ready to boot:
+- `DISCORD_TOKEN` — from https://discord.com/developers/applications → Bot
+  tab → Reset Token. Enable the **Message Content** and **Server Members**
+  privileged intents while there.
+- `DISCORD_APPLICATION_ID` — same application → General Information.
+- `DISCORD_TEST_GUILD_ID` *(optional but strongly recommended for dev)* —
+  right-click the test server in Discord with Developer Mode on → Copy
+  Server ID.
+
+`DATABASE_URL` is populated automatically by `setup.sh`; do not set it
+by hand.
