@@ -72,6 +72,7 @@ async fn run_bot(config: config::Config) -> Result<()> {
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
             commands: commands::all(),
+            command_check: Some(|ctx| Box::pin(ensure_setup(ctx))),
             on_error: |err| Box::pin(on_error(err)),
             ..Default::default()
         })
@@ -112,4 +113,28 @@ async fn on_error(error: poise::FrameworkError<'_, BotData, BotError>) {
     if let Err(e) = poise::builtins::on_error(error).await {
         tracing::error!("error while handling error: {e}");
     }
+}
+
+/// Framework command_check: bail out of any non-`/setup` command when the
+/// guild row doesn't exist yet, with a friendly prompt to run `/setup`.
+async fn ensure_setup(ctx: BotContext<'_>) -> Result<bool, BotError> {
+    if ctx.command().name == "setup" {
+        return Ok(true);
+    }
+    let Some(guild_id) = ctx.guild_id() else {
+        return Ok(true); // `guild_only` commands will reject DMs on their own.
+    };
+    let exists = db::guild::get(&ctx.data().db, guild_id.get() as i64)
+        .await?
+        .is_some();
+    if !exists {
+        ctx.send(
+            poise::CreateReply::default()
+                .content("This server hasn't been set up yet. Run `/setup` first.")
+                .ephemeral(true),
+        )
+        .await?;
+        return Ok(false);
+    }
+    Ok(true)
 }

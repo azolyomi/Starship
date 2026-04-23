@@ -635,6 +635,16 @@ Landed:
 - **`cargo build` passes** (23 dead_code warnings for Phase 4+ functions, no
   errors).
 
+### 2026-04-23 — Phase 3 fixups
+
+- `src/services/permission.rs` — added Discord "Manage Server" bypass as
+  second tier (after superadmin, before role check) so server admins can
+  always run management commands without needing a DB grant.
+- `src/main.rs` — added `ensure_setup` framework `command_check`: any
+  command except `/setup` returns an ephemeral "Run `/setup` first" message
+  if no guild row exists, preventing FK errors on first use.
+- `CLAUDE.md` — added "Secret files" rule: never read `.env` files.
+
 ### Credentials still needed from the user
 
 Collected into `.env` when we're ready to boot:

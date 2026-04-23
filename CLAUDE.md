@@ -33,6 +33,12 @@ they can reset your context (`/clear`) between chunks.
 Do not chain multiple phases in a single session unless the user explicitly
 asks for it.
 
+## Secret files (IMPORTANT)
+
+Never read `.env` files. Treat them as write-only from Claude's perspective.
+If you need to know whether a variable is set, ask the user or inspect
+`.env.example` for the key name — never `cat`/`Read` the live `.env`.
+
 ## Credential management (IMPORTANT)
 
 Secrets are handled with the same rigour as production code.

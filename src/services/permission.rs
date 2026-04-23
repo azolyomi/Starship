@@ -81,9 +81,21 @@ pub async fn require(
 
     let caller_id = ctx.author().id.get() as i64;
 
-    // Superadmin bypass.
+    // Superadmin bypass. (A framework command_check already ensures the
+    // guild row exists before any non-`/setup` command runs.)
     if let Some(guild) = db::guild::get(&ctx.data().db, guild_id).await? {
         if guild.superadmin_user_id == Some(caller_id) {
+            return Ok(());
+        }
+    }
+
+    // Discord "Manage Server" bypass — server admins always have full access.
+    if let Some(member) = ctx.author_member().await {
+        if member
+            .permissions
+            .map(|p| p.manage_guild() || p.administrator())
+            .unwrap_or(false)
+        {
             return Ok(());
         }
     }
