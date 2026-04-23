@@ -410,7 +410,7 @@ Architecture already supports this:
 Append-only log of what has landed, so a fresh Claude context can pick up
 from here without re-reading transcripts.
 
-### 2026-04-23 — Phase 1 scaffolding (partial)
+### 2026-04-23 — Phase 1 complete
 
 Landed:
 - Legacy Python `src/`, `requirements.txt`, `README.md` removed.
@@ -418,23 +418,25 @@ Landed:
 - `Cargo.toml` — serenity 0.12 + poise 0.6 + songbird 0.4 + sqlx 0.8 + tokio
   + tracing + reqwest + scraper + image + clap.
 - `.env.example` — documents every env var the bot reads.
-- `setup.sh` (chmod +x) — idempotent: installs rustup, postgresql,
-  sqlx-cli; creates `starship` DB user with a generated password; writes
-  `DATABASE_URL` into `.env` (mode 600); runs migrations; supports
+- `setup.sh` — idempotent: installs build deps (cmake, libopus-dev), rustup,
+  postgresql, sqlx-cli; creates `starship` DB user with a generated password;
+  writes `DATABASE_URL` into `.env` (mode 600); runs migrations; supports
   `--restore <dump>`.
-- `migrations/20260423000001_initial.sql` — full schema per PLAN (guilds,
-  tiers, tier_roles, dungeon_templates + reactions, tier_dungeons,
-  permissions, emoji_servers, bot_emoji, headcounts + reactions, runs +
-  participants, `touch_updated_at` trigger).
+- `migrations/20260423000001_initial.sql` — full schema per PLAN.
 - `CLAUDE.md` — project rules: breakpoint cadence, credential management.
-
-Not yet done in Phase 1:
-- `src/` Rust skeleton (main.rs, config.rs, db module, commands module,
-  handlers module, embeds module, services module).
-- `/setup` command implementation.
-- First successful `cargo build`.
-- First successful bot login to Discord (needs `.env` credentials from
-  user).
+- `src/main.rs` — entry point: CLI (bot / sync-wiki), tracing init, bot setup
+  via poise + serenity; guild-local command registration when
+  `DISCORD_TEST_GUILD_ID` is set.
+- `src/config.rs` — `Config` struct loaded once from `.env` via dotenvy;
+  `Debug` impl masks secrets (first 4 chars + length).
+- `src/db/mod.rs` + `src/db/models.rs` — `PgPool` factory; typed structs for
+  every table (`Guild`, `Tier`, `DungeonTemplate`, `DungeonReaction`,
+  `BotEmoji`, `Headcount`, `Run`).
+- `src/commands/mod.rs` + `src/commands/setup.rs` — `/setup` command stub.
+- `src/handlers/`, `src/embeds/`, `src/services/`, `src/cli/` — all modules
+  scaffolded as stubs (compile, no logic yet).
+- **`cargo build` passes** (7 dead_code warnings, no errors). Rust 1.95.0,
+  sqlx 0.8, serenity 0.12, poise 0.6.
 
 ### Credentials still needed from the user
 

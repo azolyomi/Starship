@@ -59,6 +59,23 @@ install_rust() {
 }
 
 # ---------------------------------------------------------------------------
+# Build dependencies (needed before `cargo build`)
+# ---------------------------------------------------------------------------
+install_build_deps() {
+    local missing=()
+    command -v cmake >/dev/null 2>&1 || missing+=(cmake)
+    dpkg -s libopus-dev >/dev/null 2>&1 || missing+=(libopus-dev)
+
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        log "installing build dependencies: ${missing[*]}"
+        sudo apt-get update -qq
+        sudo apt-get install -y "${missing[@]}"
+    else
+        log "build dependencies already installed"
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # PostgreSQL
 # ---------------------------------------------------------------------------
 install_postgres() {
@@ -211,6 +228,7 @@ restore_dump() {
 # ---------------------------------------------------------------------------
 main() {
     require_linux
+    install_build_deps
     install_rust
     install_postgres
     ensure_db
