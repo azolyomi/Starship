@@ -603,6 +603,38 @@ Landed:
 - **`cargo build` passes** (13 dead_code warnings for future phases, no errors).
 - `grep -r "emoji_server\|EMOJI_GUILD\|register_emoji_server" src/` → no matches.
 
+### 2026-04-23 — Phase 3 complete
+
+Landed:
+- `src/db/guild.rs` — `get`, `upsert`, `set_superadmin`, `set_log_channel`,
+  `set_notification_channel`. Minimal layer; used by permission service today,
+  rest used when `/setup`/`/config` are fully implemented.
+- `src/db/permission.rs` — `grant`, `revoke`, `list_for_guild`, `check`.
+  `check` uses a dynamic query (not a macro) to pass `role_ids: &[i64]` via
+  `ANY($2)`.
+- `src/db/tier.rs` — `create`, `list`, `get_by_id`, `get_by_name`, `update`,
+  `delete`, `add_role`, `remove_role`, `list_roles`, `add_dungeon`,
+  `remove_dungeon`, `list_dungeons`. Full CRUD + junction tables.
+- `src/db/mod.rs` — exposes `guild`, `permission`, `tier` modules.
+- `src/db/models.rs` — added `Permission` struct.
+- `src/services/permission.rs` — `Action` enum (11 variants), `require`,
+  `require_str`, `require_discord_admin`. Superadmin bypass via
+  `guild.superadmin_user_id`; role-based fallback via `db::permission::check`.
+  `ALL_ACTIONS` constant for autocomplete.
+- `src/commands/permission.rs` — `/permission grant/revoke/list`.
+  Requires `ManagePermissions`. Autocomplete for action name. Tier/dungeon
+  scope args resolve by name.
+- `src/commands/tier.rs` — `/tier create/delete/list/edit/add-role/remove-role/
+  add-dungeon/remove-dungeon`. All require `ManageTiers`. Autocomplete for
+  tier and dungeon names.
+- `src/commands/notifications.rs` — `/notifications` stub (permission-gated
+  on `ConfigureGuild`; full embed + button build is Phase 4).
+- `src/commands/mod.rs` — all three new command roots registered.
+- Applied `20260423000002_application_emojis.sql` migration (was pending from
+  Phase 2.5 commit).
+- **`cargo build` passes** (23 dead_code warnings for Phase 4+ functions, no
+  errors).
+
 ### Credentials still needed from the user
 
 Collected into `.env` when we're ready to boot:

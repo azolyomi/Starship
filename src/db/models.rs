@@ -66,6 +66,16 @@ pub struct BotEmoji {
 }
 
 #[derive(Debug, sqlx::FromRow)]
+pub struct Permission {
+    pub id: i32,
+    pub guild_id: i64,
+    pub role_id: i64,
+    pub action: String,
+    pub tier_id: Option<i32>,
+    pub dungeon_template_id: Option<i32>,
+}
+
+#[derive(Debug, sqlx::FromRow)]
 pub struct Headcount {
     pub id: i32,
     pub guild_id: i64,

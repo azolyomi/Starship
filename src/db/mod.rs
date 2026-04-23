@@ -1,6 +1,9 @@
 pub mod dungeon;
 pub mod emoji;
+pub mod guild;
 pub mod models;
+pub mod permission;
+pub mod tier;
 
 use anyhow::Result;
 use sqlx::PgPool;
