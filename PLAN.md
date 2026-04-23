@@ -645,6 +645,38 @@ Landed:
   if no guild row exists, preventing FK errors on first use.
 - `CLAUDE.md` — added "Secret files" rule: never read `.env` files.
 
+### 2026-04-23 — `/setup` wizard (Phase 1 item 6 upgraded from stub)
+
+Real first-run experience so Phase 4 can land on top of a properly
+configured guild.
+
+- `src/commands/setup.rs` — full dashboard-style wizard built on ephemeral
+  messages + component interactions:
+  - **Dashboard** shows checklist (First tier ✅/⬜, Superadmin, Log channel,
+    Notif channel) with row of section buttons + Finish/Close. Finish is
+    disabled until at least one tier has a headcount channel.
+  - **First tier** section: ChannelSelect (headcount, required), ChannelSelect
+    (raid, optional), RoleSelect (access roles, multi). On create, names the
+    tier "Main" and automatically attaches every globally-available dungeon so
+    `/headcount` works out of the box. On edit, syncs roles via
+    add/remove diff.
+  - **Superadmin** section: UserSelect pre-populated to current superadmin,
+    with [Use me] / [Clear] / [← Back] buttons.
+  - **Log channel** / **Notif channel**: shared `channel_section_view`
+    helper, text-channel-only selects, [Clear] / [← Back].
+  - All writes are immediate except the first-tier section, which drafts
+    in-memory and commits atomically on [Create tier] / [Save changes].
+    Timeouts (10 min idle) edit the ephemeral to a retry-friendly message.
+  - Re-running `/setup` shows current state with every select
+    pre-populated, doubling as a config surface.
+- `src/db/guild.rs` — `set_superadmin` now takes `Option<i64>` to support
+  clearing; added `mark_setup_complete(pool, guild_id, complete)`.
+- **`cargo build` passes** (16 dead_code warnings for Phase 4+ scaffolding,
+  no errors).
+
+Phase 4 prerequisites are now met: a fresh server can `/setup` → Finish →
+immediately run `/headcount <dungeon>` in its Main tier.
+
 ### Credentials still needed from the user
 
 Collected into `.env` when we're ready to boot:

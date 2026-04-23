@@ -31,11 +31,22 @@ pub async fn upsert(pool: &PgPool, guild_id: i64) -> Result<Guild> {
     Ok(guild)
 }
 
-pub async fn set_superadmin(pool: &PgPool, guild_id: i64, user_id: i64) -> Result<()> {
+pub async fn set_superadmin(pool: &PgPool, guild_id: i64, user_id: Option<i64>) -> Result<()> {
     sqlx::query!(
         "UPDATE guilds SET superadmin_user_id = $2 WHERE guild_id = $1",
         guild_id,
         user_id
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn mark_setup_complete(pool: &PgPool, guild_id: i64, complete: bool) -> Result<()> {
+    sqlx::query!(
+        "UPDATE guilds SET setup_complete = $2 WHERE guild_id = $1",
+        guild_id,
+        complete
     )
     .execute(pool)
     .await?;
