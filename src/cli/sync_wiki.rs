@@ -776,52 +776,93 @@ async fn scrape_dungeon_page(client: &Client, wiki_path: &str) -> Result<Dungeon
         }
     };
 
-    let doc = Html::parse_fragment(&section_html);
+    Ok(DungeonDetails {
+        drop_items: parse_drop_items(&section_html),
+    })
+}
+
+/// Parse drop items out of a pre-sliced drops-section HTML fragment.
+///
+/// RealmEye groups multi-item drops (UT sets, potion pairs, tier bundles)
+/// into a single `<td>` containing N consecutive `<a href="/wiki/…"><img></a>`
+/// pairs. The previous implementation pulled `td:first-child img` and took
+/// only the first hit per row, silently losing the rest — Void was missing
+/// Tier 13 Armor, Potion of Mana, and the whole Void UT set; Cultist Hideout
+/// was missing Potion of Mana and four of the five Necromancer UT pieces.
+///
+/// We now iterate every anchor inside the first cell, then fall back to any
+/// bare `<img>`s in that cell whose src wasn't already captured — items that
+/// don't have a dedicated wiki page still render as a standalone `<img>`.
+fn parse_drop_items(section_html: &str) -> Vec<DropItem> {
+    let doc = Html::parse_fragment(section_html);
     let row_sel = Selector::parse(SEL_DROP_ROWS).unwrap();
-    let img_sel = Selector::parse(SEL_DROP_IMG).unwrap();
-    let item_link_sel = Selector::parse(r#"td:first-child a[href^="/wiki/"]"#).unwrap();
+    let anchor_sel = Selector::parse(r#"td:first-child a[href^="/wiki/"]"#).unwrap();
+    let fallback_img_sel = Selector::parse(SEL_DROP_IMG).unwrap();
+    let img_in_anchor_sel = Selector::parse("img").unwrap();
 
     let mut drop_items = Vec::new();
 
     for row in doc.select(&row_sel) {
-        // First-cell img both identifies the item and gives its emoji source.
-        let img_el = match row.select(&img_sel).next() {
-            Some(el) => el,
-            None => continue,
-        };
-        let display_name = img_el
-            .value()
-            .attr("alt")
-            .or_else(|| img_el.value().attr("title"))
-            .unwrap_or("")
-            .trim();
-        if display_name.is_empty() {
-            continue;
+        let mut seen_srcs: HashSet<String> = HashSet::new();
+
+        // Primary pass: every `<a href="/wiki/…"><img></a>` in the first
+        // cell is one drop. Iterating all anchors is what captures grouped
+        // rows like "Potion of Life + Potion of Mana".
+        for anchor in row.select(&anchor_sel) {
+            let img_el = match anchor.select(&img_in_anchor_sel).next() {
+                Some(el) => el,
+                None => continue,
+            };
+            let display_name = img_el
+                .value()
+                .attr("alt")
+                .or_else(|| img_el.value().attr("title"))
+                .unwrap_or("")
+                .trim();
+            if display_name.is_empty() {
+                continue;
+            }
+            let img_url = match img_el.value().attr("src") {
+                Some(src) => absolute_url(src),
+                None => continue,
+            };
+            seen_srcs.insert(img_url.clone());
+            drop_items.push(DropItem {
+                logical_name: slug_from_display(display_name),
+                img_url,
+                item_wiki_path: anchor.value().attr("href").map(|s| s.to_string()),
+            });
         }
-        let img_url = match img_el.value().attr("src") {
-            Some(src) => absolute_url(src),
-            None => continue,
-        };
-        let logical_name = slug_from_display(display_name);
 
-        // Item's wiki page, used by scrape_item_page to fetch the Loot Bag
-        // row. Prefer the explicit anchor over any slug-derived guess —
-        // some item pages use disambiguated URLs (e.g. /wiki/item/Fire_Sword
-        // rather than /wiki/fire_sword).
-        let item_wiki_path = row
-            .select(&item_link_sel)
-            .next()
-            .and_then(|el| el.value().attr("href"))
-            .map(|s| s.to_string());
-
-        drop_items.push(DropItem {
-            logical_name,
-            img_url,
-            item_wiki_path,
-        });
+        // Fallback pass: imgs in the first cell that weren't inside an
+        // anchor (items without their own wiki page).
+        for img_el in row.select(&fallback_img_sel) {
+            let src = match img_el.value().attr("src") {
+                Some(s) => s,
+                None => continue,
+            };
+            let img_url = absolute_url(src);
+            if seen_srcs.contains(&img_url) {
+                continue;
+            }
+            let display_name = img_el
+                .value()
+                .attr("alt")
+                .or_else(|| img_el.value().attr("title"))
+                .unwrap_or("")
+                .trim();
+            if display_name.is_empty() {
+                continue;
+            }
+            drop_items.push(DropItem {
+                logical_name: slug_from_display(display_name),
+                img_url,
+                item_wiki_path: None,
+            });
+        }
     }
 
-    Ok(DungeonDetails { drop_items })
+    drop_items
 }
 
 /// Slice out the raw HTML between the first drops-section heading and the
@@ -1033,7 +1074,7 @@ fn slug_from_display(name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_drops_section, keep_dungeon_sections, slug_from_display};
+    use super::{extract_drops_section, keep_dungeon_sections, parse_drop_items, slug_from_display};
 
     #[test]
     fn drops_section_preserves_subsection_tables() {
@@ -1075,6 +1116,72 @@ mod tests {
     #[test]
     fn slug_collapses_multiple_separators() {
         assert_eq!(slug_from_display("  Lost   Halls  "), "lost_halls");
+    }
+
+    #[test]
+    fn multi_item_row_captures_every_anchor() {
+        // Cultist Hideout / The Void style: a single <td> packs multiple
+        // <a><img></a> pairs for grouped drops (UT sets, potion pairs, tier
+        // bundles). The previous scraper grabbed only the first img via
+        // `td:first-child img` and silently dropped the rest.
+        let html = r##"
+            <table class="table-striped">
+                <tr><th>Item</th><th>Drops From</th></tr>
+                <tr>
+                    <td>
+                        <a href="/wiki/potion-of-life"><img src="/s/p_life.png" alt="Potion of Life"></a>
+                        <a href="/wiki/potion-of-mana"><img src="/s/p_mana.png" alt="Potion of Mana"></a>
+                    </td>
+                    <td>Malus</td>
+                </tr>
+                <tr>
+                    <td>
+                        <a href="/wiki/burial-blades"><img src="/s/bb.png" alt="Burial Blades"></a>
+                        <a href="/wiki/staff-of-unholy-sacrifice"><img src="/s/sus.png" alt="Staff of Unholy Sacrifice"></a>
+                        <a href="/wiki/skull-of-corrupted-souls"><img src="/s/scs.png" alt="Skull of Corrupted Souls"></a>
+                        <a href="/wiki/ritual-robe"><img src="/s/rr.png" alt="Ritual Robe"></a>
+                        <a href="/wiki/bloodshed-ring"><img src="/s/br.png" alt="Bloodshed Ring"></a>
+                    </td>
+                    <td>Malus</td>
+                </tr>
+            </table>
+        "##;
+        let items = parse_drop_items(html);
+        let names: Vec<&str> = items.iter().map(|i| i.logical_name.as_str()).collect();
+        assert_eq!(
+            names,
+            &[
+                "potion_of_life",
+                "potion_of_mana",
+                "burial_blades",
+                "staff_of_unholy_sacrifice",
+                "skull_of_corrupted_souls",
+                "ritual_robe",
+                "bloodshed_ring",
+            ]
+        );
+        // Every anchor-sourced item carries its wiki path through for the
+        // downstream Loot Bag scrape.
+        assert!(items.iter().all(|i| i.item_wiki_path.is_some()));
+    }
+
+    #[test]
+    fn bare_img_without_anchor_still_captured() {
+        // Defensive: an item cell with no anchor (hypothetically an item
+        // without a dedicated wiki page) should still be picked up via the
+        // fallback pass.
+        let html = r##"
+            <table class="table-striped">
+                <tr>
+                    <td><img src="/s/mystery.png" alt="Mystery Trinket"></td>
+                    <td>Boss</td>
+                </tr>
+            </table>
+        "##;
+        let items = parse_drop_items(html);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].logical_name, "mystery_trinket");
+        assert!(items[0].item_wiki_path.is_none());
     }
 
     #[test]
