@@ -1,7 +1,7 @@
 use poise::serenity_prelude as serenity;
 use serenity::{
-    CreateActionRow, CreateInputText, CreateInteractionResponse,
-    CreateInteractionResponseMessage, CreateModal, InputTextStyle,
+    ButtonStyle, CreateActionRow, CreateButton, CreateInteractionResponse,
+    CreateInteractionResponseMessage, EditMessage, MessageId, ReactionType,
 };
 
 use crate::{db, embeds, BotData, BotError};
@@ -38,6 +38,14 @@ pub async fn handle(
             };
             handle_react(ctx, mci, data, hc_id, reaction_id).await?;
         }
+        "confirm" if parts.len() >= 4 => {
+            let reaction_id: i32 = match parts[3].parse() {
+                Ok(n) => n,
+                Err(_) => return Ok(()),
+            };
+            handle_confirm_click(ctx, mci, data, hc_id, reaction_id).await?;
+        }
+        "confirm_cancel" => handle_confirm_cancel_click(ctx, mci).await?,
         "start" => handle_start(ctx, mci, data, hc_id).await?,
         "cancel" => handle_cancel(ctx, mci, data, hc_id).await?,
         _ => {}
@@ -152,27 +160,108 @@ async fn handle_react(
         db::headcount::remove_reaction(&data.db, hc_id, reaction_id, user_id).await?;
         rebuild_and_update(ctx, mci, data, &hc).await?;
     } else if reaction.requires_confirmation {
-        // Open a confirmation modal; the embed is updated when the modal is submitted.
-        let modal = CreateModal::new(
-            format!("hc:{hc_id}:confirm:{reaction_id}"),
-            format!("Confirm: {}", reaction.display_name),
+        // Ephemeral confirm step — better UX than a modal form for what is
+        // effectively a yes/no question. The confirm button records the
+        // reaction and edits the headcount message in-place.
+        let confirm = CreateButton::new(format!("hc:{hc_id}:confirm:{reaction_id}"))
+            .label("Confirm")
+            .emoji(ReactionType::Unicode("✅".into()))
+            .style(ButtonStyle::Success);
+        let cancel = CreateButton::new("hc:0:confirm_cancel")
+            .label("Cancel")
+            .style(ButtonStyle::Secondary);
+        mci.create_response(
+            ctx,
+            CreateInteractionResponse::Message(
+                CreateInteractionResponseMessage::new()
+                    .content(format!(
+                        "Confirm you're bringing **{}**? Only click Confirm if you actually have it.",
+                        reaction.display_name
+                    ))
+                    .components(vec![CreateActionRow::Buttons(vec![confirm, cancel])])
+                    .ephemeral(true),
+            ),
         )
-        .components(vec![CreateActionRow::InputText(
-            CreateInputText::new(
-                InputTextStyle::Short,
-                "Details (optional)",
-                "details",
-            )
-            .placeholder("Screenshot URL, item description, etc.")
-            .required(false)
-            .max_length(200),
-        )]);
-        mci.create_response(ctx, CreateInteractionResponse::Modal(modal)).await?;
+        .await?;
     } else {
         db::headcount::add_reaction(&data.db, hc_id, reaction_id, user_id, false).await?;
         rebuild_and_update(ctx, mci, data, &hc).await?;
     }
 
+    Ok(())
+}
+
+async fn handle_confirm_click(
+    ctx: &serenity::Context,
+    mci: &serenity::ComponentInteraction,
+    data: &BotData,
+    hc_id: i32,
+    reaction_id: i32,
+) -> Result<(), BotError> {
+    let Some(hc) = load_active(ctx, mci, data, hc_id).await? else {
+        return Ok(());
+    };
+
+    let user_id = mci.user.id.get() as i64;
+    db::headcount::add_reaction(&data.db, hc_id, reaction_id, user_id, true).await?;
+
+    // Rebuild the headcount embed and edit the original message via HTTP —
+    // this interaction targets the user's ephemeral, not the headcount.
+    let pool = &data.db;
+    let template = db::dungeon::get_by_id(pool, hc.dungeon_template_id)
+        .await?
+        .ok_or_else(|| format!("template {} not found", hc.dungeon_template_id))?;
+    let reactions = db::dungeon::get_reactions(pool, hc.dungeon_template_id).await?;
+    let counts = db::headcount::reaction_counts(pool, hc.id).await?;
+    let emoji_map = db::emoji::get_all_as_map(pool).await?;
+    let tier = db::tier::get_by_id(pool, hc.tier_id)
+        .await?
+        .ok_or_else(|| format!("tier {} not found", hc.tier_id))?;
+
+    let (embed, components) = embeds::headcount::build(
+        hc.id,
+        &template,
+        &reactions,
+        &counts,
+        &emoji_map,
+        hc.leader_user_id as u64,
+        &tier.name,
+    );
+
+    serenity::ChannelId::new(hc.channel_id as u64)
+        .edit_message(
+            &ctx.http,
+            MessageId::new(hc.message_id as u64),
+            EditMessage::new().add_embed(embed).components(components),
+        )
+        .await?;
+
+    mci.create_response(
+        ctx,
+        CreateInteractionResponse::UpdateMessage(
+            CreateInteractionResponseMessage::new()
+                .content("✅ Confirmed!")
+                .components(vec![]),
+        ),
+    )
+    .await?;
+
+    Ok(())
+}
+
+async fn handle_confirm_cancel_click(
+    ctx: &serenity::Context,
+    mci: &serenity::ComponentInteraction,
+) -> Result<(), BotError> {
+    mci.create_response(
+        ctx,
+        CreateInteractionResponse::UpdateMessage(
+            CreateInteractionResponseMessage::new()
+                .content("No changes made.")
+                .components(vec![]),
+        ),
+    )
+    .await?;
     Ok(())
 }
 

@@ -9,22 +9,38 @@ use serenity::{
 use crate::db::headcount::ReactionCount;
 use crate::db::models::{BotEmoji, DungeonReaction, DungeonTemplate};
 
+/// A reaction's `emoji` field is normally a logical name that maps to a
+/// custom `bot_emoji` row, but some built-ins (notably the "Reacts" interest
+/// reaction) use a literal Unicode emoji so they render before `sync-wiki`
+/// has uploaded the custom set. Logical names are ASCII [a-z0-9_]+; anything
+/// with a non-ASCII char is treated as a Unicode literal.
+fn is_unicode_literal(s: &str) -> bool {
+    !s.is_empty() && s.chars().any(|c| !c.is_ascii())
+}
+
 /// Returns a `<:name:id>` / `<a:name:id>` string for use in embed text fields.
 pub fn emoji_str(logical_name: &str, map: &HashMap<String, BotEmoji>) -> String {
     match map.get(logical_name) {
         Some(e) if e.animated => format!("<a:{}:{}>", e.name_on_discord, e.discord_emoji_id),
         Some(e) => format!("<:{}:{}>", e.name_on_discord, e.discord_emoji_id),
+        None if is_unicode_literal(logical_name) => logical_name.to_string(),
         None => String::new(),
     }
 }
 
 /// Returns a `ReactionType` for use in button `.emoji()`.
 pub fn emoji_rt(logical_name: &str, map: &HashMap<String, BotEmoji>) -> Option<ReactionType> {
-    map.get(logical_name).map(|e| ReactionType::Custom {
-        animated: e.animated,
-        id: EmojiId::new(e.discord_emoji_id as u64),
-        name: Some(e.name_on_discord.clone()),
-    })
+    if let Some(e) = map.get(logical_name) {
+        Some(ReactionType::Custom {
+            animated: e.animated,
+            id: EmojiId::new(e.discord_emoji_id as u64),
+            name: Some(e.name_on_discord.clone()),
+        })
+    } else if is_unicode_literal(logical_name) {
+        Some(ReactionType::Unicode(logical_name.to_string()))
+    } else {
+        None
+    }
 }
 
 /// Build the headcount embed and action rows.
