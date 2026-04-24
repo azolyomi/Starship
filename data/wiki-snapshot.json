@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-04-24T01:12:14.787722206Z",
+  "generated_at": "2026-04-24T04:24:42.193970281Z",
   "dungeons": [
     {
       "name": "pirate_cave",
@@ -79,7 +79,24 @@
         "logical_name": "key_spider_den",
         "img_url": "https://www.realmeye.com/s/a/img/wiki/i/jAIptD6.png"
       },
-      "drops": []
+      "drops": [
+        {
+          "logical_name": "mark_of_arachna",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/0cAXRij.png"
+        },
+        {
+          "logical_name": "healing_ichor",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/UTdFuVV.png"
+        },
+        {
+          "logical_name": "poison_fang_dagger",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/DjsPr2i.png"
+        },
+        {
+          "logical_name": "eggshell_spider_pet_skin",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/3ChA0DA.png"
+        }
+      ]
     },
     {
       "name": "forbidden_jungle",
@@ -93,7 +110,24 @@
         "logical_name": "key_forbidden_jungle",
         "img_url": "https://www.realmeye.com/s/a/img/wiki/i/4bI4Qh3.png"
       },
-      "drops": []
+      "drops": [
+        {
+          "logical_name": "mark_of_mixcoatl",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/m1Vv9ep.png"
+        },
+        {
+          "logical_name": "staff_of_the_crystal_serpent",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/E3rQtUJ.png"
+        },
+        {
+          "logical_name": "wine_cellar_incantation",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/2gA60di.png"
+        },
+        {
+          "logical_name": "baby_basilisk",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/H3Mjba3.png"
+        }
+      ]
     },
     {
       "name": "the_hive",
@@ -107,7 +141,32 @@
         "logical_name": "key_the_hive",
         "img_url": "https://www.realmeye.com/s/a/img/wiki/i/b9COaxW.png"
       },
-      "drops": []
+      "drops": [
+        {
+          "logical_name": "mark_of_the_queen_bee",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/2NECtGb.png"
+        },
+        {
+          "logical_name": "bottled_honey",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/N4CPtXW.png"
+        },
+        {
+          "logical_name": "bee_egg",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/UZpfK97.png"
+        },
+        {
+          "logical_name": "wine_cellar_incantation",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/2gA60di.png"
+        },
+        {
+          "logical_name": "orb_of_sweet_demise",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/nuRdcXC.png"
+        },
+        {
+          "logical_name": "potion_of_dexterity",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/7kXmM0O.png"
+        }
+      ]
     },
     {
       "name": "snake_pit",
@@ -121,7 +180,40 @@
         "logical_name": "key_snake_pit",
         "img_url": "https://www.realmeye.com/s/a/img/wiki/i/pFDZbap.png"
       },
-      "drops": []
+      "drops": [
+        {
+          "logical_name": "mark_of_stheno",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/YTlLKJX.png"
+        },
+        {
+          "logical_name": "snake_oil",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/pjKtGQI.png"
+        },
+        {
+          "logical_name": "snakeskin_shield",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/8VEf4qa.png"
+        },
+        {
+          "logical_name": "wine_cellar_incantation",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/6iJGy69.png"
+        },
+        {
+          "logical_name": "potion_of_speed",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/R2U76AH.png"
+        },
+        {
+          "logical_name": "mini_stheno_skin",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/XFwWF10.png"
+        },
+        {
+          "logical_name": "tarot_card_pack",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/TP9EzCf.png"
+        },
+        {
+          "logical_name": "wand_of_the_bulwark",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/FVbME6f.png"
+        }
+      ]
     },
     {
       "name": "sprite_world",
@@ -175,10 +267,6 @@
         {
           "logical_name": "staff_of_extreme_prejudice",
           "img_url": "https://www.realmeye.com/s/a/img/wiki/i/AyOQRFj.png"
-        },
-        {
-          "logical_name": "staff_of_iceblast",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/GqcV9up.png"
         }
       ]
     },
@@ -194,7 +282,32 @@
         "logical_name": "key_cave_of_a_thousand_treasures",
         "img_url": "https://www.realmeye.com/s/a/img/wiki/i/xKGc8p1.png"
       },
-      "drops": []
+      "drops": [
+        {
+          "logical_name": "mark_of_the_effigy",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/N6HzUne.png"
+        },
+        {
+          "logical_name": "tier_5_rings",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/ZA1OUEH.gif"
+        },
+        {
+          "logical_name": "wine_cellar_incantation",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/2gA60di.png"
+        },
+        {
+          "logical_name": "stat_increase_potions",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/s5jcnq9.gif"
+        },
+        {
+          "logical_name": "tarot_card_pack",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/TP9EzCf.png"
+        },
+        {
+          "logical_name": "jewel_eye_katana_shiny",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/rZSxJF7.png"
+        }
+      ]
     },
     {
       "name": "ancient_ruins",
@@ -208,7 +321,44 @@
         "logical_name": "key_ancient_ruins",
         "img_url": "https://www.realmeye.com/s/a/img/wiki/i/WSRNLTA.png"
       },
-      "drops": []
+      "drops": [
+        {
+          "logical_name": "mark_of_the_sandstone_titan",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/pDZ40SZ.png"
+        },
+        {
+          "logical_name": "cactus_juice",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/e8EnrRy.png"
+        },
+        {
+          "logical_name": "stat_increase_potions",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/s5jcnq9.gif"
+        },
+        {
+          "logical_name": "wine_cellar_incantation",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/2gA60di.png"
+        },
+        {
+          "logical_name": "arcane_rapier",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/egM20KP.png"
+        },
+        {
+          "logical_name": "amber_encrusted_helmet",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/j4B8mAN.png"
+        },
+        {
+          "logical_name": "resplendent_bow",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/6sF6tFt.png"
+        },
+        {
+          "logical_name": "ornate_armor",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/RwQiwp1.png"
+        },
+        {
+          "logical_name": "sand_wanderer_trickster_skin",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/6mp5B1B.png"
+        }
+      ]
     },
     {
       "name": "magic_woods",
@@ -222,7 +372,44 @@
         "logical_name": "key_magic_woods",
         "img_url": "https://www.realmeye.com/s/a/img/wiki/i/Yde2FYm.png"
       },
-      "drops": []
+      "drops": [
+        {
+          "logical_name": "mark_of_the_fountain_spirit",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/9KB0EFE.png"
+        },
+        {
+          "logical_name": "fairy_dust",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/jijaRxH.png"
+        },
+        {
+          "logical_name": "wine_cellar_incantation",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/6iJGy69.png"
+        },
+        {
+          "logical_name": "potion_of_speed",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/R2U76AH.png"
+        },
+        {
+          "logical_name": "tarot_card_pack",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/TP9EzCf.png"
+        },
+        {
+          "logical_name": "fountain_child_pet_skin",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/UEVnwo9.png"
+        },
+        {
+          "logical_name": "bergenia_bow",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/XkF71HV.png"
+        },
+        {
+          "logical_name": "hollyhock_hide",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/aVqUiHI.png"
+        },
+        {
+          "logical_name": "spirit_staff",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/6GDdhQb.png"
+        }
+      ]
     },
     {
       "name": "candyland_hunting_grounds",
@@ -236,7 +423,60 @@
         "logical_name": "key_candyland_hunting_grounds",
         "img_url": "https://www.realmeye.com/s/a/img/wiki/i/ooly1aD.png"
       },
-      "drops": []
+      "drops": [
+        {
+          "logical_name": "potion_of_defense",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/xSXLjme.png"
+        },
+        {
+          "logical_name": "potion_of_attack",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/kiIMjr9.png"
+        },
+        {
+          "logical_name": "potion_of_wisdom",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/WLjcwoA.png"
+        },
+        {
+          "logical_name": "wine_cellar_incantation",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/2gA60di.png"
+        },
+        {
+          "logical_name": "gumballs",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/Gumball.gif"
+        },
+        {
+          "logical_name": "rock_candy",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/NEGiJXs.png"
+        },
+        {
+          "logical_name": "candy_ring",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/d/Untiered/Ring%20Pop.png"
+        },
+        {
+          "logical_name": "candy_coated_armor",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/d/Untiered/Candy-Coated%20Armor.png"
+        },
+        {
+          "logical_name": "pixie_enchanted_sword",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/BEQQgB1.png"
+        },
+        {
+          "logical_name": "seal_of_the_enchanted_forest",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/d/Untiered/Seal%20of%20the%20Enchanted%20Forest.png"
+        },
+        {
+          "logical_name": "fairy_plate",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/C7w2g3a.png"
+        },
+        {
+          "logical_name": "ring_of_pure_wishes",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/d/Untiered/Ring%20of%20Pure%20Wishes.png"
+        },
+        {
+          "logical_name": "mini_desire_troll_pet_skin",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/lZL902t.png"
+        }
+      ]
     },
     {
       "name": "undead_lair",
@@ -286,30 +526,63 @@
         {
           "logical_name": "ring_of_skeletal_specters",
           "img_url": "https://www.realmeye.com/s/a/img/wiki/i/N2dLIwb.png"
-        },
-        {
-          "logical_name": "bow_of_the_morning_star",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/NhighV0.png"
-        },
-        {
-          "logical_name": "lil_ghost_egg",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/lLAL2sH.png"
         }
       ]
     },
     {
-      "name": "puppet_master_s_theatre",
+      "name": "puppet_masters_theatre",
       "display_name": "Puppet Master’s Theatre",
       "wiki_path": "/wiki/puppet-master-s-theatre",
       "portal": {
-        "logical_name": "portal_puppet_master_s_theatre",
+        "logical_name": "portal_puppet_masters_theatre",
         "img_url": "https://www.realmeye.com/s/a/img/wiki/i/6diBou4.png"
       },
       "key": {
-        "logical_name": "key_puppet_master_s_theatre",
+        "logical_name": "key_puppet_masters_theatre",
         "img_url": "https://www.realmeye.com/s/a/img/wiki/i/HenkHu2.png"
       },
-      "drops": []
+      "drops": [
+        {
+          "logical_name": "mark_of_the_puppet_master",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/66q4Q8G.png"
+        },
+        {
+          "logical_name": "jester_argyle_cloths",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/FBdL1Bl.png"
+        },
+        {
+          "logical_name": "wine_cellar_incantation",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/6iJGy69.png"
+        },
+        {
+          "logical_name": "potion_of_attack",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/kiIMjr9.png"
+        },
+        {
+          "logical_name": "tarot_card_pack",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/TP9EzCf.png"
+        },
+        {
+          "logical_name": "puppet_master_skin",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/wMRhrC0.png"
+        },
+        {
+          "logical_name": "magic_wand",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/MXCwB0U.png"
+        },
+        {
+          "logical_name": "magicians_robe",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/LOQNZFI.png"
+        },
+        {
+          "logical_name": "performers_hat",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/NPA5eZi.png"
+        },
+        {
+          "logical_name": "marionette_ravager",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/OXOBud7.png"
+        }
+      ]
     },
     {
       "name": "toxic_sewers",
@@ -323,7 +596,48 @@
         "logical_name": "key_toxic_sewers",
         "img_url": "https://www.realmeye.com/s/a/img/wiki/i/vGZm0er.png"
       },
-      "drops": []
+      "drops": [
+        {
+          "logical_name": "mark_of_gulpord",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/kgt93lF.png"
+        },
+        {
+          "logical_name": "wine_cellar_incantation",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/6iJGy69.png"
+        },
+        {
+          "logical_name": "potion_of_defense",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/xSXLjme.png"
+        },
+        {
+          "logical_name": "power_pizza",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/fIuT5cc.png"
+        },
+        {
+          "logical_name": "slurp_knight_skin",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/5ubtuir.png"
+        },
+        {
+          "logical_name": "turtle_pet_skin",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/1e9bE1b.png"
+        },
+        {
+          "logical_name": "toxin_tooth",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/3196mu7.png"
+        },
+        {
+          "logical_name": "acidic_armor",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/2MAkZbN.png"
+        },
+        {
+          "logical_name": "void_blade",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/tJprB54.png"
+        },
+        {
+          "logical_name": "murky_toxin",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/YTRasiP.png"
+        }
+      ]
     },
     {
       "name": "cursed_library",
@@ -379,11 +693,11 @@
           "img_url": "https://www.realmeye.com/s/a/img/wiki/i/hbTp8Jg.png"
         },
         {
-          "logical_name": "wraith_s_brigandine",
+          "logical_name": "wraiths_brigandine",
           "img_url": "https://www.realmeye.com/s/a/img/wiki/i/gWlQmMS.png"
         },
         {
-          "logical_name": "ronin_s_wakizashi",
+          "logical_name": "ronins_wakizashi",
           "img_url": "https://www.realmeye.com/s/a/img/wiki/i/p8ZAgf0.png"
         },
         {
@@ -391,7 +705,7 @@
           "img_url": "https://www.realmeye.com/s/a/img/wiki/i/yVh0pj9.png"
         },
         {
-          "logical_name": "scholar_s_seal",
+          "logical_name": "scholars_seal",
           "img_url": "https://www.realmeye.com/s/a/img/wiki/i/YLj6XLl.png"
         },
         {
@@ -442,7 +756,7 @@
           "img_url": "https://www.realmeye.com/s/a/img/wiki/i/m0FktDN.png"
         },
         {
-          "logical_name": "abomination_s_wrath",
+          "logical_name": "abominations_wrath",
           "img_url": "https://www.realmeye.com/s/a/img/wiki/i/cK4sP1y.png"
         },
         {
@@ -464,22 +778,6 @@
         {
           "logical_name": "experimental_ring",
           "img_url": "https://www.realmeye.com/s/a/img/wiki/i/CwMs1nv.png"
-        },
-        {
-          "logical_name": "golden_nut",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/mEJsf78.png"
-        },
-        {
-          "logical_name": "the_magician_tarot_card",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/Blc6JO5.png"
-        },
-        {
-          "logical_name": "robobuddy_egg",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/NW6maBH.png"
-        },
-        {
-          "logical_name": "c_o_n_t_r_o_l_l_e_r",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/NTx7xLN.png"
         }
       ]
     },
@@ -495,7 +793,48 @@
         "logical_name": "key_abyss_of_demons",
         "img_url": "https://www.realmeye.com/s/a/img/wiki/i/ghognK3.png"
       },
-      "drops": []
+      "drops": [
+        {
+          "logical_name": "mark_of_malphas",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/a7vVzyA.png"
+        },
+        {
+          "logical_name": "wine_cellar_incantation",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/6iJGy69.png"
+        },
+        {
+          "logical_name": "potion_of_vitality",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/1iHlYrD.png"
+        },
+        {
+          "logical_name": "potion_of_attack",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/kiIMjr9.png"
+        },
+        {
+          "logical_name": "tarot_card_pack",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/TP9EzCf.png"
+        },
+        {
+          "logical_name": "demon_frog_pet_skin",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/J8jfDg8.png"
+        },
+        {
+          "logical_name": "staff_of_eruption",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/eYQVX29.png"
+        },
+        {
+          "logical_name": "molten_mantle",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/Wwwi1lA.png"
+        },
+        {
+          "logical_name": "demon_blade",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/UcQg1tr.png"
+        },
+        {
+          "logical_name": "volcanic_sheath",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/b66TXPg.png"
+        }
+      ]
     },
     {
       "name": "manor_of_the_immortals",
@@ -509,7 +848,52 @@
         "logical_name": "key_manor_of_the_immortals",
         "img_url": "https://www.realmeye.com/s/a/img/wiki/i/sdlLMzp.png"
       },
-      "drops": []
+      "drops": [
+        {
+          "logical_name": "mark_of_ruthven",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/DdxAC38.png"
+        },
+        {
+          "logical_name": "holy_water",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/WwjTAxy.png"
+        },
+        {
+          "logical_name": "bat_egg",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/y3OIprm.png"
+        },
+        {
+          "logical_name": "wine_cellar_incantation",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/2gA60di.png"
+        },
+        {
+          "logical_name": "potion_of_attack",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/kiIMjr9.png"
+        },
+        {
+          "logical_name": "vampire_lord",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/E4oTLrj.png"
+        },
+        {
+          "logical_name": "tarot_card_pack",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/TP9EzCf.png"
+        },
+        {
+          "logical_name": "soulcursed_scythe",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/TVwqh46.png"
+        },
+        {
+          "logical_name": "hallowed_hide",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/8cUpJDB.png"
+        },
+        {
+          "logical_name": "bone_dagger",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/yuTbXQG.png"
+        },
+        {
+          "logical_name": "kyuuketsuki_hitogoroshi",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/uYe1flJ.png"
+        }
+      ]
     },
     {
       "name": "haunted_cemetery",
@@ -523,7 +907,76 @@
         "logical_name": "key_haunted_cemetery",
         "img_url": "https://www.realmeye.com/s/a/img/wiki/i/v6BxSoI.png"
       },
-      "drops": []
+      "drops": [
+        {
+          "logical_name": "mark_of_skuld",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/15Uvijp.png"
+        },
+        {
+          "logical_name": "wine_cellar_incantation",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/2gA60di.png"
+        },
+        {
+          "logical_name": "amulet_of_dispersion",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/fOZY56P.png"
+        },
+        {
+          "logical_name": "potion_of_speed",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/R2U76AH.png"
+        },
+        {
+          "logical_name": "potion_of_wisdom",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/WLjcwoA.png"
+        },
+        {
+          "logical_name": "potion_of_vitality",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/1iHlYrD.png"
+        },
+        {
+          "logical_name": "potion_of_dexterity",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/7kXmM0O.png"
+        },
+        {
+          "logical_name": "potion_of_attack",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/kiIMjr9.png"
+        },
+        {
+          "logical_name": "potion_of_defense",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/xSXLjme.png"
+        },
+        {
+          "logical_name": "werewolf_cub_pet_skin",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/NBTze4N.png"
+        },
+        {
+          "logical_name": "tarot_card_pack",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/TP9EzCf.png"
+        },
+        {
+          "logical_name": "etherite_dagger",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/ksib4rU.png"
+        },
+        {
+          "logical_name": "ghastly_drape",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/vzdkbXL.png"
+        },
+        {
+          "logical_name": "mantle_of_skuld",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/qUnenkk.png"
+        },
+        {
+          "logical_name": "spectral_ring_of_horrors",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/1puXzet.png"
+        },
+        {
+          "logical_name": "souls_guidance",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/dBfapRh.png"
+        },
+        {
+          "logical_name": "resurrected_warriors_armor",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/lbaYp6l.png"
+        }
+      ]
     },
     {
       "name": "the_machine",
@@ -610,7 +1063,44 @@
         "logical_name": "key_davy_jones_locker",
         "img_url": "https://www.realmeye.com/s/a/img/wiki/i/rIS43Pi.png"
       },
-      "drops": []
+      "drops": [
+        {
+          "logical_name": "mark_of_davy_jones",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/rtMDbEY.png"
+        },
+        {
+          "logical_name": "ghost_pirate_rum",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/dF3O9gQ.png"
+        },
+        {
+          "logical_name": "wine_cellar_incantation",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/6iJGy69.png"
+        },
+        {
+          "logical_name": "potion_of_wisdom",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/WLjcwoA.png"
+        },
+        {
+          "logical_name": "potion_of_mana",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/ss7CVdl.png"
+        },
+        {
+          "logical_name": "spirit_pet_skin",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/alyO54B.png"
+        },
+        {
+          "logical_name": "lil_davy_pet_skin",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/RDqdnpj.png"
+        },
+        {
+          "logical_name": "quartermaster_scabbard",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/IyEy6lE.png"
+        },
+        {
+          "logical_name": "spirit_dagger",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/VKZyp0S.png"
+        }
+      ]
     },
     {
       "name": "ocean_trench",
@@ -624,7 +1114,44 @@
         "logical_name": "key_ocean_trench",
         "img_url": "https://www.realmeye.com/s/a/img/wiki/i/sF0osIG.png"
       },
-      "drops": []
+      "drops": [
+        {
+          "logical_name": "mark_of_thessal",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/w5uuI9K.png"
+        },
+        {
+          "logical_name": "coral_juice",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/d/Consumable/Restoratives/Coral%20Juice.png"
+        },
+        {
+          "logical_name": "sea_slurp_egg",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/d/Consumable/Pet%20Eggs/Sea%20Slurp%20Egg.png"
+        },
+        {
+          "logical_name": "wine_cellar_incantation",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/2gA60di.png"
+        },
+        {
+          "logical_name": "potion_of_mana",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/ss7CVdl.png"
+        },
+        {
+          "logical_name": "sea_slurp_skin_unlocker",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/d/Pets/Aquatic/Sea%20Slurp.png"
+        },
+        {
+          "logical_name": "tideturner_trident",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/JTRwMES.png"
+        },
+        {
+          "logical_name": "oceanic_apparel",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/J98NxR2.png"
+        },
+        {
+          "logical_name": "coral_bow",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/d/Untiered/Coral%20Bow.png"
+        }
+      ]
     },
     {
       "name": "the_crawling_depths",
@@ -715,7 +1242,7 @@
           "img_url": "https://www.realmeye.com/s/a/img/wiki/i/HTra5EH.png"
         },
         {
-          "logical_name": "labyrinth_dweller_s_sheath",
+          "logical_name": "labyrinth_dwellers_sheath",
           "img_url": "https://www.realmeye.com/s/a/img/wiki/i/5hTq71t.png"
         },
         {
@@ -766,7 +1293,7 @@
           "img_url": "https://www.realmeye.com/s/a/img/wiki/i/hYIcPEP.png"
         },
         {
-          "logical_name": "swashbuckler_s_sickle",
+          "logical_name": "swashbucklers_sickle",
           "img_url": "https://www.realmeye.com/s/a/img/wiki/i/bxx3q1x.png"
         },
         {
@@ -778,28 +1305,57 @@
           "img_url": "https://www.realmeye.com/s/a/img/wiki/i/I9LWK9U.png"
         },
         {
-          "logical_name": "first_mate_s_hook",
+          "logical_name": "first_mates_hook",
           "img_url": "https://www.realmeye.com/s/a/img/wiki/i/kprOPN1.png"
         },
         {
-          "logical_name": "pirate_king_s_cutlass",
+          "logical_name": "pirate_kings_cutlass",
           "img_url": "https://www.realmeye.com/s/a/img/wiki/i/WkV86TU.png"
         }
       ]
     },
     {
-      "name": "puppet_master_s_encore",
+      "name": "puppet_masters_encore",
       "display_name": "Puppet Master’s Encore",
       "wiki_path": "/wiki/puppet-master-s-encore",
       "portal": {
-        "logical_name": "portal_puppet_master_s_encore",
+        "logical_name": "portal_puppet_masters_encore",
         "img_url": "https://www.realmeye.com/s/a/img/wiki/i/UhdCm8R.png"
       },
       "key": {
-        "logical_name": "key_puppet_master_s_encore",
+        "logical_name": "key_puppet_masters_encore",
         "img_url": "https://www.realmeye.com/s/a/img/wiki/i/e4BnS4B.png"
       },
-      "drops": []
+      "drops": [
+        {
+          "logical_name": "tincture_of_wisdom",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/q2SqLif.png"
+        },
+        {
+          "logical_name": "wine_cellar_incantation",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/2gA60di.png"
+        },
+        {
+          "logical_name": "potion_of_attack",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/kiIMjr9.png"
+        },
+        {
+          "logical_name": "jaco_pet_skin",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/ErbXBZu.png"
+        },
+        {
+          "logical_name": "magic_wand",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/MXCwB0U.png"
+        },
+        {
+          "logical_name": "performers_hat",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/NPA5eZi.png"
+        },
+        {
+          "logical_name": "thousand_shot",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/1cji9i9.png"
+        }
+      ]
     },
     {
       "name": "cnidarian_reef",
@@ -813,7 +1369,44 @@
         "logical_name": "key_cnidarian_reef",
         "img_url": "https://www.realmeye.com/s/a/img/wiki/i/ByuNHKA.png"
       },
-      "drops": []
+      "drops": [
+        {
+          "logical_name": "bottled_medusozoan",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/7DI23IS.png"
+        },
+        {
+          "logical_name": "jellyhead_trickster_skin",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/vAY4LmF.png"
+        },
+        {
+          "logical_name": "shield_rune",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/e8ZDAlX.png"
+        },
+        {
+          "logical_name": "wine_cellar_incantation",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/2gA60di.png"
+        },
+        {
+          "logical_name": "greater_potion_of_defense",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/5UnuTXg.png"
+        },
+        {
+          "logical_name": "potion_of_defense",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/xSXLjme.png"
+        },
+        {
+          "logical_name": "potion_of_vitality",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/1iHlYrD.png"
+        },
+        {
+          "logical_name": "potion_of_wisdom",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/WLjcwoA.png"
+        },
+        {
+          "logical_name": "potion_of_speed",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/R2U76AH.png"
+        }
+      ]
     },
     {
       "name": "parasite_chambers",
@@ -827,7 +1420,44 @@
         "logical_name": "key_parasite_chambers",
         "img_url": "https://www.realmeye.com/s/a/img/wiki/i/OoBvmeo.png"
       },
-      "drops": []
+      "drops": [
+        {
+          "logical_name": "mark_of_parasitic_horrors",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/flQmiGI.png"
+        },
+        {
+          "logical_name": "wine_cellar_incantation",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/6iJGy69.png"
+        },
+        {
+          "logical_name": "potion_of_attack",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/kiIMjr9.png"
+        },
+        {
+          "logical_name": "potion_of_mana",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/ss7CVdl.png"
+        },
+        {
+          "logical_name": "symbiotic_ripper",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/2Vj1EYP.png"
+        },
+        {
+          "logical_name": "parasitic_concoction",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/DjK25qQ.png"
+        },
+        {
+          "logical_name": "rags_of_the_host",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/UG6XPjZ.png"
+        },
+        {
+          "logical_name": "hivemind_circlet",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/3U1Ks4Q.png"
+        },
+        {
+          "logical_name": "recurring_terror_spell",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/zi9K9k1.png"
+        }
+      ]
     },
     {
       "name": "the_tavern",
@@ -841,7 +1471,24 @@
         "logical_name": "key_the_tavern",
         "img_url": "https://www.realmeye.com/s/a/img/wiki/i/rA9svzL.png"
       },
-      "drops": []
+      "drops": [
+        {
+          "logical_name": "mark_of_the_barkeep",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/omto6zN.png"
+        },
+        {
+          "logical_name": "wines",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/h1ykY2Y.gif"
+        },
+        {
+          "logical_name": "greater_potion_of_vitality",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/sYB43YR.png"
+        },
+        {
+          "logical_name": "the_right_hook",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/VZcwjjQ.png"
+        }
+      ]
     },
     {
       "name": "sulfurous_wetlands",
@@ -918,7 +1565,48 @@
         "logical_name": "key_mountain_temple",
         "img_url": "https://www.realmeye.com/s/a/img/wiki/i/C1x4QXa.png"
       },
-      "drops": []
+      "drops": [
+        {
+          "logical_name": "mark_of_daichi",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/LPscg3l.png"
+        },
+        {
+          "logical_name": "wine_cellar_incantation",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/6iJGy69.png"
+        },
+        {
+          "logical_name": "stat_increase_potions",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/rY8JQSL.gif"
+        },
+        {
+          "logical_name": "greater_potion_of_defense",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/moIO1Ib.png"
+        },
+        {
+          "logical_name": "tier_12_weapons",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/0uiOABD.gif"
+        },
+        {
+          "logical_name": "possessed_lantern_pet_skin",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/oCp4OLK.png"
+        },
+        {
+          "logical_name": "kazekiri",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/IZ7QPDw.png"
+        },
+        {
+          "logical_name": "ryus_blade",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/a1qsbm7.png"
+        },
+        {
+          "logical_name": "kamishimo",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/W52Kakz.png"
+        },
+        {
+          "logical_name": "wand_of_the_fallen",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/Y0owA0u.png"
+        }
+      ]
     },
     {
       "name": "lair_of_draconis",
@@ -932,7 +1620,104 @@
         "logical_name": "key_lair_of_draconis",
         "img_url": "https://www.realmeye.com/s/a/img/wiki/i/K6w1AF5.png"
       },
-      "drops": []
+      "drops": [
+        {
+          "logical_name": "mark_of_the_wyvern",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/pgdVLcs.png"
+        },
+        {
+          "logical_name": "midnight_dragon_scale_cloths",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/7wKVSJI.png"
+        },
+        {
+          "logical_name": "green_dragon_scale_cloths",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/x2inw05.png"
+        },
+        {
+          "logical_name": "blue_dragon_scale_cloths",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/YMHrHxd.png"
+        },
+        {
+          "logical_name": "red_dragon_scale_cloths",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/PJH0DDE.png"
+        },
+        {
+          "logical_name": "ivory_dragon_scale_cloths",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/NXOT4p9.png"
+        },
+        {
+          "logical_name": "tier_12_weapons",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/0uiOABD.gif"
+        },
+        {
+          "logical_name": "greater_potion_of_attack",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/eIYqwEJ.png"
+        },
+        {
+          "logical_name": "greater_potion_of_speed",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/J45lx5m.png"
+        },
+        {
+          "logical_name": "greater_potion_of_wisdom",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/vA01btN.png"
+        },
+        {
+          "logical_name": "greater_potion_of_vitality",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/sYB43YR.png"
+        },
+        {
+          "logical_name": "greater_potion_of_defense",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/5UnuTXg.png"
+        },
+        {
+          "logical_name": "wicked_dragon_wizard_skin",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/R9aDGxJ.png"
+        },
+        {
+          "logical_name": "mini_nikao_pet_skin",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/obxlPyX.png"
+        },
+        {
+          "logical_name": "hailstorm",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/3SYNHBh.png"
+        },
+        {
+          "logical_name": "earthen_ward",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/GJgV4uh.png"
+        },
+        {
+          "logical_name": "saif_of_the_deep",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/yOjaR9c.png"
+        },
+        {
+          "logical_name": "indomptable",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/F1N1mS0.png"
+        },
+        {
+          "logical_name": "ivory_heart",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/r2HNM24.png"
+        },
+        {
+          "logical_name": "celestial_blade",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/sBelbn9.png"
+        },
+        {
+          "logical_name": "leaf_dragon_hide_armor",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/voSE8ih.png"
+        },
+        {
+          "logical_name": "water_dragon_silk_robe",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/gqVpc9Y.png"
+        },
+        {
+          "logical_name": "fire_dragon_battle_armor",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/SOFbGGp.png"
+        },
+        {
+          "logical_name": "midnight_star",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/lc5NZhj.png"
+        }
+      ]
     },
     {
       "name": "tomb_of_the_ancients",
@@ -946,7 +1731,84 @@
         "logical_name": "key_tomb_of_the_ancients",
         "img_url": "https://www.realmeye.com/s/a/img/wiki/i/SE02Ak0.png"
       },
-      "drops": []
+      "drops": [
+        {
+          "logical_name": "mark_of_geb",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/Bq1AfqO.png"
+        },
+        {
+          "logical_name": "pet_eggs",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/kvdtsYY.gif"
+        },
+        {
+          "logical_name": "tier_12_weapons",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/0uiOABD.gif"
+        },
+        {
+          "logical_name": "potion_of_attack",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/kiIMjr9.png"
+        },
+        {
+          "logical_name": "potion_of_life",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/FDzx09G.png"
+        },
+        {
+          "logical_name": "mini_nut_archer_skin",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/d/Consumable/Other/Mini%20Nut%20Archer%20Skin.png"
+        },
+        {
+          "logical_name": "mini_geb_skin",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/d/Consumable/Other/Mini%20Geb%20Skin.png"
+        },
+        {
+          "logical_name": "bes_artifact",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/d/Consumable/Other/Bes%27%20Artifact%20Pet%20Stone.png"
+        },
+        {
+          "logical_name": "nuts_artifact",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/d/Consumable/Other/Nut%27s%20Artifact%20Pet%20Stone.png"
+        },
+        {
+          "logical_name": "gebs_artifact",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/d/Consumable/Other/Geb%27s%20Artifact%20Pet%20Stone.png"
+        },
+        {
+          "logical_name": "tomb_snake_skin_unlocker",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/d/Pets/Tomb%20Snake%20Generator.png"
+        },
+        {
+          "logical_name": "wand_of_geb",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/uKYy07l.png"
+        },
+        {
+          "logical_name": "book_of_geb",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/TGbs7pB.png"
+        },
+        {
+          "logical_name": "shendyt_of_geb",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/g82jCDD.png"
+        },
+        {
+          "logical_name": "gebs_ring_of_wisdom",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/xxjYkO4.png"
+        },
+        {
+          "logical_name": "ascension_ankh",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/AQC5vIi.png"
+        },
+        {
+          "logical_name": "ring_of_the_pyramid",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/AGFZBiz.png"
+        },
+        {
+          "logical_name": "ring_of_the_sphinx",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/bevUSZ5.png"
+        },
+        {
+          "logical_name": "ring_of_the_nile",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/fzBe6X1.png"
+        }
+      ]
     },
     {
       "name": "the_third_dimension",
@@ -1047,10 +1909,6 @@
         {
           "logical_name": "skull_of_endless_torment",
           "img_url": "https://www.realmeye.com/s/a/img/wiki/i/4pEofcz.png"
-        },
-        {
-          "logical_name": "the_chariot_tarot_card",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/eREyyNY.png"
         }
       ]
     },
@@ -1096,11 +1954,11 @@
           "img_url": "https://www.realmeye.com/s/a/img/wiki/i/hFTHjeY.png"
         },
         {
-          "logical_name": "tlatoani_s_shroud",
+          "logical_name": "tlatoanis_shroud",
           "img_url": "https://www.realmeye.com/s/a/img/wiki/i/JciwcUX.png"
         },
         {
-          "logical_name": "tezcacoatl_s_tail",
+          "logical_name": "tezcacoatls_tail",
           "img_url": "https://www.realmeye.com/s/a/img/wiki/i/IFRn3wz.png"
         },
         {
@@ -1180,7 +2038,40 @@
         "logical_name": "key_ice_citadel",
         "img_url": "https://www.realmeye.com/s/a/img/wiki/i/qlLe8ag.png"
       },
-      "drops": []
+      "drops": [
+        {
+          "logical_name": "mark_of_esben",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/2Z9Qyji.png"
+        },
+        {
+          "logical_name": "sword_rune",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/Xawmz73.png"
+        },
+        {
+          "logical_name": "potion_of_life",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/FDzx09G.png"
+        },
+        {
+          "logical_name": "tier_12_weapons",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/0uiOABD.gif"
+        },
+        {
+          "logical_name": "dalvars_battle_axe",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/ol4BPNH.png"
+        },
+        {
+          "logical_name": "chainmail_body_armor",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/P6WDyFQ.png"
+        },
+        {
+          "logical_name": "tier_13_weapons",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/S1mYiC8.gif"
+        },
+        {
+          "logical_name": "staff_of_esben",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/LBDSDfB.png"
+        }
+      ]
     },
     {
       "name": "moonlight_village",
@@ -1220,7 +2111,7 @@
           "img_url": "https://www.realmeye.com/s/a/img/wiki/i/ukCIqiz.gif"
         },
         {
-          "logical_name": "sage_s_wakibiki",
+          "logical_name": "sages_wakibiki",
           "img_url": "https://www.realmeye.com/s/a/img/wiki/i/9HWUZWj.png"
         },
         {
@@ -1273,7 +2164,16 @@
         "logical_name": "key_beachzone",
         "img_url": "https://www.realmeye.com/s/a/img/wiki/i/02j905x.png"
       },
-      "drops": []
+      "drops": [
+        {
+          "logical_name": "beach_party_madness_drinks",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/LHcIi0S.png"
+        },
+        {
+          "logical_name": "beach_party_necromancer_skin",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/6p4whmZ.png"
+        }
+      ]
     },
     {
       "name": "the_nest",
@@ -1287,7 +2187,104 @@
         "logical_name": "key_the_nest",
         "img_url": "https://www.realmeye.com/s/a/img/wiki/i/QGwUicw.png"
       },
-      "drops": []
+      "drops": [
+        {
+          "logical_name": "mark_of_the_killer_bee_queen",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/nx51H0q.png"
+        },
+        {
+          "logical_name": "royal_jelly",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/PIWAIG0.png"
+        },
+        {
+          "logical_name": "blue_bee_cloths",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/of5IFRN.png"
+        },
+        {
+          "logical_name": "red_bee_cloths",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/r34LLnY.png"
+        },
+        {
+          "logical_name": "yellow_bee_cloths",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/b1NCWFb.png"
+        },
+        {
+          "logical_name": "blue_beehemoth_armor",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/cV2muQj.png"
+        },
+        {
+          "logical_name": "red_beehemoth_armor",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/InPgMzU.png"
+        },
+        {
+          "logical_name": "yellow_beehemoth_armor",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/lZCU4nx.png"
+        },
+        {
+          "logical_name": "sword_rune",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/Xawmz73.png"
+        },
+        {
+          "logical_name": "potion_of_dexterity",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/7kXmM0O.png"
+        },
+        {
+          "logical_name": "potion_of_defense",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/xSXLjme.png"
+        },
+        {
+          "logical_name": "potion_of_life",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/FDzx09G.png"
+        },
+        {
+          "logical_name": "greater_potion_of_life",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/lWNsTd9.png"
+        },
+        {
+          "logical_name": "killbilly_warrior_set_shard",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/DEuXukk.png"
+        },
+        {
+          "logical_name": "resurrected_huntress_set_shard",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/M4uhVTL.png"
+        },
+        {
+          "logical_name": "killer_bee_queen_pet_skin",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/cGRqte9.png"
+        },
+        {
+          "logical_name": "nectar_crossfire",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/U6AjaHd.png"
+        },
+        {
+          "logical_name": "honeytomb_snare",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/gCZAhn2.png"
+        },
+        {
+          "logical_name": "apiary_armor",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/Q1YO3pa.png"
+        },
+        {
+          "logical_name": "amber_honeycomb",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/9IiTLSS.png"
+        },
+        {
+          "logical_name": "tier_13_alternate_weapons",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/jJ5vXO8.gif"
+        },
+        {
+          "logical_name": "queens_stinger",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/Bjlfsca.png"
+        },
+        {
+          "logical_name": "hivemaster_helm",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/rlxhfqA.png"
+        },
+        {
+          "logical_name": "beekeepers_flamethrower",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/f1YZVsv.png"
+        }
+      ]
     },
     {
       "name": "cultist_hideout",
@@ -1298,7 +2295,40 @@
         "img_url": "https://www.realmeye.com/s/a/img/wiki/i/Xa9mjsG.png"
       },
       "key": null,
-      "drops": []
+      "drops": [
+        {
+          "logical_name": "mark_of_malus",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/alVAcO8.png"
+        },
+        {
+          "logical_name": "helmet_rune",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/Vca9HGl.png"
+        },
+        {
+          "logical_name": "tier_6_rings",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/Wlsp7N9.gif"
+        },
+        {
+          "logical_name": "vial_of_pure_darkness",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/j0RaAEh.png"
+        },
+        {
+          "logical_name": "potion_of_life",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/FDzx09G.png"
+        },
+        {
+          "logical_name": "storm_shaman_set_shard",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/9AB26So.png"
+        },
+        {
+          "logical_name": "mini_malus_sorcerer_skin",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/wurh78y.png"
+        },
+        {
+          "logical_name": "burial_blades",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/wH72iVT.png"
+        }
+      ]
     },
     {
       "name": "fungal_cavern",
@@ -1312,7 +2342,44 @@
         "logical_name": "key_fungal_cavern",
         "img_url": "https://www.realmeye.com/s/a/img/wiki/i/Nh1WStz.png"
       },
-      "drops": []
+      "drops": [
+        {
+          "logical_name": "magic_mushroom",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/fQAcpFY.png"
+        },
+        {
+          "logical_name": "sword_rune",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/Xawmz73.png"
+        },
+        {
+          "logical_name": "greater_stat_increase_potions",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/eLCJ9DK.gif"
+        },
+        {
+          "logical_name": "quartz_cutter",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/deiqLkX.png"
+        },
+        {
+          "logical_name": "luminous_armor",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/J1iS7QS.png"
+        },
+        {
+          "logical_name": "tier_13_alternate_weapons",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/jJ5vXO8.gif"
+        },
+        {
+          "logical_name": "ring_of_decades",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/YfL2dh5.png"
+        },
+        {
+          "logical_name": "fungal_breastplate",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/10YScvZ.png"
+        },
+        {
+          "logical_name": "crystallized_worm_spellblade",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/gm0isXX.png"
+        }
+      ]
     },
     {
       "name": "crystal_cavern",
@@ -1607,7 +2674,28 @@
         "img_url": "https://www.realmeye.com/s/a/img/wiki/i/ijlxjJM.png"
       },
       "key": null,
-      "drops": []
+      "drops": [
+        {
+          "logical_name": "mark_of_the_void_entity",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/wdbDBrT.png"
+        },
+        {
+          "logical_name": "helmet_rune",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/Vca9HGl.png"
+        },
+        {
+          "logical_name": "tier_13_weapons",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/S1mYiC8.gif"
+        },
+        {
+          "logical_name": "potion_of_life",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/FDzx09G.png"
+        },
+        {
+          "logical_name": "bow_of_the_void",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/4l5NPeH.png"
+        }
+      ]
     },
     {
       "name": "the_shatters",
@@ -1621,7 +2709,140 @@
         "logical_name": "key_the_shatters",
         "img_url": "https://www.realmeye.com/s/a/img/wiki/i/RTeKNCz.png"
       },
-      "drops": []
+      "drops": [
+        {
+          "logical_name": "mark_of_the_forgotten_king",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/8kTwd5r.png"
+        },
+        {
+          "logical_name": "herbal_tincture",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/x6RFE5c.png"
+        },
+        {
+          "logical_name": "greater_health_potion",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/WhbDXOu.png"
+        },
+        {
+          "logical_name": "the_forgotten_ring",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/53N3d4N.png"
+        },
+        {
+          "logical_name": "greater_potion_of_attack",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/eIYqwEJ.png"
+        },
+        {
+          "logical_name": "greater_potion_of_mana",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/6DGZ5qi.png"
+        },
+        {
+          "logical_name": "greater_potion_of_life",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/lWNsTd9.png"
+        },
+        {
+          "logical_name": "greater_potion_of_mana",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/6DGZ5qi.png"
+        },
+        {
+          "logical_name": "tier_6_abilities",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/k3mIvEL.gif"
+        },
+        {
+          "logical_name": "tier_12_weapons",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/0uiOABD.gif"
+        },
+        {
+          "logical_name": "tier_12_armor",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/6HYcryV.gif"
+        },
+        {
+          "logical_name": "tier_13_alternate_weapons",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/jJ5vXO8.gif"
+        },
+        {
+          "logical_name": "tier_14_armor",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/N4nlh2I.gif"
+        },
+        {
+          "logical_name": "tier_14_alternate_weapons",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/yeQ4Zk5.gif"
+        },
+        {
+          "logical_name": "royal_guards_cuirass",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/UWkXBC2.png"
+        },
+        {
+          "logical_name": "valor",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/bLCPbmU.png"
+        },
+        {
+          "logical_name": "vest_of_abandoned_shadows",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/VEsxfR3.png"
+        },
+        {
+          "logical_name": "dusky_catalyst",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/RapQgYB.png"
+        },
+        {
+          "logical_name": "mantle_of_the_monarchy",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/55XhhEw.png"
+        },
+        {
+          "logical_name": "warmonger",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/ghOiIDU.png"
+        },
+        {
+          "logical_name": "chrysalis_of_eternity",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/hrmQLfs.png"
+        },
+        {
+          "logical_name": "corruption_tether",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/WzJqBbb.png"
+        },
+        {
+          "logical_name": "ancient_eminence",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/w1rJnK9.png"
+        },
+        {
+          "logical_name": "twilight_shroud",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/sDrDmCT.png"
+        },
+        {
+          "logical_name": "defiled_equilibrium",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/dIOdLFM.png"
+        },
+        {
+          "logical_name": "archangels_judgement",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/ALASUEd.png"
+        },
+        {
+          "logical_name": "fallen_ones_blade",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/16T4Pfs.png"
+        },
+        {
+          "logical_name": "abyssal_insignia",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/5zZXG4E.png"
+        },
+        {
+          "logical_name": "vortex_plating",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/FCLWvYi.png"
+        },
+        {
+          "logical_name": "eye_of_the_void",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/6QKqxuw.png"
+        },
+        {
+          "logical_name": "sentinel_watchdog_skin",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/ry5uBFL.png"
+        },
+        {
+          "logical_name": "shadow_stormbird_pet_skin",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/CwQhmQw.png"
+        },
+        {
+          "logical_name": "royal_void_cat_pet_skin",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/0XQQMrk.png"
+        }
+      ]
     },
     {
       "name": "heroic_undead_lair",
@@ -1694,7 +2915,48 @@
         "logical_name": "key_infernal_abyss_of_demons",
         "img_url": "https://www.realmeye.com/s/a/img/wiki/i/rQeE7Ug.png"
       },
-      "drops": []
+      "drops": [
+        {
+          "logical_name": "mark_of_malphas",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/a7vVzyA.png"
+        },
+        {
+          "logical_name": "wine_cellar_incantation",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/6iJGy69.png"
+        },
+        {
+          "logical_name": "greater_potion_of_vitality",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/sYB43YR.png"
+        },
+        {
+          "logical_name": "potion_of_attack",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/kiIMjr9.png"
+        },
+        {
+          "logical_name": "demon_frog_pet_skin",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/J8jfDg8.png"
+        },
+        {
+          "logical_name": "tarot_card_pack",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/TP9EzCf.png"
+        },
+        {
+          "logical_name": "staff_of_eruption",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/eYQVX29.png"
+        },
+        {
+          "logical_name": "molten_mantle",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/Wwwi1lA.png"
+        },
+        {
+          "logical_name": "demon_blade",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/UcQg1tr.png"
+        },
+        {
+          "logical_name": "volcanic_sheath",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/b66TXPg.png"
+        }
+      ]
     },
     {
       "name": "plagued_nest",
@@ -1708,7 +2970,108 @@
         "logical_name": "key_plagued_nest",
         "img_url": "https://www.realmeye.com/s/a/img/wiki/i/4yojIJb.png"
       },
-      "drops": []
+      "drops": [
+        {
+          "logical_name": "advanced_mark_of_the_killer_bee_queen",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/ZGu43fO.png"
+        },
+        {
+          "logical_name": "royal_jelly",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/PIWAIG0.png"
+        },
+        {
+          "logical_name": "blue_bee_cloths",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/of5IFRN.png"
+        },
+        {
+          "logical_name": "red_bee_cloths",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/r34LLnY.png"
+        },
+        {
+          "logical_name": "yellow_bee_cloths",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/b1NCWFb.png"
+        },
+        {
+          "logical_name": "blue_beehemoth_armor",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/cV2muQj.png"
+        },
+        {
+          "logical_name": "red_beehemoth_armor",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/InPgMzU.png"
+        },
+        {
+          "logical_name": "yellow_beehemoth_armor",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/lZCU4nx.png"
+        },
+        {
+          "logical_name": "green_beehemoth_armor",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/PClEmpg.png"
+        },
+        {
+          "logical_name": "sword_rune",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/Xawmz73.png"
+        },
+        {
+          "logical_name": "potion_of_dexterity",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/7kXmM0O.png"
+        },
+        {
+          "logical_name": "potion_of_defense",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/xSXLjme.png"
+        },
+        {
+          "logical_name": "potion_of_life",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/FDzx09G.png"
+        },
+        {
+          "logical_name": "greater_potion_of_life",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/lWNsTd9.png"
+        },
+        {
+          "logical_name": "killbilly_warrior_set_shard",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/DEuXukk.png"
+        },
+        {
+          "logical_name": "resurrected_huntress_set_shard",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/M4uhVTL.png"
+        },
+        {
+          "logical_name": "killer_bee_queen_pet_skin",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/cGRqte9.png"
+        },
+        {
+          "logical_name": "nectar_crossfire",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/U6AjaHd.png"
+        },
+        {
+          "logical_name": "honeytomb_snare",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/gCZAhn2.png"
+        },
+        {
+          "logical_name": "apiary_armor",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/Q1YO3pa.png"
+        },
+        {
+          "logical_name": "amber_honeycomb",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/9IiTLSS.png"
+        },
+        {
+          "logical_name": "tier_13_alternate_weapons",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/jJ5vXO8.gif"
+        },
+        {
+          "logical_name": "queens_stinger",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/Bjlfsca.png"
+        },
+        {
+          "logical_name": "hivemaster_helm",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/rlxhfqA.png"
+        },
+        {
+          "logical_name": "beekeepers_flamethrower",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/f1YZVsv.png"
+        }
+      ]
     },
     {
       "name": "advanced_kogbold_steamworks",
@@ -1778,89 +3141,111 @@
       ]
     },
     {
-      "name": "court_of_oryx",
-      "display_name": "Court of Oryx",
-      "wiki_path": "/wiki/court-of-oryx",
-      "portal": {
-        "logical_name": "portal_court_of_oryx",
-        "img_url": "https://www.realmeye.com/s/a/img/wiki/i/AUfvKkf.png"
-      },
-      "key": {
-        "logical_name": "key_court_of_oryx",
-        "img_url": "https://www.realmeye.com/s/a/img/wiki/i/RfObrpY.png"
-      },
-      "drops": []
-    },
-    {
-      "name": "oryx_s_chamber",
-      "display_name": "Oryx’s Chamber",
-      "wiki_path": "/wiki/oryx-s-chamber",
-      "portal": {
-        "logical_name": "portal_oryx_s_chamber",
-        "img_url": "https://www.realmeye.com/s/a/img/wiki/i/dLVOZiv.png"
-      },
-      "key": {
-        "logical_name": "key_oryx_s_chamber",
-        "img_url": "https://www.realmeye.com/s/a/img/wiki/i/bqbYH0U.png"
-      },
-      "drops": [
-        {
-          "logical_name": "mark_of_oryx",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/ulDKVgi.png"
-        },
-        {
-          "logical_name": "wine_cellar_incantation",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/2gA60di.png"
-        },
-        {
-          "logical_name": "tier_11_weapons",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/Zv9WLC1.gif"
-        },
-        {
-          "logical_name": "potion_of_attack",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/kiIMjr9.png"
-        },
-        {
-          "logical_name": "theurgy_wand",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/IiDnLz1.png"
-        },
-        {
-          "logical_name": "cloak_of_the_mad_god",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/5wzATeW.png"
-        },
-        {
-          "logical_name": "chicken_leg_of_doom",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/pCpD2zA.png"
-        }
-      ]
-    },
-    {
-      "name": "wine_cellar",
-      "display_name": "Wine Cellar",
-      "wiki_path": "/wiki/wine-cellar",
-      "portal": {
-        "logical_name": "portal_wine_cellar",
-        "img_url": "https://www.realmeye.com/s/a/img/wiki/i/ozNWFFN.png"
-      },
-      "key": {
-        "logical_name": "key_wine_cellar",
-        "img_url": "https://www.realmeye.com/s/a/img/wiki/i/xQnFJqW.png"
-      },
-      "drops": []
-    },
-    {
-      "name": "oryx_s_sanctuary",
+      "name": "oryxs_sanctuary",
       "display_name": "Oryx’s Sanctuary",
       "wiki_path": "/wiki/oryx-s-sanctuary",
       "portal": {
-        "logical_name": "portal_oryx_s_sanctuary",
+        "logical_name": "portal_oryxs_sanctuary",
         "img_url": "https://www.realmeye.com/s/a/img/wiki/i/JGnMCv2.png"
       },
       "key": {
-        "logical_name": "key_oryx_s_sanctuary",
+        "logical_name": "key_oryxs_sanctuary",
         "img_url": "https://www.realmeye.com/s/a/img/wiki/i/dvC7X5H.png"
       },
-      "drops": []
+      "drops": [
+        {
+          "logical_name": "mark_of_the_exalted_god",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/xipZjxt.png"
+        },
+        {
+          "logical_name": "tincture_of_courage",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/3YPtPpr.png"
+        },
+        {
+          "logical_name": "sanctuary_cloths",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/gbyBBZF.png"
+        },
+        {
+          "logical_name": "dammah_symbol_cloths",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/qW7kHCr.png"
+        },
+        {
+          "logical_name": "gemsbok_symbol_cloths",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/KbQbx6u.png"
+        },
+        {
+          "logical_name": "leucoryx_symbol_cloths",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/PLYqEiJ.png"
+        },
+        {
+          "logical_name": "beisa_symbol_cloths",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/zHaPEMI.png"
+        },
+        {
+          "logical_name": "oryx_symbol_cloths",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/9QLRtun.png"
+        },
+        {
+          "logical_name": "greater_potion_of_life",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/KBpSlXq.png"
+        },
+        {
+          "logical_name": "shaman_necromancer_set_shard",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/0lY3QH9.png"
+        },
+        {
+          "logical_name": "mad_minotaur_set_shard",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/zIHpp8b.png"
+        },
+        {
+          "logical_name": "astral_arcanist_set_shard",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/7MTHRqz.png"
+        },
+        {
+          "logical_name": "harmonious_harp",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/iw13Cvs.png"
+        },
+        {
+          "logical_name": "angels_fanfare",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/YBa4Ein.png"
+        },
+        {
+          "logical_name": "wings_of_sanctity",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/nk4E21t.png"
+        },
+        {
+          "logical_name": "heavenly_halo",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/XtFL74D.png"
+        },
+        {
+          "logical_name": "tier_13_weapons",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/S1mYiC8.gif"
+        },
+        {
+          "logical_name": "tier_14_weapons",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/ukCIqiz.gif"
+        },
+        {
+          "logical_name": "superior",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/y0Svuxi.png"
+        },
+        {
+          "logical_name": "avarice",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/vHD1WOk.png"
+        },
+        {
+          "logical_name": "lumiaire",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/XTQGS8H.png"
+        },
+        {
+          "logical_name": "enforcer",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/VZ4mOgG.png"
+        },
+        {
+          "logical_name": "divinity",
+          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/iqtgZAF.png"
+        }
+      ]
     },
     {
       "name": "malogia",
@@ -1888,7 +3273,7 @@
           "img_url": "https://www.realmeye.com/s/a/img/wiki/i/xPLOjWl.png"
         },
         {
-          "logical_name": "sun_s_judgement",
+          "logical_name": "suns_judgement",
           "img_url": "https://www.realmeye.com/s/a/img/wiki/i/L09wXL9.png"
         },
         {
@@ -1898,14 +3283,6 @@
         {
           "logical_name": "comet_of_calamity",
           "img_url": "https://www.realmeye.com/s/a/img/wiki/i/TaBAF5v.png"
-        },
-        {
-          "logical_name": "universal_fragment",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/XeE7OTt.png"
-        },
-        {
-          "logical_name": "malogia_fragment",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/tmmm33Y.png"
         }
       ]
     },
@@ -1945,14 +3322,6 @@
         {
           "logical_name": "snowblind_wand",
           "img_url": "https://www.realmeye.com/s/a/img/wiki/i/uMVLXLF.png"
-        },
-        {
-          "logical_name": "universal_fragment",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/XeE7OTt.png"
-        },
-        {
-          "logical_name": "untaris_fragment",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/1sttVls.png"
         }
       ]
     },
@@ -1992,14 +3361,6 @@
         {
           "logical_name": "blazon_bow",
           "img_url": "https://www.realmeye.com/s/a/img/wiki/i/xq24Gx6.png"
-        },
-        {
-          "logical_name": "universal_fragment",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/XeE7OTt.png"
-        },
-        {
-          "logical_name": "katalund_fragment",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/WU0As17.png"
         }
       ]
     },
@@ -2039,14 +3400,6 @@
         {
           "logical_name": "corrosion_cutter",
           "img_url": "https://www.realmeye.com/s/a/img/wiki/i/NSAUa7q.png"
-        },
-        {
-          "logical_name": "universal_fragment",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/XeE7OTt.png"
-        },
-        {
-          "logical_name": "forax_fragment",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/ZUtFXXK.png"
         }
       ]
     },
@@ -2119,516 +3472,6 @@
           "img_url": "https://www.realmeye.com/s/a/img/wiki/i/jZI4ikW.png"
         }
       ]
-    },
-    {
-      "name": "rainbow_road",
-      "display_name": "Rainbow Road",
-      "wiki_path": "/wiki/rainbow-road",
-      "portal": {
-        "logical_name": "portal_rainbow_road",
-        "img_url": "https://www.realmeye.com/s/a/img/wiki/i/MDVaDzN.png"
-      },
-      "key": {
-        "logical_name": "key_rainbow_road",
-        "img_url": "https://www.realmeye.com/s/a/img/wiki/i/lifRp4a.png"
-      },
-      "drops": [
-        {
-          "logical_name": "intense_clovers_cloths",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/YyxPO0p.png"
-        },
-        {
-          "logical_name": "saint_paddy_s_brew",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/H5ls3Pv.png"
-        },
-        {
-          "logical_name": "mystery_stat_pot",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/aeYlFi2.png"
-        },
-        {
-          "logical_name": "miss_shamrock_wizard_skin",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/Oxse1n3.png"
-        },
-        {
-          "logical_name": "prismatic_slasher",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/jDclh2c.png"
-        }
-      ]
-    },
-    {
-      "name": "santa_s_workshop",
-      "display_name": "Santa’s Workshop",
-      "wiki_path": "/wiki/santa-s-workshop",
-      "portal": {
-        "logical_name": "portal_santa_s_workshop",
-        "img_url": "https://www.realmeye.com/s/a/img/wiki/i/oX3aVA2.png"
-      },
-      "key": {
-        "logical_name": "key_santa_s_workshop",
-        "img_url": "https://www.realmeye.com/s/a/img/wiki/i/bYc8f5I.png"
-      },
-      "drops": []
-    },
-    {
-      "name": "ice_tomb",
-      "display_name": "Ice Tomb",
-      "wiki_path": "/wiki/ice-tomb",
-      "portal": {
-        "logical_name": "portal_ice_tomb",
-        "img_url": "https://www.realmeye.com/s/a/img/wiki/i/zhWVACc.png"
-      },
-      "key": {
-        "logical_name": "key_ice_tomb",
-        "img_url": "https://www.realmeye.com/s/a/img/wiki/i/t2qWQq7.png"
-      },
-      "drops": []
-    },
-    {
-      "name": "battle_for_the_nexus",
-      "display_name": "Battle for the Nexus",
-      "wiki_path": "/wiki/battle-for-the-nexus",
-      "portal": {
-        "logical_name": "portal_battle_for_the_nexus",
-        "img_url": "https://www.realmeye.com/s/a/img/wiki/i/zyCjq2l.png"
-      },
-      "key": {
-        "logical_name": "key_battle_for_the_nexus",
-        "img_url": "https://www.realmeye.com/s/a/img/wiki/i/L8Q3ucm.png"
-      },
-      "drops": []
-    },
-    {
-      "name": "stromwell_s_rift_i",
-      "display_name": "Stromwell’s Rift I",
-      "wiki_path": "/wiki/stromwell-s-rift-i",
-      "portal": {
-        "logical_name": "portal_stromwell_s_rift_i",
-        "img_url": "https://www.realmeye.com/s/a/img/wiki/i/v0Bnw3X.png"
-      },
-      "key": {
-        "logical_name": "key_stromwell_s_rift_i",
-        "img_url": "https://www.realmeye.com/s/a/img/wiki/i/jr0LKnI.png"
-      },
-      "drops": [
-        {
-          "logical_name": "bounty_hunter_s_dagger",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/q9SSX6D.png"
-        }
-      ]
-    },
-    {
-      "name": "belladonna_s_garden",
-      "display_name": "Belladonna’s Garden",
-      "wiki_path": "/wiki/belladonna-s-garden",
-      "portal": {
-        "logical_name": "portal_belladonna_s_garden",
-        "img_url": "https://www.realmeye.com/s/a/img/wiki/i/iIG3NIj.png"
-      },
-      "key": {
-        "logical_name": "key_belladonna_s_garden",
-        "img_url": "https://www.realmeye.com/s/a/img/wiki/i/GsdfRSR.png"
-      },
-      "drops": [
-        {
-          "logical_name": "mark_of_belladonna",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/9502koL.png"
-        },
-        {
-          "logical_name": "valentine_weapons",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/QHKn7f2.gif"
-        },
-        {
-          "logical_name": "bashing_bride_skin",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/DiDJsiL.png"
-        },
-        {
-          "logical_name": "little_fox_pet_skin",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/4CqzIM8.png"
-        },
-        {
-          "logical_name": "perennial_cranium",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/SHy3DA5.png"
-        }
-      ]
-    },
-    {
-      "name": "queen_bunny_chamber",
-      "display_name": "Queen Bunny Chamber",
-      "wiki_path": "/wiki/queen-bunny-chamber",
-      "portal": {
-        "logical_name": "portal_queen_bunny_chamber",
-        "img_url": "https://www.realmeye.com/s/a/img/wiki/i/li7XrWv.png"
-      },
-      "key": {
-        "logical_name": "key_queen_bunny_chamber",
-        "img_url": "https://www.realmeye.com/s/a/img/wiki/i/dnM9yFh.png"
-      },
-      "drops": [
-        {
-          "logical_name": "bunny_ear_tachi",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/ziwQqBt.png"
-        }
-      ]
-    },
-    {
-      "name": "mad_god_mayhem",
-      "display_name": "Mad God Mayhem",
-      "wiki_path": "/wiki/mad-god-mayhem",
-      "portal": {
-        "logical_name": "portal_mad_god_mayhem",
-        "img_url": "https://www.realmeye.com/s/a/img/wiki/i/U9HeRQ4.png"
-      },
-      "key": {
-        "logical_name": "key_mad_god_mayhem",
-        "img_url": "https://www.realmeye.com/s/a/img/wiki/i/MZeFrk2.png"
-      },
-      "drops": [
-        {
-          "logical_name": "tier_12_weapons",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/0uiOABD.gif"
-        },
-        {
-          "logical_name": "steam_summer_sale_weapons",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/wqaTkLN.png"
-        },
-        {
-          "logical_name": "random_spell_extraction_device",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/fX71HDH.png"
-        },
-        {
-          "logical_name": "jade_storm",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/w8lcI3O.png"
-        }
-      ]
-    },
-    {
-      "name": "white_snake_invasion_i",
-      "display_name": "White Snake Invasion I",
-      "wiki_path": "/wiki/white-snake-invasion-i",
-      "portal": {
-        "logical_name": "portal_white_snake_invasion_i",
-        "img_url": "https://www.realmeye.com/s/a/img/wiki/i/SW85m6U.png"
-      },
-      "key": {
-        "logical_name": "key_white_snake_invasion_i",
-        "img_url": "https://www.realmeye.com/s/a/img/wiki/i/bw9WPtY.png"
-      },
-      "drops": [
-        {
-          "logical_name": "divine_coin",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/OCU5qge.png"
-        },
-        {
-          "logical_name": "divine_snake_oil",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/qloNwVS.png"
-        },
-        {
-          "logical_name": "legend_of_the_white_snake_mystery_chest",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/inlfizi.png"
-        },
-        {
-          "logical_name": "potion_of_speed",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/R2U76AH.png"
-        },
-        {
-          "logical_name": "potion_of_wisdom",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/WLjcwoA.png"
-        },
-        {
-          "logical_name": "potion_of_vitality",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/1iHlYrD.png"
-        },
-        {
-          "logical_name": "potion_of_dexterity",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/7kXmM0O.png"
-        },
-        {
-          "logical_name": "potion_of_attack",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/kiIMjr9.png"
-        },
-        {
-          "logical_name": "potion_of_defense",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/xSXLjme.png"
-        },
-        {
-          "logical_name": "greater_potion_of_speed",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/J45lx5m.png"
-        },
-        {
-          "logical_name": "wine_cellar_incantation",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/2gA60di.png"
-        },
-        {
-          "logical_name": "amulet_of_dispersion",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/fOZY56P.png"
-        },
-        {
-          "logical_name": "soul_s_guidance",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/dBfapRh.png"
-        },
-        {
-          "logical_name": "resurrected_warrior_s_armor",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/lbaYp6l.png"
-        },
-        {
-          "logical_name": "etherite_dagger",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/ksib4rU.png"
-        },
-        {
-          "logical_name": "ghastly_drape",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/vzdkbXL.png"
-        },
-        {
-          "logical_name": "mantle_of_skuld",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/qUnenkk.png"
-        },
-        {
-          "logical_name": "spectral_ring_of_horrors",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/1puXzet.png"
-        }
-      ]
-    },
-    {
-      "name": "the_trials_of_cronus",
-      "display_name": "The Trials of Cronus",
-      "wiki_path": "/wiki/the-trials-of-cronus",
-      "portal": {
-        "logical_name": "portal_the_trials_of_cronus",
-        "img_url": "https://www.realmeye.com/s/a/img/wiki/i/siFo34R.png"
-      },
-      "key": {
-        "logical_name": "key_the_trials_of_cronus",
-        "img_url": "https://www.realmeye.com/s/a/img/wiki/i/tahoE5K.png"
-      },
-      "drops": []
-    },
-    {
-      "name": "hidden_interregnum",
-      "display_name": "Hidden Interregnum",
-      "wiki_path": "/wiki/hidden-interregnum",
-      "portal": {
-        "logical_name": "portal_hidden_interregnum",
-        "img_url": "https://www.realmeye.com/s/a/img/wiki/i/voULRFc.png"
-      },
-      "key": {
-        "logical_name": "key_hidden_interregnum",
-        "img_url": "https://www.realmeye.com/s/a/img/wiki/i/rwV2I57.png"
-      },
-      "drops": []
-    },
-    {
-      "name": "white_snake_invasion_ii",
-      "display_name": "White Snake Invasion II",
-      "wiki_path": "/wiki/white-snake-invasion-ii",
-      "portal": {
-        "logical_name": "portal_white_snake_invasion_ii",
-        "img_url": "https://www.realmeye.com/s/a/img/wiki/i/F1WWPv7.png"
-      },
-      "key": {
-        "logical_name": "key_white_snake_invasion_ii",
-        "img_url": "https://www.realmeye.com/s/a/img/wiki/i/f48pk4k.png"
-      },
-      "drops": [
-        {
-          "logical_name": "divine_coin",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/OCU5qge.png"
-        },
-        {
-          "logical_name": "divine_snake_oil",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/qloNwVS.png"
-        },
-        {
-          "logical_name": "legend_of_the_white_snake_mystery_chest",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/inlfizi.png"
-        },
-        {
-          "logical_name": "stat_increase_potions",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/rY8JQSL.gif"
-        },
-        {
-          "logical_name": "potion_of_mana",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/ss7CVdl.png"
-        },
-        {
-          "logical_name": "greater_potion_of_life",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/lWNsTd9.png"
-        },
-        {
-          "logical_name": "wine_cellar_incantation",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/6iJGy69.png"
-        },
-        {
-          "logical_name": "tier_12_weapons",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/0uiOABD.gif"
-        },
-        {
-          "logical_name": "wand_of_the_fallen",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/Y0owA0u.png"
-        },
-        {
-          "logical_name": "kazekiri",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/IZ7QPDw.png"
-        }
-      ]
-    },
-    {
-      "name": "stromwell_s_rift_ii",
-      "display_name": "Stromwell’s Rift II",
-      "wiki_path": "/wiki/stromwell-s-rift-ii",
-      "portal": {
-        "logical_name": "portal_stromwell_s_rift_ii",
-        "img_url": "https://www.realmeye.com/s/a/img/wiki/i/MTJYkkV.png"
-      },
-      "key": {
-        "logical_name": "key_stromwell_s_rift_ii",
-        "img_url": "https://www.realmeye.com/s/a/img/wiki/i/w5M4FSC.png"
-      },
-      "drops": [
-        {
-          "logical_name": "legion_elite_cloak",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/G3SHqE6.png"
-        },
-        {
-          "logical_name": "bounty_hunter_s_dagger",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/q9SSX6D.png"
-        },
-        {
-          "logical_name": "legion_elite_dagger",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/IpljSIi.png"
-        }
-      ]
-    },
-    {
-      "name": "oryxmania",
-      "display_name": "Oryxmania",
-      "wiki_path": "/wiki/oryxmania",
-      "portal": {
-        "logical_name": "portal_oryxmania",
-        "img_url": "https://www.realmeye.com/s/a/img/wiki/i/A1U1bx8.png"
-      },
-      "key": {
-        "logical_name": "key_oryxmania",
-        "img_url": "https://www.realmeye.com/s/a/img/wiki/i/p1P51Ny.png"
-      },
-      "drops": []
-    },
-    {
-      "name": "white_snake_invasion_iii",
-      "display_name": "White Snake Invasion III",
-      "wiki_path": "/wiki/white-snake-invasion-iii",
-      "portal": {
-        "logical_name": "portal_white_snake_invasion_iii",
-        "img_url": "https://www.realmeye.com/s/a/img/wiki/i/aicgQzn.png"
-      },
-      "key": {
-        "logical_name": "key_white_snake_invasion_iii",
-        "img_url": "https://www.realmeye.com/s/a/img/wiki/i/cC2CkPr.png"
-      },
-      "drops": [
-        {
-          "logical_name": "divine_coin",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/OCU5qge.png"
-        },
-        {
-          "logical_name": "legend_of_the_white_snake_mystery_chest",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/inlfizi.png"
-        },
-        {
-          "logical_name": "greater_potion_of_life",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/KBpSlXq.png"
-        },
-        {
-          "logical_name": "silver_primal_snake_pet_skin",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/kN0jwQs.png"
-        },
-        {
-          "logical_name": "locked_in_blacksmith_emote",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/4Cs87za.png"
-        },
-        {
-          "logical_name": "tier_13_weapons",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/S1mYiC8.gif"
-        },
-        {
-          "logical_name": "eden_s_embrace",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/aLz9Gxw.png"
-        }
-      ]
-    },
-    {
-      "name": "stromwell_s_rift_iii",
-      "display_name": "Stromwell’s Rift III",
-      "wiki_path": "/wiki/stromwell-s-rift-iii",
-      "portal": {
-        "logical_name": "portal_stromwell_s_rift_iii",
-        "img_url": "https://www.realmeye.com/s/a/img/wiki/i/ZOOwlwb.png"
-      },
-      "key": {
-        "logical_name": "key_stromwell_s_rift_iii",
-        "img_url": "https://www.realmeye.com/s/a/img/wiki/i/ziPucIN.png"
-      },
-      "drops": [
-        {
-          "logical_name": "legion_elite_cloak",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/G3SHqE6.png"
-        },
-        {
-          "logical_name": "bounty_hunter_s_dagger",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/q9SSX6D.png"
-        },
-        {
-          "logical_name": "legion_elite_dagger",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/IpljSIi.png"
-        },
-        {
-          "logical_name": "nightmatter_circlet",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/ac4LZLM.png"
-        }
-      ]
-    },
-    {
-      "name": "tutorial",
-      "display_name": "Tutorial",
-      "wiki_path": "/wiki/tutorial",
-      "portal": {
-        "logical_name": "portal_tutorial",
-        "img_url": "https://www.realmeye.com/s/a/img/wiki/i/NKIMMs8.png"
-      },
-      "key": null,
-      "drops": []
-    },
-    {
-      "name": "oryx_s_kitchen",
-      "display_name": "Oryx’s Kitchen",
-      "wiki_path": "/wiki/oryx-s-kitchen",
-      "portal": {
-        "logical_name": "portal_oryx_s_kitchen",
-        "img_url": "https://www.realmeye.com/s/a/img/wiki/i/NKIMMs8.png"
-      },
-      "key": null,
-      "drops": []
-    },
-    {
-      "name": "chess",
-      "display_name": "Chess",
-      "wiki_path": "/wiki/chess",
-      "portal": {
-        "logical_name": "portal_chess",
-        "img_url": "https://www.realmeye.com/s/a/img/wiki/i/RrCGUuG.png"
-      },
-      "key": null,
-      "drops": []
-    },
-    {
-      "name": "admin_arena",
-      "display_name": "Admin Arena",
-      "wiki_path": "/wiki/admin-arena",
-      "portal": {
-        "logical_name": "portal_admin_arena",
-        "img_url": "https://www.realmeye.com/s/a/img/wiki/i/oV9nL7Q.png"
-      },
-      "key": null,
-      "drops": []
     }
   ]
 }
