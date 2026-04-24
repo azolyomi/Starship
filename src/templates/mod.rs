@@ -211,7 +211,7 @@ impl Effective {
 fn default_reactions(key: Option<&WikiEmoji>) -> Vec<OverrideReaction> {
     let mut out = vec![OverrideReaction {
         name: "interest".into(),
-        display_name: "Reacts".into(),
+        display_name: "Joining".into(),
         emoji: "✅".into(),
         num_required: 1,
         requires_confirmation: false,
@@ -221,7 +221,7 @@ fn default_reactions(key: Option<&WikiEmoji>) -> Vec<OverrideReaction> {
         out.push(OverrideReaction {
             name: "key".into(),
             display_name: "Key".into(),
-            emoji: k.logical_name.clone(),
+            emoji: "🔑".into(),
             num_required: 1,
             requires_confirmation: false,
             sort_order: 1,
