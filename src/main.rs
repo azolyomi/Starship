@@ -248,7 +248,10 @@ async fn on_error(error: poise::FrameworkError<'_, BotData, BotError>) {
 /// Framework command_check: bail out of any non-`/setup` command when the
 /// guild row doesn't exist yet, with a friendly prompt to run `/setup`.
 async fn ensure_setup(ctx: BotContext<'_>) -> Result<bool, BotError> {
-    if ctx.command().name == "setup" {
+    // `setup` is the whole point of this gate; `upload-emoji` is operator-only
+    // and touches the bot-wide application-emoji set, not guild config, so it
+    // works even in guilds that haven't been /setup'd yet.
+    if matches!(ctx.command().name.as_str(), "setup" | "upload-emoji") {
         return Ok(true);
     }
     let Some(guild_id) = ctx.guild_id() else {

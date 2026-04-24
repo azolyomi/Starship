@@ -106,9 +106,9 @@ pub const BUILTIN_TEMPLATES: &[BuiltinTemplate] = &[
                 sort_order: 1,
             },
             BuiltinReaction {
-                name: "vial_of_the_void",
-                display_name: "Vial of the Void",
-                emoji: "vial_of_the_void",
+                name: "vial_of_pure_darkness",
+                display_name: "Vial of Pure Darkness",
+                emoji: "vial_of_pure_darkness",
                 num_required: 1,
                 requires_confirmation: false,
                 sort_order: 2,
