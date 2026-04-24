@@ -62,5 +62,22 @@
     "display_name": "Fullskip Void",
     "message_title": "Fullskip Void Headcount",
     "requires_vc": true
+  },
+  "cultist_hideout": {
+    "requires_vc": false,
+    "reactions": [
+      {
+        "name": "interest",
+        "display_name": "Reacts",
+        "emoji": "✅",
+        "sort_order": 0
+      },
+      {
+        "name": "lost_halls_key",
+        "display_name": "Lost Halls Key",
+        "emoji": "lost_halls_key",
+        "sort_order": 1
+      }
+    ]
   }
 }
