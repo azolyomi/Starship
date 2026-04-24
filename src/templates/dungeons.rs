@@ -27,7 +27,7 @@ pub struct BuiltinTemplate {
 
 pub const BUILTIN_TEMPLATES: &[BuiltinTemplate] = &[
     BuiltinTemplate {
-        name: "oryx_sanctuary",
+        name: "oryx_s_sanctuary",
         display_name: "Oryx's Sanctuary",
         emoji: "portal_sanctuary",
         color: 0xFF6B35,
@@ -39,7 +39,7 @@ pub const BUILTIN_TEMPLATES: &[BuiltinTemplate] = &[
             BuiltinReaction {
                 name: "interest",
                 display_name: "Reacts",
-                emoji: "react_green",
+                emoji: "✅",
                 num_required: 1,
                 requires_confirmation: false,
                 sort_order: 0,
@@ -83,7 +83,7 @@ pub const BUILTIN_TEMPLATES: &[BuiltinTemplate] = &[
             BuiltinReaction {
                 name: "interest",
                 display_name: "Reacts",
-                emoji: "react_green",
+                emoji: "✅",
                 num_required: 1,
                 requires_confirmation: false,
                 sort_order: 0,
@@ -111,7 +111,7 @@ pub const BUILTIN_TEMPLATES: &[BuiltinTemplate] = &[
             BuiltinReaction {
                 name: "interest",
                 display_name: "Reacts",
-                emoji: "react_green",
+                emoji: "✅",
                 num_required: 1,
                 requires_confirmation: false,
                 sort_order: 0,
@@ -147,7 +147,7 @@ pub const BUILTIN_TEMPLATES: &[BuiltinTemplate] = &[
             BuiltinReaction {
                 name: "interest",
                 display_name: "Reacts",
-                emoji: "react_green",
+                emoji: "✅",
                 num_required: 1,
                 requires_confirmation: false,
                 sort_order: 0,
@@ -175,7 +175,7 @@ pub const BUILTIN_TEMPLATES: &[BuiltinTemplate] = &[
             BuiltinReaction {
                 name: "interest",
                 display_name: "Reacts",
-                emoji: "react_green",
+                emoji: "✅",
                 num_required: 1,
                 requires_confirmation: false,
                 sort_order: 0,
@@ -203,7 +203,7 @@ pub const BUILTIN_TEMPLATES: &[BuiltinTemplate] = &[
             BuiltinReaction {
                 name: "interest",
                 display_name: "Reacts",
-                emoji: "react_green",
+                emoji: "✅",
                 num_required: 1,
                 requires_confirmation: false,
                 sort_order: 0,
@@ -231,7 +231,7 @@ pub const BUILTIN_TEMPLATES: &[BuiltinTemplate] = &[
             BuiltinReaction {
                 name: "interest",
                 display_name: "Reacts",
-                emoji: "react_green",
+                emoji: "✅",
                 num_required: 1,
                 requires_confirmation: false,
                 sort_order: 0,
@@ -259,7 +259,7 @@ pub const BUILTIN_TEMPLATES: &[BuiltinTemplate] = &[
             BuiltinReaction {
                 name: "interest",
                 display_name: "Reacts",
-                emoji: "react_green",
+                emoji: "✅",
                 num_required: 1,
                 requires_confirmation: false,
                 sort_order: 0,

@@ -64,6 +64,7 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg"]
 
 # CLI
 clap = { version = "4", features = ["derive"] }
+dialoguer = "0.11"
 
 # Time
 chrono = { version = "0.4", features = ["serde"] }

@@ -7,6 +7,7 @@ use tracing::info;
 mod cli;
 mod commands;
 mod config;
+mod curation;
 mod db;
 mod embeds;
 mod handlers;
@@ -33,7 +34,26 @@ enum CliCommand {
     /// Run the Discord bot (default).
     Bot,
     /// Scrape RealmEye wiki and sync emoji + dungeon data.
-    SyncWiki,
+    SyncWiki {
+        /// Scrape + log what would be uploaded/written, but make no Discord
+        /// POSTs and no DB writes. Read-only GETs (list existing emojis,
+        /// fetch wiki pages) still run.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Interactively curate which reactions + drops to keep per dungeon.
+    /// Writes data/curation.json, then deletes de-selected Discord emojis
+    /// and DB rows. Requires a snapshot from a prior `sync-wiki` run.
+    Curate {
+        /// Re-prompt every dungeon (including ones already in curation.json),
+        /// pre-checked with the current selections.
+        #[arg(long)]
+        recurate: bool,
+        /// Walk the prompts and print the resulting curation.json, but don't
+        /// write to disk and don't delete anything.
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[tokio::main]
@@ -52,7 +72,8 @@ async fn main() -> Result<()> {
 
     match cli.command.unwrap_or(CliCommand::Bot) {
         CliCommand::Bot => run_bot(config).await,
-        CliCommand::SyncWiki => cli::sync_wiki::run().await,
+        CliCommand::SyncWiki { dry_run } => cli::sync_wiki::run(dry_run).await,
+        CliCommand::Curate { recurate, dry_run } => cli::curate::run(recurate, dry_run).await,
     }
 }
 
@@ -63,7 +84,8 @@ async fn run_bot(config: config::Config) -> Result<()> {
     sqlx::migrate!("./migrations").run(&pool).await?;
     info!("migrations applied");
 
-    db::dungeon::seed_builtins(&pool).await?;
+    let curation = curation::Curation::load()?;
+    db::dungeon::seed_builtins(&pool, &curation).await?;
     info!("built-in dungeon templates seeded");
 
     let token = config.discord_token.clone();

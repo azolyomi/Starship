@@ -186,4 +186,25 @@ impl ApplicationEmojiClient {
 
         Ok((id, animated))
     }
+
+    /// Delete an application emoji by ID. Returns `Ok(())` on success and on
+    /// 404 (already gone), since the caller's intent is "not present on
+    /// Discord anymore" either way.
+    pub async fn delete(&self, emoji_id: u64) -> Result<()> {
+        let url = format!("{}/{}", self.base_url(), emoji_id);
+        let resp = self
+            .client
+            .delete(&url)
+            .header("Authorization", self.auth())
+            .send()
+            .await
+            .context("deleting application emoji")?;
+
+        if resp.status().is_success() || resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(());
+        }
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        anyhow::bail!("delete application emoji {emoji_id} failed ({status}): {body}");
+    }
 }

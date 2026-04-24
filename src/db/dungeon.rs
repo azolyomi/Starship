@@ -1,16 +1,23 @@
 use anyhow::Result;
 use sqlx::PgPool;
 
+use crate::curation::Curation;
 use crate::db::models::{DungeonReaction, DungeonTemplate};
 use crate::templates::dungeons::{BuiltinTemplate, BUILTIN_TEMPLATES};
 
 /// Seed global dungeon templates from built-in definitions.
 /// Uses DO UPDATE with a no-op so RETURNING always yields the row id.
-pub async fn seed_builtins(pool: &PgPool) -> Result<()> {
-    seed_templates(pool, BUILTIN_TEMPLATES).await
+/// Reactions are filtered through `curation` so a reaction the user removed
+/// via `starship curate` doesn't get resurrected on the next startup.
+pub async fn seed_builtins(pool: &PgPool, curation: &Curation) -> Result<()> {
+    seed_templates(pool, BUILTIN_TEMPLATES, curation).await
 }
 
-pub async fn seed_templates(pool: &PgPool, templates: &[BuiltinTemplate]) -> Result<()> {
+pub async fn seed_templates(
+    pool: &PgPool,
+    templates: &[BuiltinTemplate],
+    curation: &Curation,
+) -> Result<()> {
     for t in templates {
         let id: i32 = sqlx::query_scalar(
             r#"
@@ -35,6 +42,9 @@ pub async fn seed_templates(pool: &PgPool, templates: &[BuiltinTemplate]) -> Res
         .await?;
 
         for r in t.reactions {
+            if !curation.should_keep_reaction(t.name, r.name) {
+                continue;
+            }
             sqlx::query(
                 r#"
                 INSERT INTO dungeon_reactions
