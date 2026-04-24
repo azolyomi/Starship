@@ -1,4 +1,7 @@
 use anyhow::{bail, Result};
+use poise::serenity_prelude as serenity;
+use sqlx::PgPool;
+
 use crate::{db, BotContext};
 
 /// Hardcoded operator user ID. Bypasses every permission check in every guild,
@@ -205,4 +208,95 @@ pub const ALL_ACTIONS: &[&str] = &[
 
 pub fn is_valid_action(s: &str) -> bool {
     ALL_ACTIONS.contains(&s)
+}
+
+// ---------------------------------------------------------------------------
+// Component-handler helpers
+//
+// These take raw `(pool, caller_id, role_ids, ...)` because component /
+// modal handlers don't have a `BotContext` — they run off `serenity::Context`
+// + the `BotData`. Mirrors the superadmin / Discord-admin bypass chain from
+// `require` / `require_str` so the gating rules stay uniform.
+// ---------------------------------------------------------------------------
+
+/// Organizer gate for run / headcount lifecycle buttons (Start, Cancel, End,
+/// Control Panel, etc.). Returns true when any of these hold:
+///   1. caller is the global operator
+///   2. caller is the guild's configured superadmin
+///   3. caller has Discord "Manage Server" / "Administrator" (inferred from
+///      the Discord permissions bitset the gateway hands us)
+///   4. caller IS the raid leader
+///   5. caller has the `ManageRuns` action granted, scoped to this
+///      (tier, dungeon) or broader
+pub async fn can_organize(
+    pool: &PgPool,
+    guild_id: i64,
+    caller_id: i64,
+    caller_perms: Option<serenity::Permissions>,
+    caller_role_ids: &[i64],
+    leader_user_id: i64,
+    tier_id: Option<i32>,
+    dungeon_template_id: Option<i32>,
+) -> Result<bool> {
+    if caller_id == GLOBAL_SUPERADMIN_USER_ID as i64 {
+        return Ok(true);
+    }
+    if caller_id == leader_user_id {
+        return Ok(true);
+    }
+    if let Some(guild) = db::guild::get(pool, guild_id).await? {
+        if guild.superadmin_user_id == Some(caller_id) {
+            return Ok(true);
+        }
+    }
+    if caller_perms
+        .map(|p| p.manage_guild() || p.administrator())
+        .unwrap_or(false)
+    {
+        return Ok(true);
+    }
+    db::permission::check(
+        pool,
+        guild_id,
+        caller_role_ids,
+        Action::ManageRuns.as_str(),
+        tier_id,
+        dungeon_template_id,
+    )
+    .await
+}
+
+/// Convenience wrapper around [`can_organize`] that reads the caller context
+/// directly off a `ComponentInteraction`.
+pub async fn can_organize_from_interaction(
+    pool: &PgPool,
+    guild_id: i64,
+    mci: &serenity::ComponentInteraction,
+    leader_user_id: i64,
+    tier_id: Option<i32>,
+    dungeon_template_id: Option<i32>,
+) -> Result<bool> {
+    let caller_id = mci.user.id.get() as i64;
+    let (perms, role_ids) = member_meta(mci);
+    can_organize(
+        pool,
+        guild_id,
+        caller_id,
+        perms,
+        &role_ids,
+        leader_user_id,
+        tier_id,
+        dungeon_template_id,
+    )
+    .await
+}
+
+fn member_meta(
+    mci: &serenity::ComponentInteraction,
+) -> (Option<serenity::Permissions>, Vec<i64>) {
+    let Some(member) = mci.member.as_ref() else {
+        return (None, Vec::new());
+    };
+    let roles = member.roles.iter().map(|r| r.get() as i64).collect();
+    (member.permissions, roles)
 }

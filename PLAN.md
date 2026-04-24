@@ -1096,6 +1096,86 @@ column lists in `db::tier`. R4 can drop them, strip the `Tier` struct
 fields + the `runs_channel()` fallback chain, and delete the
 `set_notification_channel` helper in one pass.
 
+### 2026-04-24 — Rework R4 complete (reactions + cleanup)
+
+Landed:
+- `migrations/20260424000005_r4_reactions.sql` — drops
+  `headcount_reactions` + `run_participants` tables; drops the legacy
+  `tiers.raid_channel_id`, `tiers.headcount_channel_id`, and
+  `guilds.notification_channel_id` columns. No data migration — R4
+  explicitly retires per-user lifecycle tracking.
+- `src/main.rs` — `r4_migration_preflight` runs before
+  `sqlx::migrate!` and refuses to apply the migration if active
+  headcounts or runs exist on the pre-R4 schema. Bypass via
+  `STARSHIP_ALLOW_MIGRATION=1`. Auto no-op once the migration is
+  applied (uses `to_regclass('public.headcount_reactions')`).
+- `src/services/reactions.rs` (new) — `attach_reactions` fires one
+  `create_reaction` per required emoji with 5× retry + exponential
+  backoff on 429/5xx. `ping_organizer_on_failure` @-mentions the
+  organizer in the channel when any reaction didn't stick.
+- `src/services/raid.rs` — `start_headcount` + `start_run` both call
+  `attach_signup_reactions` after the message posts. Participant
+  migration from headcount → run is gone.
+- `src/services/permission.rs` — new `can_organize` (leader OR
+  ManageRuns OR superadmin OR Discord admin) for component handlers,
+  plus `can_organize_from_interaction` sugar that reads the caller off
+  a `ComponentInteraction`.
+- `src/handlers/component.rs` — cut `hc:*:react:*`, `hc:*:confirm:*`,
+  `hc:*:confirm_cancel`. `hc:*:start` and `hc:*:cancel` are now
+  organizer-gated.
+- `src/handlers/run.rs` — cut `run:*:join`, `run:*:leave`,
+  `run:*:confirm*`. Kept `cp` / `loc` / `party` / `transfer` / `xfer` /
+  `end`, all organizer-gated. Modal submissions reconstruct the gate
+  from `modal.member` via `can_organize`.
+- `src/embeds/headcount.rs` — `build()` drops the `counts` parameter
+  and per-reaction fields. Only `Start Run` + `Cancel` buttons remain.
+  A `**React with:** …` inline list tells users what to click.
+- `src/embeds/run.rs` — `build()` drops per-reaction fields and the
+  `👥 Joined` roster. `build_ended()` is minimal: title, leader, and
+  optional location. Public components collapsed to the Control Panel
+  button.
+- `src/templates/dungeons.rs` — every builtin has
+  `requires_confirmation: false`. O3 gains `wine_cellar_incantation`
+  and keeps all three rune reactions (5 reacts with ✅). Void swaps to
+  `lost_halls_key` + `vial_of_the_void`. Cultist drops to just
+  `lost_halls_key`.
+- `src/db/dungeon.rs::seed_templates` — reaction upserts now DO UPDATE
+  (display_name / emoji / sort_order / requires_confirmation) so
+  template changes propagate on bot restart.
+- `src/db/models.rs` — `Guild.notification_channel_id` and the legacy
+  `Tier` channel columns + `Tier::runs_channel()` helper are gone.
+  `HeadcountReaction` struct removed.
+- `src/db/run.rs` — participant CRUD removed (`Participant`,
+  `add_participant`, `remove_participant_all`, `list_participants`,
+  `list_user_ids`).
+- `src/db/headcount.rs` — reaction CRUD removed
+  (`reaction_counts`, `get_user_reaction`, `add_reaction`,
+  `remove_reaction`). `HeadcountReaction` deleted.
+- `src/db/guild.rs` — `set_notification_channel` + column refs gone.
+- `src/db/tier.rs` — `update()` writes a single `runs_channel_id`;
+  SELECT column lists no longer include the dropped legacy columns.
+- `src/cli/upload_emoji.rs` (new) + `starship upload-emoji` CLI —
+  one-off manual emoji upload via `ApplicationEmojiClient`. Takes
+  `--name`, `--file`, optional `--discord-name`, `--category`,
+  `--bag-tier`. Idempotent against Discord's existing emoji set.
+- **`cargo build` passes** (14 dead-code warnings, no errors).
+  **`cargo test`** passes (5/5).
+- **Migration applied** against the local dev DB
+  (`sqlx migrate info` shows 7/7 installed).
+
+Operator follow-up:
+- The Void's `vial_of_pure_darkness` and Cultist's `cultist_key`
+  reactions linger in the DB as orphans (seed_templates only upserts
+  the new set). Cleanest path: `starship upload-emoji --name
+  wine_cellar_incantation --file ...` if the scraper didn't pick it
+  up, then either leave the orphans (harmless — they just render as
+  an extra unused reaction on old-data templates) or prune via
+  `/dungeon edit` once the UI supports per-reaction CRUD.
+- If `wine_cellar_incantation` / `vial_of_the_void` aren't in
+  `bot_emoji` yet, the reaction attachment will silently skip them
+  (no emoji resolver); upload them via the new CLI before running a
+  raid.
+
 ### Credentials still needed from the user
 
 Collected into `.env` when we're ready to boot:

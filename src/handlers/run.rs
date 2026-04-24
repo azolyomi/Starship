@@ -1,28 +1,26 @@
-//! Component + modal routing for `run:*` custom_ids. Keeps run lifecycle
-//! plumbing out of `handlers/component.rs`, which already carries the
-//! headcount flow.
+//! Component + modal routing for `run:*` custom_ids.
+//!
+//! R4 removed the DB-tracked Join / Leave / Confirm buttons — users declare
+//! attendance via native Discord reactions on the message. The only public
+//! button on a run is Control Panel, which is gated (leader or ManageRuns).
 //!
 //! custom_id grammar (stateless, survives restarts):
-//!   run:<id>:join                 -- anyone: add self as participant
-//!   run:<id>:leave                -- anyone: remove self (all rows)
-//!   run:<id>:cp                   -- anyone clicks; leader-only response
-//!   run:<id>:loc                  -- leader: open location modal
-//!   run:<id>:party                -- leader: open party modal
-//!   run:<id>:transfer             -- leader: open UserSelect for new leader
-//!   run:<id>:xfer                 -- submission of the UserSelect menu
-//!   run:<id>:end                  -- leader: mark ended, lock the embed
-//!   run:<id>:confirm:<rid>        -- anyone: ephemeral confirm for an item
-//!   run:<id>:confirm_cancel       -- dismiss the ephemeral confirm prompt
+//!   run:<id>:cp                   -- open Control Panel (organizer gated)
+//!   run:<id>:loc                  -- open location modal
+//!   run:<id>:party                -- open party modal
+//!   run:<id>:transfer             -- open UserSelect for new leader
+//!   run:<id>:xfer                 -- submission of the UserSelect
+//!   run:<id>:end                  -- mark ended, grey the embed
 
 use poise::serenity_prelude as serenity;
 use serenity::{
-    ActionRowComponent, ButtonStyle, CreateActionRow, CreateButton, CreateInputText,
-    CreateInteractionResponse, CreateInteractionResponseMessage, CreateModal, CreateSelectMenu,
-    CreateSelectMenuKind, EditMessage, InputTextStyle, MessageId, ReactionType,
+    ActionRowComponent, CreateActionRow, CreateInputText, CreateInteractionResponse,
+    CreateInteractionResponseMessage, CreateModal, CreateSelectMenu, CreateSelectMenuKind,
+    EditMessage, InputTextStyle, MessageId,
 };
 
 use crate::db::models::Run;
-use crate::{db, embeds, BotData, BotError};
+use crate::{db, embeds, services, BotData, BotError};
 
 // ---------------------------------------------------------------------------
 // Top-level dispatchers
@@ -45,29 +43,12 @@ pub async fn handle_component(
     };
 
     match parts[2] {
-        "join" => handle_join(ctx, mci, data, run_id).await,
-        "leave" => handle_leave(ctx, mci, data, run_id).await,
         "cp" => handle_cp(ctx, mci, data, run_id).await,
         "loc" => handle_loc_open(ctx, mci, data, run_id).await,
         "party" => handle_party_open(ctx, mci, data, run_id).await,
         "transfer" => handle_transfer_open(ctx, mci, data, run_id).await,
         "xfer" => handle_transfer_submit(ctx, mci, data, run_id).await,
         "end" => handle_end(ctx, mci, data, run_id).await,
-        "confirm" if parts.len() >= 4 => {
-            let rid: i32 = match parts[3].parse() {
-                Ok(n) => n,
-                Err(_) => return Ok(()),
-            };
-            handle_confirm_click(ctx, mci, data, run_id, rid).await
-        }
-        "confirm_do" if parts.len() >= 4 => {
-            let rid: i32 = match parts[3].parse() {
-                Ok(n) => n,
-                Err(_) => return Ok(()),
-            };
-            handle_confirm_do(ctx, mci, data, run_id, rid).await
-        }
-        "confirm_cancel" => handle_confirm_cancel(ctx, mci).await,
         _ => Ok(()),
     }
 }
@@ -126,8 +107,8 @@ async fn load_active(
     }
 }
 
-/// Rebuild the public run message from the current DB state. Used after any
-/// participant / location / party / leader / status change.
+/// Rebuild the public run message from the current DB state. Used after the
+/// location, party, or leader changes.
 async fn rebuild_and_edit_message(
     ctx: &serenity::Context,
     data: &BotData,
@@ -138,7 +119,6 @@ async fn rebuild_and_edit_message(
         .await?
         .ok_or_else(|| format!("template {} not found", run.dungeon_template_id))?;
     let reactions = db::dungeon::get_reactions(pool, run.dungeon_template_id).await?;
-    let participants = db::run::list_participants(pool, run.id).await?;
     let emoji_map = db::emoji::get_all_as_map(pool).await?;
     let bag_tiers = db::loot::list_bag_tiers(pool).await?;
     let threshold = db::loot::get_threshold(pool, run.guild_id, run.dungeon_template_id).await?;
@@ -147,7 +127,6 @@ async fn rebuild_and_edit_message(
         run,
         &template,
         &reactions,
-        &participants,
         &emoji_map,
         &bag_tiers,
         &threshold,
@@ -164,77 +143,34 @@ async fn rebuild_and_edit_message(
     Ok(())
 }
 
-async fn require_leader(
+/// Organizer gate: leader OR ManageRuns OR guild/global superadmin OR
+/// Discord Manage Server. Returns true when authorized; false after sending
+/// an ephemeral denial.
+async fn require_organizer(
     ctx: &serenity::Context,
     mci: &serenity::ComponentInteraction,
+    data: &BotData,
     run: &Run,
 ) -> Result<bool, BotError> {
-    if (mci.user.id.get() as i64) == run.leader_user_id {
-        return Ok(true);
-    }
-    mci.create_response(
-        ctx,
-        ephemeral_msg("Only the run leader can do that."),
+    let ok = services::permission::can_organize_from_interaction(
+        &data.db,
+        run.guild_id,
+        mci,
+        run.leader_user_id,
+        Some(run.tier_id),
+        Some(run.dungeon_template_id),
     )
     .await?;
-    Ok(false)
-}
-
-// ---------------------------------------------------------------------------
-// Join / Leave
-// ---------------------------------------------------------------------------
-
-async fn handle_join(
-    ctx: &serenity::Context,
-    mci: &serenity::ComponentInteraction,
-    data: &BotData,
-    run_id: i32,
-) -> Result<(), BotError> {
-    let Some(run) = load_active(ctx, mci, data, run_id).await? else {
-        return Ok(());
-    };
-
-    let user_id = mci.user.id.get() as i64;
-    // "Join" creates the bare no-item row. If they already have any row
-    // (item or not) this is a no-op at the SQL layer, so clicking Join
-    // twice doesn't spam rows.
-    db::run::add_participant(&data.db, run_id, user_id, None, false).await?;
-
-    rebuild_and_edit_message(ctx, data, &run).await?;
-    mci.create_response(ctx, ephemeral_msg("✅ You're in.")).await?;
-    Ok(())
-}
-
-async fn handle_leave(
-    ctx: &serenity::Context,
-    mci: &serenity::ComponentInteraction,
-    data: &BotData,
-    run_id: i32,
-) -> Result<(), BotError> {
-    let Some(run) = load_active(ctx, mci, data, run_id).await? else {
-        return Ok(());
-    };
-
-    let user_id = mci.user.id.get() as i64;
-    // Leaders can't leave without transferring first — it would orphan
-    // the run.
-    if user_id == run.leader_user_id {
+    if !ok {
         mci.create_response(
             ctx,
             ephemeral_msg(
-                "You're the leader — transfer the run from the Control Panel before leaving, \
-                 or end the run instead.",
+                "Only the raid leader or users with **ManageRuns** can do that.",
             ),
         )
         .await?;
-        return Ok(());
     }
-
-    db::run::remove_participant_all(&data.db, run_id, user_id).await?;
-
-    rebuild_and_edit_message(ctx, data, &run).await?;
-    mci.create_response(ctx, ephemeral_msg("👋 Left the run.")).await?;
-    Ok(())
+    Ok(ok)
 }
 
 // ---------------------------------------------------------------------------
@@ -250,8 +186,7 @@ async fn handle_cp(
     let Some(run) = load_active(ctx, mci, data, run_id).await? else {
         return Ok(());
     };
-
-    if !require_leader(ctx, mci, &run).await? {
+    if !require_organizer(ctx, mci, data, &run).await? {
         return Ok(());
     }
 
@@ -283,7 +218,7 @@ async fn handle_loc_open(
     let Some(run) = load_active(ctx, mci, data, run_id).await? else {
         return Ok(());
     };
-    if !require_leader(ctx, mci, &run).await? {
+    if !require_organizer(ctx, mci, data, &run).await? {
         return Ok(());
     }
 
@@ -309,7 +244,7 @@ async fn handle_party_open(
     let Some(run) = load_active(ctx, mci, data, run_id).await? else {
         return Ok(());
     };
-    if !require_leader(ctx, mci, &run).await? {
+    if !require_organizer(ctx, mci, data, &run).await? {
         return Ok(());
     }
 
@@ -339,6 +274,32 @@ fn extract_input(modal: &serenity::ModalInteraction, custom_id: &str) -> Option<
     None
 }
 
+/// Modal submissions don't carry the same `ComponentInteraction` shape that
+/// `can_organize_from_interaction` expects, so we reconstruct the gate from
+/// the modal's member instead.
+async fn modal_caller_is_organizer(
+    pool: &sqlx::PgPool,
+    modal: &serenity::ModalInteraction,
+    run: &Run,
+) -> Result<bool, BotError> {
+    let caller_id = modal.user.id.get() as i64;
+    let (perms, roles) = match modal.member.as_ref() {
+        Some(m) => (m.permissions, m.roles.iter().map(|r| r.get() as i64).collect()),
+        None => (None, Vec::new()),
+    };
+    Ok(services::permission::can_organize(
+        pool,
+        run.guild_id,
+        caller_id,
+        perms,
+        &roles,
+        run.leader_user_id,
+        Some(run.tier_id),
+        Some(run.dungeon_template_id),
+    )
+    .await?)
+}
+
 async fn handle_loc_submit(
     ctx: &serenity::Context,
     modal: &serenity::ModalInteraction,
@@ -353,8 +314,15 @@ async fn handle_loc_submit(
         modal.create_response(ctx, ephemeral_msg("This run has ended.")).await?;
         return Ok(());
     }
-    if (modal.user.id.get() as i64) != run.leader_user_id {
-        modal.create_response(ctx, ephemeral_msg("Only the run leader can do that.")).await?;
+    if !modal_caller_is_organizer(&data.db, modal, &run).await? {
+        modal
+            .create_response(
+                ctx,
+                ephemeral_msg(
+                    "Only the raid leader or users with **ManageRuns** can do that.",
+                ),
+            )
+            .await?;
         return Ok(());
     }
 
@@ -363,8 +331,6 @@ async fn handle_loc_submit(
     let new_loc: Option<&str> = if trimmed.is_empty() { None } else { Some(trimmed) };
     db::run::set_location(&data.db, run_id, new_loc).await?;
 
-    // Acknowledge first so the modal closes, then edit the public message
-    // out of band (modal submissions can't UpdateMessage another message).
     modal
         .create_response(
             ctx,
@@ -401,8 +367,15 @@ async fn handle_party_submit(
         modal.create_response(ctx, ephemeral_msg("This run has ended.")).await?;
         return Ok(());
     }
-    if (modal.user.id.get() as i64) != run.leader_user_id {
-        modal.create_response(ctx, ephemeral_msg("Only the run leader can do that.")).await?;
+    if !modal_caller_is_organizer(&data.db, modal, &run).await? {
+        modal
+            .create_response(
+                ctx,
+                ephemeral_msg(
+                    "Only the raid leader or users with **ManageRuns** can do that.",
+                ),
+            )
+            .await?;
         return Ok(());
     }
 
@@ -446,13 +419,10 @@ async fn handle_transfer_open(
     let Some(run) = load_active(ctx, mci, data, run_id).await? else {
         return Ok(());
     };
-    if !require_leader(ctx, mci, &run).await? {
+    if !require_organizer(ctx, mci, data, &run).await? {
         return Ok(());
     }
 
-    // UserSelect menu. The current leader should pick the new one; Discord
-    // doesn't let us exclude a specific user client-side, but the submit
-    // handler rejects self-transfer.
     let menu = CreateSelectMenu::new(
         format!("run:{run_id}:xfer"),
         CreateSelectMenuKind::User { default_users: None },
@@ -465,10 +435,7 @@ async fn handle_transfer_open(
         ctx,
         CreateInteractionResponse::Message(
             CreateInteractionResponseMessage::new()
-                .content(
-                    "Choose a new leader. They don't have to be in the run yet — they \
-                     will be auto-joined on transfer.",
-                )
+                .content("Choose a new leader.")
                 .components(vec![CreateActionRow::SelectMenu(menu)])
                 .ephemeral(true),
         ),
@@ -486,11 +453,10 @@ async fn handle_transfer_submit(
     let Some(run) = load_active(ctx, mci, data, run_id).await? else {
         return Ok(());
     };
-    if !require_leader(ctx, mci, &run).await? {
+    if !require_organizer(ctx, mci, data, &run).await? {
         return Ok(());
     }
 
-    // Unpack the selected user from the interaction.
     let new_leader: i64 = match &mci.data.kind {
         serenity::ComponentInteractionDataKind::UserSelect { values } => {
             match values.first() {
@@ -511,8 +477,6 @@ async fn handle_transfer_submit(
     }
 
     db::run::set_leader(&data.db, run_id, new_leader).await?;
-    // Auto-join the new leader if they weren't already on the run.
-    db::run::add_participant(&data.db, run_id, new_leader, None, false).await?;
 
     let refreshed = db::run::get(&data.db, run_id)
         .await?
@@ -544,32 +508,19 @@ async fn handle_end(
     let Some(run) = load_active(ctx, mci, data, run_id).await? else {
         return Ok(());
     };
-    if !require_leader(ctx, mci, &run).await? {
+    if !require_organizer(ctx, mci, data, &run).await? {
         return Ok(());
     }
 
     db::run::set_status(&data.db, run_id, "ended").await?;
 
-    // Rebuild the public message as the ended (greyed, no components) embed.
     let pool = &data.db;
     let template = db::dungeon::get_by_id(pool, run.dungeon_template_id)
         .await?
         .ok_or_else(|| format!("template {} not found", run.dungeon_template_id))?;
-    let reactions = db::dungeon::get_reactions(pool, run.dungeon_template_id).await?;
-    let participants = db::run::list_participants(pool, run.id).await?;
     let emoji_map = db::emoji::get_all_as_map(pool).await?;
-    let bag_tiers = db::loot::list_bag_tiers(pool).await?;
-    let threshold = db::loot::get_threshold(pool, run.guild_id, run.dungeon_template_id).await?;
 
-    let ended_embed = embeds::run::build_ended(
-        &run,
-        &template,
-        &reactions,
-        &participants,
-        &emoji_map,
-        &bag_tiers,
-        &threshold,
-    );
+    let ended_embed = embeds::run::build_ended(&run, &template, &emoji_map);
 
     serenity::ChannelId::new(run.channel_id as u64)
         .edit_message(
@@ -579,7 +530,6 @@ async fn handle_end(
         )
         .await?;
 
-    // Close the control-panel ephemeral (the only click that can reach here).
     mci.create_response(
         ctx,
         CreateInteractionResponse::UpdateMessage(
@@ -591,111 +541,22 @@ async fn handle_end(
     )
     .await?;
 
-    // Best-effort log: drop a follow-up in the log channel if configured.
+    // Best-effort audit log entry.
     if let Ok(Some(guild)) = db::guild::get(pool, run.guild_id).await {
         if let Some(log_id) = guild.log_channel_id {
             let _ = serenity::ChannelId::new(log_id as u64)
                 .send_message(
                     &ctx.http,
                     serenity::CreateMessage::new().content(format!(
-                        "Run #{id} ({name}) ended by <@{leader}>.",
+                        "Run #{id} ({name}) ended by <@{caller}>.",
                         id = run.id,
                         name = template.display_name,
-                        leader = mci.user.id.get(),
+                        caller = mci.user.id.get(),
                     )),
                 )
                 .await;
         }
     }
 
-    Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// Per-item confirm flow (keys, runes, etc.)
-// ---------------------------------------------------------------------------
-
-async fn handle_confirm_click(
-    ctx: &serenity::Context,
-    mci: &serenity::ComponentInteraction,
-    data: &BotData,
-    run_id: i32,
-    reaction_id: i32,
-) -> Result<(), BotError> {
-    let Some(run) = load_active(ctx, mci, data, run_id).await? else {
-        return Ok(());
-    };
-
-    let reactions = db::dungeon::get_reactions(&data.db, run.dungeon_template_id).await?;
-    let Some(reaction) = reactions.iter().find(|r| r.id == reaction_id) else {
-        mci.create_response(ctx, ephemeral_msg("Unknown reaction.")).await?;
-        return Ok(());
-    };
-
-    let confirm = CreateButton::new(format!("run:{run_id}:confirm_do:{reaction_id}"))
-        .label("Confirm")
-        .emoji(ReactionType::Unicode("✅".into()))
-        .style(ButtonStyle::Success);
-    let cancel = CreateButton::new(format!("run:{run_id}:confirm_cancel"))
-        .label("Cancel")
-        .style(ButtonStyle::Secondary);
-
-    mci.create_response(
-        ctx,
-        CreateInteractionResponse::Message(
-            CreateInteractionResponseMessage::new()
-                .content(format!(
-                    "Confirm you're bringing **{}**? Only click Confirm if you actually have it.",
-                    reaction.display_name
-                ))
-                .components(vec![CreateActionRow::Buttons(vec![confirm, cancel])])
-                .ephemeral(true),
-        ),
-    )
-    .await?;
-    Ok(())
-}
-
-async fn handle_confirm_do(
-    ctx: &serenity::Context,
-    mci: &serenity::ComponentInteraction,
-    data: &BotData,
-    run_id: i32,
-    reaction_id: i32,
-) -> Result<(), BotError> {
-    let Some(run) = load_active(ctx, mci, data, run_id).await? else {
-        return Ok(());
-    };
-
-    let user_id = mci.user.id.get() as i64;
-    db::run::add_participant(&data.db, run_id, user_id, Some(reaction_id), true).await?;
-
-    rebuild_and_edit_message(ctx, data, &run).await?;
-
-    mci.create_response(
-        ctx,
-        CreateInteractionResponse::UpdateMessage(
-            CreateInteractionResponseMessage::new()
-                .content("✅ Confirmed!")
-                .components(vec![]),
-        ),
-    )
-    .await?;
-    Ok(())
-}
-
-async fn handle_confirm_cancel(
-    ctx: &serenity::Context,
-    mci: &serenity::ComponentInteraction,
-) -> Result<(), BotError> {
-    mci.create_response(
-        ctx,
-        CreateInteractionResponse::UpdateMessage(
-            CreateInteractionResponseMessage::new()
-                .content("No changes made.")
-                .components(vec![]),
-        ),
-    )
-    .await?;
     Ok(())
 }

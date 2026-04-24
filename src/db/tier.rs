@@ -13,8 +13,7 @@ pub async fn create(
         Tier,
         "INSERT INTO tiers (guild_id, name, description)
          VALUES ($1, $2, $3)
-         RETURNING id, guild_id, name, description,
-                   runs_channel_id, raid_channel_id, headcount_channel_id, created_at",
+         RETURNING id, guild_id, name, description, runs_channel_id, created_at",
         guild_id,
         name,
         description
@@ -27,8 +26,7 @@ pub async fn create(
 pub async fn list(pool: &PgPool, guild_id: i64) -> Result<Vec<Tier>> {
     let tiers = sqlx::query_as!(
         Tier,
-        "SELECT id, guild_id, name, description,
-                runs_channel_id, raid_channel_id, headcount_channel_id, created_at
+        "SELECT id, guild_id, name, description, runs_channel_id, created_at
          FROM tiers WHERE guild_id = $1 ORDER BY id",
         guild_id
     )
@@ -40,8 +38,7 @@ pub async fn list(pool: &PgPool, guild_id: i64) -> Result<Vec<Tier>> {
 pub async fn get_by_id(pool: &PgPool, id: i32) -> Result<Option<Tier>> {
     let tier = sqlx::query_as!(
         Tier,
-        "SELECT id, guild_id, name, description,
-                runs_channel_id, raid_channel_id, headcount_channel_id, created_at
+        "SELECT id, guild_id, name, description, runs_channel_id, created_at
          FROM tiers WHERE id = $1",
         id
     )
@@ -53,8 +50,7 @@ pub async fn get_by_id(pool: &PgPool, id: i32) -> Result<Option<Tier>> {
 pub async fn get_by_name(pool: &PgPool, guild_id: i64, name: &str) -> Result<Option<Tier>> {
     let tier = sqlx::query_as!(
         Tier,
-        "SELECT id, guild_id, name, description,
-                runs_channel_id, raid_channel_id, headcount_channel_id, created_at
+        "SELECT id, guild_id, name, description, runs_channel_id, created_at
          FROM tiers WHERE guild_id = $1 AND name = $2",
         guild_id,
         name
@@ -64,11 +60,6 @@ pub async fn get_by_name(pool: &PgPool, guild_id: i64, name: &str) -> Result<Opt
     Ok(tier)
 }
 
-/// Update a tier. R3: `runs_channel_id` is the single source of truth for
-/// the channel where headcount + run messages post. When it's set, the legacy
-/// `raid_channel_id` / `headcount_channel_id` are dual-written to the same
-/// value so nothing that still reads the old columns during the R3→R4 window
-/// goes stale. R4 drops the legacy columns entirely.
 pub async fn update(
     pool: &PgPool,
     id: i32,
@@ -79,14 +70,11 @@ pub async fn update(
     let tier = sqlx::query_as!(
         Tier,
         "UPDATE tiers
-         SET name = COALESCE($2, name),
-             description = COALESCE($3, description),
-             runs_channel_id = COALESCE($4, runs_channel_id),
-             raid_channel_id = COALESCE($4, raid_channel_id),
-             headcount_channel_id = COALESCE($4, headcount_channel_id)
+         SET name            = COALESCE($2, name),
+             description     = COALESCE($3, description),
+             runs_channel_id = COALESCE($4, runs_channel_id)
          WHERE id = $1
-         RETURNING id, guild_id, name, description,
-                   runs_channel_id, raid_channel_id, headcount_channel_id, created_at",
+         RETURNING id, guild_id, name, description, runs_channel_id, created_at",
         id,
         name,
         description,

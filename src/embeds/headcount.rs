@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use poise::serenity_prelude as serenity;
 use serenity::{ButtonStyle, CreateActionRow, CreateButton, CreateEmbed, EmojiId, ReactionType};
 
-use crate::db::headcount::ReactionCount;
 use crate::db::models::{BagTier, BotEmoji, DungeonReaction, DungeonTemplate};
 use crate::embeds::build_loot_fields;
 
@@ -26,7 +25,10 @@ pub fn emoji_str(logical_name: &str, map: &HashMap<String, BotEmoji>) -> String 
     }
 }
 
-/// Returns a `ReactionType` for use in button `.emoji()`.
+/// Returns a `ReactionType` suitable for both button `.emoji()` and
+/// `Message::react` (native reactions). Falls through to `None` if the
+/// logical name has no bot_emoji row yet and isn't a unicode literal —
+/// callers should skip rather than invent a placeholder.
 pub fn emoji_rt(logical_name: &str, map: &HashMap<String, BotEmoji>) -> Option<ReactionType> {
     if let Some(e) = map.get(logical_name) {
         Some(ReactionType::Custom {
@@ -42,12 +44,15 @@ pub fn emoji_rt(logical_name: &str, map: &HashMap<String, BotEmoji>) -> Option<R
 }
 
 /// Build the headcount embed and action rows.
-#[allow(clippy::too_many_arguments)]
+///
+/// R4: per-item tracking is gone — users sign up by clicking Discord
+/// reactions attached to the message itself. The embed just describes the
+/// raid + lists what items are required, and the only buttons left are
+/// organizer-level controls (Start Run / Cancel).
 pub fn build(
     headcount_id: i32,
     template: &DungeonTemplate,
     reactions: &[DungeonReaction],
-    counts: &HashMap<i32, ReactionCount>,
     emoji_map: &HashMap<String, BotEmoji>,
     leader_id: u64,
     bag_tiers: &[BagTier],
@@ -61,40 +66,35 @@ pub fn build(
     let base_desc = template
         .message_description
         .as_deref()
-        .unwrap_or("React below to sign up! Click a button again to withdraw.");
+        .unwrap_or("React below to sign up!");
 
-    let description = format!("{base_desc}\n\nLeader: <@{leader_id}>");
+    // Required-items summary inline in the description so users see what
+    // they need without extra fields. Each item shows its emoji + name.
+    let required_line = if reactions.is_empty() {
+        String::new()
+    } else {
+        let parts: Vec<String> = reactions
+            .iter()
+            .map(|r| {
+                let es = emoji_str(&r.emoji, emoji_map);
+                if es.is_empty() {
+                    r.display_name.clone()
+                } else {
+                    format!("{es} {}", r.display_name)
+                }
+            })
+            .collect();
+        format!("\n\n**React with:** {}", parts.join(" · "))
+    };
 
-    let mut fields: Vec<(String, String, bool)> = reactions
-        .iter()
-        .map(|r| {
-            let cnt = counts.get(&r.id);
-            let total = cnt.map(|c| c.total).unwrap_or(0);
-            let confirmed = cnt.map(|c| c.confirmed).unwrap_or(0);
-            let es = emoji_str(&r.emoji, emoji_map);
+    let description = format!("{base_desc}\n\nLeader: <@{leader_id}>{required_line}");
 
-            let field_name = if es.is_empty() {
-                r.display_name.clone()
-            } else {
-                format!("{es} {}", r.display_name)
-            };
-
-            let field_val = if r.requires_confirmation {
-                format!("{confirmed}/{} confirmed ✅", r.num_required)
-            } else {
-                format!("{total} interested")
-            };
-
-            (field_name, field_val, true)
-        })
-        .collect();
-
-    fields.extend(build_loot_fields(
+    let fields = build_loot_fields(
         &template.showcase_emoji,
         emoji_map,
         bag_tiers,
         threshold,
-    ));
+    );
 
     let mut embed = CreateEmbed::default()
         .title(title)
@@ -106,20 +106,6 @@ pub fn build(
         embed = embed.thumbnail(url);
     }
 
-    // Reaction buttons — one per dungeon reaction, max 5 per row.
-    let reaction_buttons: Vec<CreateButton> = reactions
-        .iter()
-        .map(|r| {
-            let mut btn = CreateButton::new(format!("hc:{headcount_id}:react:{}", r.id))
-                .label(&r.display_name)
-                .style(ButtonStyle::Secondary);
-            if let Some(rt) = emoji_rt(&r.emoji, emoji_map) {
-                btn = btn.emoji(rt);
-            }
-            btn
-        })
-        .collect();
-
     let start_btn = CreateButton::new(format!("hc:{headcount_id}:start"))
         .label("Start Run")
         .emoji(ReactionType::Unicode("🚀".to_string()))
@@ -129,11 +115,7 @@ pub fn build(
         .emoji(ReactionType::Unicode("🗑️".to_string()))
         .style(ButtonStyle::Danger);
 
-    let mut rows: Vec<CreateActionRow> = reaction_buttons
-        .chunks(5)
-        .map(|chunk| CreateActionRow::Buttons(chunk.to_vec()))
-        .collect();
-    rows.push(CreateActionRow::Buttons(vec![start_btn, cancel_btn]));
+    let rows = vec![CreateActionRow::Buttons(vec![start_btn, cancel_btn])];
 
     (embed, rows)
 }

@@ -105,7 +105,7 @@ pub async fn run(
     )
     .await?;
 
-    let Some(raid_channel_id) = resolved_tier.runs_channel() else {
+    let Some(raid_channel_id) = resolved_tier.runs_channel_id else {
         ctx.send(ephemeral(format!(
             "Tier **{}** has no runs channel configured. Use `/setup` or \
              `/tier edit` to set one.",

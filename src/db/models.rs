@@ -4,7 +4,6 @@ use chrono::{DateTime, Utc};
 pub struct Guild {
     pub guild_id: i64,
     pub log_channel_id: Option<i64>,
-    pub notification_channel_id: Option<i64>,
     pub superadmin_user_id: Option<i64>,
     pub setup_complete: bool,
     pub created_at: DateTime<Utc>,
@@ -17,24 +16,10 @@ pub struct Tier {
     pub guild_id: i64,
     pub name: String,
     pub description: Option<String>,
-    /// Unified channel (R3+). Headcount + run messages both post here.
+    /// Where headcount + run messages post. `None` = tier still needs
+    /// configuration (`/setup` or `/tier edit`).
     pub runs_channel_id: Option<i64>,
-    /// Legacy; populated via dual-write for R3. R4 drops the column.
-    pub raid_channel_id: Option<i64>,
-    /// Legacy; populated via dual-write for R3. R4 drops the column.
-    pub headcount_channel_id: Option<i64>,
     pub created_at: DateTime<Utc>,
-}
-
-impl Tier {
-    /// R3 channel resolver: prefer the unified `runs_channel_id`, fall back
-    /// to the legacy `raid_channel_id` / `headcount_channel_id` so guilds
-    /// migrated mid-upgrade still work.
-    pub fn runs_channel(&self) -> Option<i64> {
-        self.runs_channel_id
-            .or(self.raid_channel_id)
-            .or(self.headcount_channel_id)
-    }
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -110,16 +95,6 @@ pub struct Headcount {
     pub status: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
-}
-
-#[derive(Debug, sqlx::FromRow)]
-pub struct HeadcountReaction {
-    pub id: i32,
-    pub headcount_id: i32,
-    pub dungeon_reaction_id: i32,
-    pub user_id: i64,
-    pub confirmed: bool,
-    pub confirmed_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, sqlx::FromRow)]

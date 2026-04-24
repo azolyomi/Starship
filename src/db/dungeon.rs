@@ -45,13 +45,24 @@ pub async fn seed_templates(
             if !curation.should_keep_reaction(t.name, r.name) {
                 continue;
             }
+            // DO UPDATE so display_name / emoji / sort_order / requires_confirmation
+            // changes in the built-in definitions propagate to existing rows
+            // on bot restart. R4 flipped every builtin to
+            // `requires_confirmation: false`; without DO UPDATE, older rows
+            // would keep their stale `true`.
             sqlx::query(
                 r#"
                 INSERT INTO dungeon_reactions
                     (dungeon_template_id, name, display_name, emoji,
                      num_required, requires_confirmation, sort_order)
                 VALUES ($1, $2, $3, $4, $5, $6, $7)
-                ON CONFLICT (dungeon_template_id, name) DO NOTHING
+                ON CONFLICT (dungeon_template_id, name)
+                DO UPDATE SET
+                    display_name          = EXCLUDED.display_name,
+                    emoji                 = EXCLUDED.emoji,
+                    num_required          = EXCLUDED.num_required,
+                    requires_confirmation = EXCLUDED.requires_confirmation,
+                    sort_order            = EXCLUDED.sort_order
                 "#,
             )
             .bind(id)

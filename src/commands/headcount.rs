@@ -103,7 +103,7 @@ pub async fn headcount(
         .await?;
 
     // Check that a runs channel is configured for this tier.
-    let Some(channel_id) = resolved_tier.runs_channel() else {
+    let Some(channel_id) = resolved_tier.runs_channel_id else {
         ctx.send(ephemeral(format!(
             "Tier **{}** has no runs channel. Use `/setup` or `/tier edit` to set one.",
             resolved_tier.name

@@ -385,7 +385,7 @@ async fn dashboard_view(
 
     let first_tier = tiers.first();
     let first_tier_ready = first_tier
-        .map(|t| t.runs_channel().is_some())
+        .map(|t| t.runs_channel_id.is_some())
         .unwrap_or(false);
 
     let mark = |ok: bool| if ok { "✅" } else { "⬜" };
@@ -393,7 +393,7 @@ async fn dashboard_view(
     let tier_block = match first_tier {
         Some(t) => {
             let runs = t
-                .runs_channel()
+                .runs_channel_id
                 .map(|c| format!("<#{c}>"))
                 .unwrap_or_else(|| "_no runs channel_".to_string());
             let extra = if tiers.len() > 1 {
@@ -496,7 +496,7 @@ async fn summary_view(ctx: BotContext<'_>) -> Result<CreateEmbed> {
         .expect("finish is only reachable with at least one tier");
 
     let runs = first
-        .runs_channel()
+        .runs_channel_id
         .map(|c| format!("<#{c}>"))
         .unwrap_or_else(|| "_not set_".to_string());
 
@@ -556,7 +556,7 @@ async fn section_first_tier(
         Some(t) => {
             let roles = db::tier::list_roles(pool, t.id).await?;
             TierDraft {
-                runs_channel: t.runs_channel().map(|id| ChannelId::new(id as u64)),
+                runs_channel: t.runs_channel_id.map(|id| ChannelId::new(id as u64)),
                 access_roles: roles.into_iter().map(|r| RoleId::new(r as u64)).collect(),
             }
         }

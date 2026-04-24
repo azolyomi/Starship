@@ -1,8 +1,8 @@
-use anyhow::Result;
+use anyhow::{bail, Result};
 use clap::Parser;
 use poise::serenity_prelude as serenity;
 use sqlx::PgPool;
-use tracing::info;
+use tracing::{error, info};
 
 mod cli;
 mod commands;
@@ -61,6 +61,30 @@ enum CliCommand {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Upload a single PNG as an application emoji + register it in bot_emoji.
+    /// Useful when the scraper doesn't have a canonical image for an item
+    /// (see R4's wine_cellar_incantation).
+    UploadEmoji {
+        /// Logical name used in code / dungeon_reactions.emoji (e.g.
+        /// `wine_cellar_incantation`).
+        #[arg(long)]
+        name: String,
+        /// Path to a PNG file ≤256KB, ideally 128×128.
+        #[arg(long)]
+        file: std::path::PathBuf,
+        /// Override the Discord-side name (defaults to a sanitized form of
+        /// --name). Must be ≤32 chars, alphanumeric + underscores only.
+        #[arg(long)]
+        discord_name: Option<String>,
+        /// Category label stored on bot_emoji (free-form; `ui`, `key`,
+        /// `drop`, `drop_shiny` are the conventions).
+        #[arg(long)]
+        category: Option<String>,
+        /// Bag tier classification (`white`, `cyan`, etc.). Only relevant
+        /// for drop emojis.
+        #[arg(long)]
+        bag_tier: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -81,12 +105,21 @@ async fn main() -> Result<()> {
         CliCommand::Bot => run_bot(config).await,
         CliCommand::SyncWiki { dry_run, purge } => cli::sync_wiki::run(dry_run, purge).await,
         CliCommand::Curate { recurate, dry_run } => cli::curate::run(recurate, dry_run).await,
+        CliCommand::UploadEmoji {
+            name,
+            file,
+            discord_name,
+            category,
+            bag_tier,
+        } => cli::upload_emoji::run(name, file, discord_name, category, bag_tier).await,
     }
 }
 
 async fn run_bot(config: config::Config) -> Result<()> {
     let pool = db::create_pool(&config.database_url).await?;
     info!("connected to database");
+
+    r4_migration_preflight(&pool).await?;
 
     sqlx::migrate!("./migrations").run(&pool).await?;
     info!("migrations applied");
@@ -152,6 +185,58 @@ async fn run_bot(config: config::Config) -> Result<()> {
     info!("starting bot");
     client.start().await?;
     Ok(())
+}
+
+/// Refuse to apply the R4 migration (which drops `headcount_reactions` +
+/// `run_participants`) if any headcounts or runs are still active. Applying
+/// it mid-raid would silently discard per-user signup state without any
+/// in-flight communication. Operators who have coordinated a migration
+/// window can set `STARSHIP_ALLOW_MIGRATION=1` to override.
+///
+/// Only fires on the pre-R4 schema — detected by the lingering
+/// `headcount_reactions` table. After R4 is applied, this is a no-op.
+async fn r4_migration_preflight(pool: &PgPool) -> Result<()> {
+    let pre_r4_name: Option<String> = sqlx::query_scalar(
+        "SELECT to_regclass('public.headcount_reactions')::TEXT",
+    )
+    .fetch_one(pool)
+    .await?;
+
+    if pre_r4_name.is_none() {
+        return Ok(());
+    }
+
+    let active_hc: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*)::BIGINT FROM headcounts WHERE status = 'active'",
+    )
+    .fetch_one(pool)
+    .await?;
+    let active_runs: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*)::BIGINT FROM runs WHERE status = 'active'",
+    )
+    .fetch_one(pool)
+    .await?;
+
+    if active_hc + active_runs == 0 {
+        return Ok(());
+    }
+
+    if std::env::var("STARSHIP_ALLOW_MIGRATION").as_deref() == Ok("1") {
+        info!(
+            active_hc,
+            active_runs,
+            "STARSHIP_ALLOW_MIGRATION=1 — applying R4 migration despite active lifecycle rows"
+        );
+        return Ok(());
+    }
+
+    error!(
+        active_hc,
+        active_runs,
+        "refusing to apply R4 migration with live headcounts/runs — \
+         end or cancel them in-app, or set STARSHIP_ALLOW_MIGRATION=1 to override"
+    );
+    bail!("R4 migration preflight: {active_hc} active headcount(s), {active_runs} active run(s) — aborting startup");
 }
 
 async fn on_error(error: poise::FrameworkError<'_, BotData, BotError>) {

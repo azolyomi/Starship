@@ -1,13 +1,16 @@
-use std::collections::HashMap;
-
 use anyhow::Result;
 use poise::serenity_prelude as serenity;
 use sqlx::PgPool;
 
 use crate::db::models::{DungeonTemplate, Run, Tier};
+use crate::embeds::headcount::emoji_rt;
+use crate::services::reactions;
 use crate::{db, embeds, BotContext};
 
-/// Post a headcount embed to the tier's headcount channel and create the DB row.
+/// Post a headcount embed to the tier's runs channel, create the DB row,
+/// and attach native reactions for each required item. R4: no more
+/// per-user DB tracking — the reactions on the message itself are the
+/// signup UI.
 pub async fn start_headcount(
     ctx: BotContext<'_>,
     tier: &Tier,
@@ -19,21 +22,18 @@ pub async fn start_headcount(
     let guild_id = ctx.guild_id().unwrap().get() as i64;
     let leader_id = ctx.author().id.get() as i64;
 
-    // Create the DB row with a placeholder message_id.
     let hc = db::headcount::create(pool, guild_id, tier.id, template.id, channel_id, leader_id)
         .await?;
 
-    let reactions = db::dungeon::get_reactions(pool, template.id).await?;
+    let reactions_list = db::dungeon::get_reactions(pool, template.id).await?;
     let emoji_map = db::emoji::get_all_as_map(pool).await?;
-    let counts: HashMap<_, _> = HashMap::new(); // empty on creation
     let bag_tiers = db::loot::list_bag_tiers(pool).await?;
     let threshold = db::loot::get_threshold(pool, guild_id, template.id).await?;
 
     let (embed, components) = embeds::headcount::build(
         hc.id,
         template,
-        &reactions,
-        &counts,
+        &reactions_list,
         &emoji_map,
         leader_id as u64,
         &bag_tiers,
@@ -43,27 +43,29 @@ pub async fn start_headcount(
     let mut create = serenity::CreateMessage::new()
         .add_embed(embed)
         .components(components);
-
-    // Ping the notification role if the template has one. Matches what
-    // `start_run` does so subscribers hear about a headcount the moment
-    // it opens, not only when it converts.
     if let Some(role_id) = template.notification_role_id {
         create = create.content(format!("<@&{role_id}>"));
     }
 
-    let msg = serenity::ChannelId::new(channel_id as u64)
-        .send_message(serenity_ctx, create)
-        .await?;
-
+    let channel = serenity::ChannelId::new(channel_id as u64);
+    let msg = channel.send_message(serenity_ctx, create).await?;
     db::headcount::set_message_id(pool, hc.id, msg.id.get() as i64).await?;
+
+    attach_signup_reactions(
+        &serenity_ctx.http,
+        channel,
+        msg.id,
+        &reactions_list,
+        &emoji_map,
+        leader_id as u64,
+    )
+    .await;
 
     Ok(())
 }
 
-/// Post a run embed to the tier's raid channel (or headcount channel if no
-/// raid channel is configured yet) and create the DB row. If `headcount_id`
-/// is supplied, migrates confirmed reactions from the headcount into
-/// `run_participants` so users don't have to re-click Join.
+/// Post a run embed to the tier's runs channel, create the DB row, and
+/// attach native reactions for each required item.
 ///
 /// Low-level shape (serenity ctx + pool) so it's callable from both the
 /// `/run` slash command and the `hc:<id>:start` component handler.
@@ -89,25 +91,15 @@ pub async fn start_run(
     )
     .await?;
 
-    // Seed participants from the source headcount, if any. Users who
-    // declared an item with requires_confirmation carry their confirm flag;
-    // plain "interested" reactions map to a NULL dungeon_reaction_id so
-    // they appear in the "Joined" roster without a declared item.
-    if let Some(hc_id) = headcount_id {
-        migrate_headcount_reactions(pool, hc_id, run.id).await?;
-    }
-
-    let reactions = db::dungeon::get_reactions(pool, template.id).await?;
+    let reactions_list = db::dungeon::get_reactions(pool, template.id).await?;
     let emoji_map = db::emoji::get_all_as_map(pool).await?;
-    let participants = db::run::list_participants(pool, run.id).await?;
     let bag_tiers = db::loot::list_bag_tiers(pool).await?;
     let threshold = db::loot::get_threshold(pool, guild_id, template.id).await?;
 
     let (embed, components) = embeds::run::build(
         &run,
         template,
-        &reactions,
-        &participants,
+        &reactions_list,
         &emoji_map,
         &bag_tiers,
         &threshold,
@@ -116,18 +108,23 @@ pub async fn start_run(
     let mut create = serenity::CreateMessage::new()
         .add_embed(embed)
         .components(components);
-
-    // Ping the notification role if the template has one. Keeps the embed
-    // self-contained while still nudging subscribers.
     if let Some(role_id) = template.notification_role_id {
         create = create.content(format!("<@&{role_id}>"));
     }
 
-    let msg = serenity::ChannelId::new(raid_channel_id as u64)
-        .send_message(serenity_ctx, create)
-        .await?;
-
+    let channel = serenity::ChannelId::new(raid_channel_id as u64);
+    let msg = channel.send_message(serenity_ctx, create).await?;
     db::run::set_message_id(pool, run.id, msg.id.get() as i64).await?;
+
+    attach_signup_reactions(
+        &serenity_ctx.http,
+        channel,
+        msg.id,
+        &reactions_list,
+        &emoji_map,
+        leader_user_id as u64,
+    )
+    .await;
 
     Ok(Run {
         message_id: msg.id.get() as i64,
@@ -135,31 +132,27 @@ pub async fn start_run(
     })
 }
 
-async fn migrate_headcount_reactions(pool: &PgPool, hc_id: i32, run_id: i32) -> Result<()> {
-    // Pull (dungeon_reaction_id, user_id, confirmed, requires_confirmation)
-    // in one query so we can decide per-row whether it becomes a declared
-    // item or a plain Join.
-    let rows = sqlx::query!(
-        r#"
-        SELECT hr.user_id, hr.dungeon_reaction_id, hr.confirmed,
-               dr.requires_confirmation
-        FROM headcount_reactions hr
-        JOIN dungeon_reactions dr ON dr.id = hr.dungeon_reaction_id
-        WHERE hr.headcount_id = $1
-        "#,
-        hc_id
-    )
-    .fetch_all(pool)
-    .await?;
+/// Resolve each `DungeonReaction` to a `ReactionType`, attach it via the
+/// retry helper, and ping the organizer with a summary of any that failed
+/// after all retries. Reactions with no resolvable emoji (logical name
+/// not yet synced) are silently skipped — the next `sync-wiki` will fix
+/// them on the next raid, and we don't want to block the raid posting
+/// just because one icon is missing.
+async fn attach_signup_reactions(
+    http: &serenity::Http,
+    channel_id: serenity::ChannelId,
+    message_id: serenity::MessageId,
+    reactions_list: &[crate::db::models::DungeonReaction],
+    emoji_map: &std::collections::HashMap<String, crate::db::models::BotEmoji>,
+    organizer_id: u64,
+) {
+    let resolved: Vec<serenity::ReactionType> = reactions_list
+        .iter()
+        .filter_map(|r| emoji_rt(&r.emoji, emoji_map))
+        .collect();
 
-    for row in rows {
-        let (reaction_id, confirmed) = if row.requires_confirmation {
-            (Some(row.dungeon_reaction_id), row.confirmed)
-        } else {
-            (None, false)
-        };
-        db::run::add_participant(pool, run_id, row.user_id, reaction_id, confirmed).await?;
-    }
-
-    Ok(())
+    let failures =
+        reactions::attach_reactions(http, channel_id, message_id, &resolved).await;
+    reactions::ping_organizer_on_failure(http, channel_id, organizer_id, message_id, &failures)
+        .await;
 }

@@ -126,7 +126,7 @@ pub async fn list(ctx: BotContext<'_>) -> Result<(), BotError> {
     let mut lines = vec!["**Tiers**".to_string()];
     for t in &tiers {
         let runs = t
-            .runs_channel()
+            .runs_channel_id
             .map(|c| format!(" | Runs: <#{c}>"))
             .unwrap_or_default();
         let desc = t

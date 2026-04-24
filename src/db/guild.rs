@@ -6,7 +6,7 @@ use crate::db::models::Guild;
 pub async fn get(pool: &PgPool, guild_id: i64) -> Result<Option<Guild>> {
     let guild = sqlx::query_as!(
         Guild,
-        "SELECT guild_id, log_channel_id, notification_channel_id, superadmin_user_id,
+        "SELECT guild_id, log_channel_id, superadmin_user_id,
                 setup_complete, created_at, updated_at
          FROM guilds WHERE guild_id = $1",
         guild_id
@@ -22,7 +22,7 @@ pub async fn upsert(pool: &PgPool, guild_id: i64) -> Result<Guild> {
         "INSERT INTO guilds (guild_id)
          VALUES ($1)
          ON CONFLICT (guild_id) DO UPDATE SET updated_at = NOW()
-         RETURNING guild_id, log_channel_id, notification_channel_id, superadmin_user_id,
+         RETURNING guild_id, log_channel_id, superadmin_user_id,
                    setup_complete, created_at, updated_at",
         guild_id
     )
@@ -56,21 +56,6 @@ pub async fn mark_setup_complete(pool: &PgPool, guild_id: i64, complete: bool) -
 pub async fn set_log_channel(pool: &PgPool, guild_id: i64, channel_id: Option<i64>) -> Result<()> {
     sqlx::query!(
         "UPDATE guilds SET log_channel_id = $2 WHERE guild_id = $1",
-        guild_id,
-        channel_id
-    )
-    .execute(pool)
-    .await?;
-    Ok(())
-}
-
-pub async fn set_notification_channel(
-    pool: &PgPool,
-    guild_id: i64,
-    channel_id: Option<i64>,
-) -> Result<()> {
-    sqlx::query!(
-        "UPDATE guilds SET notification_channel_id = $2 WHERE guild_id = $1",
         guild_id,
         channel_id
     )
