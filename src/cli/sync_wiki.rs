@@ -72,15 +72,14 @@ const EXCLUDED_SLUGS: &[&str] = &[
 
 /// h2 section headings on /wiki/dungeons whose tables we skip. Matched as a
 /// case-insensitive substring against the lowercased inner text of each
-/// `<h2>` on the page. RealmEye uses a curly apostrophe in "Oryx's Castle"
-/// so both variants are listed.
+/// `<h2>` on the page.
 ///
-/// Included sections (everything not in this list): Realm Dungeons, Realm
-/// Event Dungeons, Advanced Dungeons, Wormholes, Heroic Dungeons.
+/// We deliberately KEEP the "Oryx's Castle" section — it's where RealmEye
+/// lists Oryx's Sanctuary (O3) alongside Court of Oryx, Castle, Chamber,
+/// and Wine Cellar. The per-slug EXCLUDED_SLUGS denylist drops the four
+/// dungeons we don't want while leaving O3 intact.
 const EXCLUDED_SECTIONS: &[&str] = &[
     "contents",
-    "oryx\u{2019}s castle",
-    "oryx's castle",
     "special event dungeons",
     "other dungeons",
     "history",
@@ -1086,10 +1085,11 @@ mod tests {
     #[test]
     fn sections_keep_desired_drop_excluded() {
         // Mirrors the real RealmEye /wiki/dungeons heading layout as of
-        // 2026-04: a TOC, several keep sections, an Oryx's Castle section
-        // we want to drop, and trailing Special Event / Other / History.
-        // The real page uses a curly apostrophe in "Oryx's Castle" — we
-        // format-insert it so the escape is actually interpreted.
+        // 2026-04: a TOC, several keep sections, and trailing
+        // Special Event / Other / History we want to drop. The Oryx's
+        // Castle section is KEPT because it's where Oryx's Sanctuary
+        // lives — the EXCLUDED_SLUGS denylist drops Castle/Chamber/Wine
+        // Cellar individually while preserving O3.
         let curly = '\u{2019}';
         let html = format!("\
             <h2 id=\"contents\">Contents</h2>\
@@ -1099,7 +1099,7 @@ mod tests {
             <h2 id=\"advanced-dungeons\">Advanced Dungeons</h2>\
             <table class=\"table-striped\"><tr><td>ADVANCED_ROW</td></tr></table>\
             <h2 id=\"oryx-s-castle\">Oryx{curly}s Castle</h2>\
-            <table class=\"table-striped\"><tr><td>CASTLE_ROW_DROP</td></tr></table>\
+            <table class=\"table-striped\"><tr><td>CASTLE_SECTION_KEEP</td></tr></table>\
             <h2 id=\"heroic\">Heroic Dungeons</h2>\
             <table class=\"table-striped\"><tr><td>HEROIC_ROW</td></tr></table>\
             <h2 id=\"special-event-dungeons\">Special Event Dungeons</h2>\
@@ -1113,7 +1113,8 @@ mod tests {
         assert!(kept.contains("REALM_ROW"), "missing REALM: {kept}");
         assert!(kept.contains("ADVANCED_ROW"), "missing ADVANCED: {kept}");
         assert!(kept.contains("HEROIC_ROW"), "missing HEROIC: {kept}");
-        assert!(!kept.contains("CASTLE_ROW_DROP"), "castle leaked: {kept}");
+        assert!(kept.contains("CASTLE_SECTION_KEEP"),
+            "castle section should be kept (O3 lives there); got: {kept}");
         assert!(!kept.contains("EVENT_ROW_DROP"), "event leaked: {kept}");
         assert!(!kept.contains("OTHER_ROW_DROP"), "other leaked: {kept}");
     }
