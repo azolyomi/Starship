@@ -291,9 +291,10 @@ async fn handle_start(
         .await?
         .ok_or_else(|| format!("tier {} not found", hc.tier_id))?;
 
-    // Pick the run channel: prefer the tier's raid_channel_id; fall back to
-    // the headcount channel so a partially-configured tier still works.
-    let raid_channel_id = tier.raid_channel_id.unwrap_or(hc.channel_id);
+    // Pick the run channel: prefer the tier's unified runs channel, fall
+    // back to whichever channel the headcount was posted in so a
+    // partially-configured tier still works.
+    let raid_channel_id = tier.runs_channel().unwrap_or(hc.channel_id);
 
     // Respond immediately so the click doesn't time out while we post the
     // run message. Close the headcount embed in the same response.

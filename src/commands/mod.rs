@@ -1,8 +1,8 @@
 pub mod config;
 pub mod dungeon;
 pub mod headcount;
-pub mod notifications;
 pub mod permission;
+pub mod pingroles;
 pub mod run;
 pub mod setup;
 pub mod tier;
@@ -18,6 +18,6 @@ pub fn all() -> Vec<poise::Command<BotData, BotError>> {
         run::run(),
         permission::permission(),
         tier::tier(),
-        notifications::notifications(),
+        pingroles::pingroles(),
     ]
 }

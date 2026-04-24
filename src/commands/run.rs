@@ -105,15 +105,10 @@ pub async fn run(
     )
     .await?;
 
-    // Prefer the tier's raid channel; fall back to headcount channel so a
-    // partially-set-up tier still works.
-    let Some(raid_channel_id) = resolved_tier
-        .raid_channel_id
-        .or(resolved_tier.headcount_channel_id)
-    else {
+    let Some(raid_channel_id) = resolved_tier.runs_channel() else {
         ctx.send(ephemeral(format!(
-            "Tier **{}** has no raid or headcount channel configured. Use `/setup` \
-             or `/tier edit` to set one.",
+            "Tier **{}** has no runs channel configured. Use `/setup` or \
+             `/tier edit` to set one.",
             resolved_tier.name
         )))
         .await?;

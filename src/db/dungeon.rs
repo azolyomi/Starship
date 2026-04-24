@@ -271,6 +271,69 @@ pub async fn upsert_global_template(
     Ok(id)
 }
 
+/// Bind (or clear) a notification role for a dungeon in a specific guild.
+///
+/// Returns the `id` of the dungeon_templates row that now carries the role
+/// binding — either the existing guild-specific override, or a freshly
+/// upserted guild-specific copy of a global template.
+///
+/// Bindings must be guild-scoped: a global template row (`guild_id IS NULL`)
+/// would leak a role ID across every guild that uses it. So when the
+/// currently-visible template for this guild is global, we clone the
+/// content into a guild-specific row and set the notification_role_id there.
+/// `list_for_guild` already prefers guild-specific rows over globals, so the
+/// clone becomes the effective template without any other plumbing.
+pub async fn set_notification_role(
+    pool: &PgPool,
+    guild_id: i64,
+    dungeon_template_id: i32,
+    role_id: Option<i64>,
+) -> Result<i32> {
+    let current = get_by_id(pool, dungeon_template_id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("dungeon template {dungeon_template_id} not found"))?;
+
+    if current.guild_id == Some(guild_id) {
+        sqlx::query(
+            "UPDATE dungeon_templates SET notification_role_id = $2 WHERE id = $1",
+        )
+        .bind(dungeon_template_id)
+        .bind(role_id)
+        .execute(pool)
+        .await?;
+        return Ok(dungeon_template_id);
+    }
+
+    // Global (or different-guild) template: upsert a guild-specific copy.
+    let new_id: i32 = sqlx::query_scalar(
+        r#"
+        INSERT INTO dungeon_templates
+            (guild_id, name, display_name, emoji, color,
+             message_title, message_description, requires_vc,
+             notification_role_id, showcase_emoji, thumbnail_url, image_url)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        ON CONFLICT ((COALESCE(guild_id, 0)), name)
+        DO UPDATE SET notification_role_id = EXCLUDED.notification_role_id
+        RETURNING id
+        "#,
+    )
+    .bind(guild_id)
+    .bind(&current.name)
+    .bind(&current.display_name)
+    .bind(current.emoji.as_deref())
+    .bind(current.color)
+    .bind(current.message_title.as_deref())
+    .bind(current.message_description.as_deref())
+    .bind(current.requires_vc)
+    .bind(role_id)
+    .bind(&current.showcase_emoji)
+    .bind(current.thumbnail_url.as_deref())
+    .bind(current.image_url.as_deref())
+    .fetch_one(pool)
+    .await?;
+    Ok(new_id)
+}
+
 /// Upsert a reaction for a template (used by sync-wiki).
 pub async fn upsert_reaction(
     pool: &PgPool,

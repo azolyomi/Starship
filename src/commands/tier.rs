@@ -125,25 +125,23 @@ pub async fn list(ctx: BotContext<'_>) -> Result<(), BotError> {
 
     let mut lines = vec!["**Tiers**".to_string()];
     for t in &tiers {
-        let channels = match (t.headcount_channel_id, t.raid_channel_id) {
-            (Some(hc), Some(r)) => format!(" | HC: <#{}> | Raid: <#{}>", hc, r),
-            (Some(hc), None) => format!(" | HC: <#{}>", hc),
-            (None, Some(r)) => format!(" | Raid: <#{}>", r),
-            (None, None) => String::new(),
-        };
+        let runs = t
+            .runs_channel()
+            .map(|c| format!(" | Runs: <#{c}>"))
+            .unwrap_or_default();
         let desc = t
             .description
             .as_deref()
             .map(|d| format!(" — {d}"))
             .unwrap_or_default();
-        lines.push(format!("**{}** (id: {}){}{}", t.name, t.id, desc, channels));
+        lines.push(format!("**{}** (id: {}){}{}", t.name, t.id, desc, runs));
     }
 
     ctx.say(lines.join("\n")).await?;
     Ok(())
 }
 
-/// Edit a tier's name, description, or channel assignments.
+/// Edit a tier's name, description, or runs channel.
 #[poise::command(slash_command, guild_only)]
 pub async fn edit(
     ctx: BotContext<'_>,
@@ -152,8 +150,8 @@ pub async fn edit(
     name: String,
     #[description = "New name"] new_name: Option<String>,
     #[description = "New description"] description: Option<String>,
-    #[description = "Raid channel"] raid_channel: Option<serenity::GuildChannel>,
-    #[description = "Headcount channel"] headcount_channel: Option<serenity::GuildChannel>,
+    #[description = "Runs channel (headcounts + runs post here)"]
+    runs_channel: Option<serenity::GuildChannel>,
 ) -> Result<(), BotError> {
     perm_svc::require(ctx, Action::ManageTiers, None, None).await?;
 
@@ -168,11 +166,7 @@ pub async fn edit(
         }
     };
 
-    if new_name.is_none()
-        && description.is_none()
-        && raid_channel.is_none()
-        && headcount_channel.is_none()
-    {
+    if new_name.is_none() && description.is_none() && runs_channel.is_none() {
         ctx.say("Nothing to update — provide at least one field.")
             .await?;
         return Ok(());
@@ -183,8 +177,7 @@ pub async fn edit(
         tier.id,
         new_name.as_deref(),
         description.as_deref(),
-        raid_channel.map(|c| c.id.get() as i64),
-        headcount_channel.map(|c| c.id.get() as i64),
+        runs_channel.map(|c| c.id.get() as i64),
     )
     .await?;
 

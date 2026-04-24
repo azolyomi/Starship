@@ -17,9 +17,24 @@ pub struct Tier {
     pub guild_id: i64,
     pub name: String,
     pub description: Option<String>,
+    /// Unified channel (R3+). Headcount + run messages both post here.
+    pub runs_channel_id: Option<i64>,
+    /// Legacy; populated via dual-write for R3. R4 drops the column.
     pub raid_channel_id: Option<i64>,
+    /// Legacy; populated via dual-write for R3. R4 drops the column.
     pub headcount_channel_id: Option<i64>,
     pub created_at: DateTime<Utc>,
+}
+
+impl Tier {
+    /// R3 channel resolver: prefer the unified `runs_channel_id`, fall back
+    /// to the legacy `raid_channel_id` / `headcount_channel_id` so guilds
+    /// migrated mid-upgrade still work.
+    pub fn runs_channel(&self) -> Option<i64> {
+        self.runs_channel_id
+            .or(self.raid_channel_id)
+            .or(self.headcount_channel_id)
+    }
 }
 
 #[derive(Debug, sqlx::FromRow)]

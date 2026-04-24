@@ -138,7 +138,6 @@ async fn run_dashboard_loop(
             "setup:section:tier" => section_first_tier(ctx, &mci).await?,
             "setup:section:superadmin" => section_superadmin(ctx, &mci).await?,
             "setup:section:log" => section_log_channel(ctx, &mci).await?,
-            "setup:section:notif" => section_notif_channel(ctx, &mci).await?,
             _ => {
                 // Unknown custom_id — just acknowledge so Discord doesn't
                 // show "interaction failed" to the user.
@@ -159,10 +158,9 @@ fn intro_view() -> (CreateEmbed, Vec<CreateActionRow>) {
             "Welcome! How would you like to set up?\n\
              \n\
              **Quick setup** — one click, sensible defaults:\n\
-             • Creates a **Raids** category with `main-headcount` and \
-               `main-raid-room` channels\n\
-             • Creates `#starship-log` for audit events and \
-               `#starship-notifications` for role pings\n\
+             • Creates a **Raids** category with a single `main-runs` \
+               channel (headcounts and runs both live there)\n\
+             • Creates `#🚀starship-log` for audit events\n\
              • Creates a **Raid Leader** role with raid-management \
                permissions\n\
              • Makes you the superadmin\n\
@@ -244,13 +242,13 @@ async fn do_quick_setup(ctx: BotContext<'_>) -> Result<()> {
     let pool = &ctx.data().db;
     let user_id = ctx.author().id.get() as i64;
 
-    // Tier channels (Raids category + main-headcount + main-raid-room).
-    let (hc_id, raid_id) = create_default_channels(ctx, "Main").await?;
+    // Single runs channel under a Raids category (R3: no more split
+    // headcount / raid channels).
+    let runs_id = create_default_channels(ctx, "Main").await?;
 
-    // Log + notification channels — sibling text channels, no category.
-    let log_id = find_or_create_text_channel(ctx, "starship-log", None).await?;
-    let notif_id =
-        find_or_create_text_channel(ctx, "starship-notifications", None).await?;
+    // Log channel — emoji-prefixed name, fallback to plain if Discord
+    // rejects the leading rocket glyph.
+    let log_id = find_or_create_log_channel(ctx).await?;
 
     // Main tier.
     let existing_main = db::tier::list(pool, guild_id)
@@ -259,15 +257,7 @@ async fn do_quick_setup(ctx: BotContext<'_>) -> Result<()> {
         .find(|t| t.name == "Main");
     let tier_id = match existing_main {
         Some(t) => {
-            db::tier::update(
-                pool,
-                t.id,
-                None,
-                None,
-                Some(raid_id.get() as i64),
-                Some(hc_id.get() as i64),
-            )
-            .await?;
+            db::tier::update(pool, t.id, None, None, Some(runs_id.get() as i64)).await?;
             t.id
         }
         None => {
@@ -277,8 +267,7 @@ async fn do_quick_setup(ctx: BotContext<'_>) -> Result<()> {
                 created.id,
                 None,
                 None,
-                Some(raid_id.get() as i64),
-                Some(hc_id.get() as i64),
+                Some(runs_id.get() as i64),
             )
             .await?;
             // Attach every global dungeon so `/headcount` works out of the box.
@@ -292,8 +281,6 @@ async fn do_quick_setup(ctx: BotContext<'_>) -> Result<()> {
     let _ = tier_id;
 
     db::guild::set_log_channel(pool, guild_id, Some(log_id.get() as i64)).await?;
-    db::guild::set_notification_channel(pool, guild_id, Some(notif_id.get() as i64))
-        .await?;
     db::guild::set_superadmin(pool, guild_id, Some(user_id)).await?;
 
     // Raid Leader role + raid-management permission grants.
@@ -315,29 +302,40 @@ async fn do_quick_setup(ctx: BotContext<'_>) -> Result<()> {
     Ok(())
 }
 
-/// Find-or-create a text channel by name at the guild root. Idempotent.
-async fn find_or_create_text_channel(
-    ctx: BotContext<'_>,
-    name: &str,
-    parent: Option<ChannelId>,
-) -> Result<ChannelId> {
+/// Find-or-create the Starship audit-log channel. Prefers the
+/// emoji-prefixed `🚀starship-log` name for discoverability in the channel
+/// list; falls back to plain `starship-log` if Discord rejects the glyph
+/// (some guild settings / old clients choke on leading emoji).
+async fn find_or_create_log_channel(ctx: BotContext<'_>) -> Result<ChannelId> {
+    const FANCY: &str = "🚀starship-log";
+    const PLAIN: &str = "starship-log";
+
     let guild_id = ctx.guild_id().unwrap();
     let http = ctx.http();
-
     let existing = guild_id.channels(http).await?;
-    if let Some(c) = existing.values().find(|c| {
-        c.kind == ChannelType::Text
-            && c.parent_id == parent
-            && c.name.eq_ignore_ascii_case(name)
-    }) {
-        return Ok(c.id);
+
+    for name in [FANCY, PLAIN] {
+        if let Some(c) = existing
+            .values()
+            .find(|c| c.kind == ChannelType::Text && c.name.eq_ignore_ascii_case(name))
+        {
+            return Ok(c.id);
+        }
     }
 
-    let mut builder = CreateChannel::new(name).kind(ChannelType::Text);
-    if let Some(p) = parent {
-        builder = builder.category(p);
+    match guild_id
+        .create_channel(http, CreateChannel::new(FANCY).kind(ChannelType::Text))
+        .await
+    {
+        Ok(ch) => Ok(ch.id),
+        Err(e) => {
+            tracing::warn!(error = %e, "log channel with emoji prefix rejected, falling back");
+            Ok(guild_id
+                .create_channel(http, CreateChannel::new(PLAIN).kind(ChannelType::Text))
+                .await?
+                .id)
+        }
     }
-    Ok(guild_id.create_channel(http, builder).await?.id)
 }
 
 /// Find-or-create a "Raid Leader" role. The role itself has no Discord
@@ -387,27 +385,23 @@ async fn dashboard_view(
 
     let first_tier = tiers.first();
     let first_tier_ready = first_tier
-        .map(|t| t.headcount_channel_id.is_some())
+        .map(|t| t.runs_channel().is_some())
         .unwrap_or(false);
 
     let mark = |ok: bool| if ok { "✅" } else { "⬜" };
 
     let tier_block = match first_tier {
         Some(t) => {
-            let hc = t
-                .headcount_channel_id
+            let runs = t
+                .runs_channel()
                 .map(|c| format!("<#{c}>"))
-                .unwrap_or_else(|| "_no headcount channel_".to_string());
-            let raid = t
-                .raid_channel_id
-                .map(|c| format!("<#{c}>"))
-                .unwrap_or_else(|| "↑ same as headcount".to_string());
+                .unwrap_or_else(|| "_no runs channel_".to_string());
             let extra = if tiers.len() > 1 {
                 format!("\n_+ {} more tier(s) — manage with `/tier`._", tiers.len() - 1)
             } else {
                 String::new()
             };
-            format!("**{}** — headcount: {hc} · raid: {raid}{extra}", t.name)
+            format!("**{}** — runs: {runs}{extra}", t.name)
         }
         None => "_no tiers yet — set one up to enable **Finish**_".to_string(),
     };
@@ -418,10 +412,6 @@ async fn dashboard_view(
         .unwrap_or_else(|| "_not set (Discord admins still have full access)_".to_string());
     let log = guild
         .log_channel_id
-        .map(|cid| format!("<#{cid}>"))
-        .unwrap_or_else(|| "_not set_".to_string());
-    let notif = guild
-        .notification_channel_id
         .map(|cid| format!("<#{cid}>"))
         .unwrap_or_else(|| "_not set_".to_string());
 
@@ -435,14 +425,10 @@ async fn dashboard_view(
          {sa}\n\
          \n\
          {log_mark} **Audit log channel** *(optional)*\n\
-         {log}\n\
-         \n\
-         {notif_mark} **Notification channel** *(optional)*\n\
-         {notif}",
+         {log}",
         tier_mark = mark(first_tier_ready),
         sa_mark = mark(guild.superadmin_user_id.is_some()),
         log_mark = mark(guild.log_channel_id.is_some()),
-        notif_mark = mark(guild.notification_channel_id.is_some()),
     );
 
     let footer = if guild.setup_complete {
@@ -480,9 +466,6 @@ async fn dashboard_view(
         CreateButton::new("setup:section:log")
             .label("Log channel")
             .style(ButtonStyle::Secondary),
-        CreateButton::new("setup:section:notif")
-            .label("Notif channel")
-            .style(ButtonStyle::Secondary),
     ]);
 
     let finish_label = if guild.setup_complete {
@@ -512,8 +495,8 @@ async fn summary_view(ctx: BotContext<'_>) -> Result<CreateEmbed> {
         .first()
         .expect("finish is only reachable with at least one tier");
 
-    let hc = first
-        .headcount_channel_id
+    let runs = first
+        .runs_channel()
         .map(|c| format!("<#{c}>"))
         .unwrap_or_else(|| "_not set_".to_string());
 
@@ -530,13 +513,15 @@ async fn summary_view(ctx: BotContext<'_>) -> Result<CreateEmbed> {
          **Try it out**\n\
          • Run `/headcount <dungeon>` to start gathering raiders.\n\
          • Run `/run <dungeon>` to skip the headcount and jump straight in.\n\
+         • Run `/pingroles` to subscribe to dungeon notifications.\n\
          \n\
          **Manage later**\n\
          • `/tier` — add more tiers, change channels, assign access roles\n\
          • `/permission` — let specific roles run headcounts and runs\n\
          • `/dungeon` — customise or add dungeons\n\
+         • `/pingroles set` — bind a dungeon to a notification role\n\
          • `/setup` — re-run this wizard any time",
-        first.name, hc
+        first.name, runs
     );
 
     Ok(CreateEmbed::new()
@@ -553,8 +538,7 @@ async fn summary_view(ctx: BotContext<'_>) -> Result<CreateEmbed> {
 /// only when the user clicks Save.
 #[derive(Debug, Clone)]
 struct TierDraft {
-    headcount_channel: Option<ChannelId>,
-    raid_channel: Option<ChannelId>,
+    runs_channel: Option<ChannelId>,
     access_roles: Vec<RoleId>,
 }
 
@@ -572,14 +556,12 @@ async fn section_first_tier(
         Some(t) => {
             let roles = db::tier::list_roles(pool, t.id).await?;
             TierDraft {
-                headcount_channel: t.headcount_channel_id.map(|id| ChannelId::new(id as u64)),
-                raid_channel: t.raid_channel_id.map(|id| ChannelId::new(id as u64)),
+                runs_channel: t.runs_channel().map(|id| ChannelId::new(id as u64)),
                 access_roles: roles.into_iter().map(|r| RoleId::new(r as u64)).collect(),
             }
         }
         None => TierDraft {
-            headcount_channel: None,
-            raid_channel: None,
+            runs_channel: None,
             access_roles: Vec::new(),
         },
     };
@@ -600,17 +582,9 @@ async fn section_first_tier(
                 back_to_dashboard(ctx, &mci).await?;
                 return Ok(());
             }
-            "setup:tier:headcount" => {
+            "setup:tier:runs" => {
                 if let ComponentInteractionDataKind::ChannelSelect { values } = &mci.data.kind {
-                    draft.headcount_channel = values.first().copied();
-                }
-                let (embed, components) =
-                    tier_view(existing.as_ref(), &draft, global_dungeons.len());
-                respond_with_view(ctx, &mci, embed, components).await?;
-            }
-            "setup:tier:raid" => {
-                if let ComponentInteractionDataKind::ChannelSelect { values } = &mci.data.kind {
-                    draft.raid_channel = values.first().copied();
+                    draft.runs_channel = values.first().copied();
                 }
                 let (embed, components) =
                     tier_view(existing.as_ref(), &draft, global_dungeons.len());
@@ -630,9 +604,8 @@ async fn section_first_tier(
                     .map(|t| t.name.as_str())
                     .unwrap_or("Main");
                 match create_default_channels(ctx, tier_name).await {
-                    Ok((hc_id, raid_id)) => {
-                        draft.headcount_channel = Some(hc_id);
-                        draft.raid_channel = Some(raid_id);
+                    Ok(runs_id) => {
+                        draft.runs_channel = Some(runs_id);
                         let (embed, components) =
                             tier_view(existing.as_ref(), &draft, global_dungeons.len());
                         respond_with_view(ctx, &mci, embed, components).await?;
@@ -655,8 +628,8 @@ async fn section_first_tier(
                 }
             }
             "setup:tier:save" => {
-                let Some(hc) = draft.headcount_channel else {
-                    // Save button is disabled without headcount, but be defensive.
+                let Some(runs) = draft.runs_channel else {
+                    // Save button is disabled without a runs channel, but be defensive.
                     mci.defer(ctx.http()).await?;
                     continue;
                 };
@@ -668,8 +641,7 @@ async fn section_first_tier(
                             t.id,
                             None,
                             None,
-                            draft.raid_channel.map(|c| c.get() as i64),
-                            Some(hc.get() as i64),
+                            Some(runs.get() as i64),
                         )
                         .await?;
                         t.id
@@ -681,8 +653,7 @@ async fn section_first_tier(
                             created.id,
                             None,
                             None,
-                            draft.raid_channel.map(|c| c.get() as i64),
-                            Some(hc.get() as i64),
+                            Some(runs.get() as i64),
                         )
                         .await?;
                         // Magical default: attach every globally-available
@@ -731,14 +702,10 @@ fn tier_view(
     let name = existing.map(|t| t.name.as_str()).unwrap_or("Main");
     let is_create = existing.is_none();
 
-    let hc_display = draft
-        .headcount_channel
+    let runs_display = draft
+        .runs_channel
         .map(|c| format!("<#{c}>"))
         .unwrap_or_else(|| "_required — pick one below_".to_string());
-    let raid_display = draft
-        .raid_channel
-        .map(|c| format!("<#{c}>"))
-        .unwrap_or_else(|| "_will fall back to the headcount channel_".to_string());
     let roles_display = if draft.access_roles.is_empty() {
         "_anyone in the server_".to_string()
     } else {
@@ -759,11 +726,10 @@ fn tier_view(
         "Dungeons are managed via `/tier add-dungeon` and `/tier remove-dungeon`.".to_string()
     };
 
-    let show_create_button =
-        draft.headcount_channel.is_none() || draft.raid_channel.is_none();
+    let show_create_button = draft.runs_channel.is_none();
     let create_hint = if show_create_button {
-        "\n\nDon't have channels yet? Click **Create default channels** below and \
-         I'll make a Raids category with a headcount and raid-room channel for you."
+        "\n\nDon't have a channel yet? Click **Create default channel** below and \
+         I'll make a Raids category with a `{slug}-runs` text channel for you."
     } else {
         ""
     };
@@ -772,9 +738,7 @@ fn tier_view(
         "A **tier** is an isolated raid section (e.g. Main, Veterans, Elite).\n\
          Rename later with `/tier edit`.\n\
          \n\
-         **Headcount channel**\n{hc_display}\n\
-         \n\
-         **Raid channel**\n{raid_display}\n\
+         **Runs channel** — where headcount + run messages post\n{runs_display}\n\
          \n\
          **Access roles**\n{roles_display}\n\
          \n\
@@ -786,26 +750,15 @@ fn tier_view(
         .description(description)
         .color(0x57F287);
 
-    let hc_select = CreateSelectMenu::new(
-        "setup:tier:headcount",
+    let runs_select = CreateSelectMenu::new(
+        "setup:tier:runs",
         CreateSelectMenuKind::Channel {
             channel_types: Some(vec![ChannelType::Text]),
-            default_channels: draft.headcount_channel.map(|c| vec![c]),
+            default_channels: draft.runs_channel.map(|c| vec![c]),
         },
     )
-    .placeholder("Headcount channel (required)")
+    .placeholder("Runs channel (required)")
     .min_values(1)
-    .max_values(1);
-
-    let raid_select = CreateSelectMenu::new(
-        "setup:tier:raid",
-        CreateSelectMenuKind::Channel {
-            channel_types: Some(vec![ChannelType::Text]),
-            default_channels: draft.raid_channel.map(|c| vec![c]),
-        },
-    )
-    .placeholder("Raid channel (optional)")
-    .min_values(0)
     .max_values(1);
 
     let role_select = CreateSelectMenu::new(
@@ -826,11 +779,11 @@ fn tier_view(
     let mut buttons = vec![CreateButton::new("setup:tier:save")
         .label(save_label)
         .style(ButtonStyle::Success)
-        .disabled(draft.headcount_channel.is_none())];
+        .disabled(draft.runs_channel.is_none())];
     if show_create_button {
         buttons.push(
             CreateButton::new("setup:tier:create_channels")
-                .label("Create default channels")
+                .label("Create default channel")
                 .style(ButtonStyle::Primary),
         );
     }
@@ -844,8 +797,7 @@ fn tier_view(
     (
         embed,
         vec![
-            CreateActionRow::SelectMenu(hc_select),
-            CreateActionRow::SelectMenu(raid_select),
+            CreateActionRow::SelectMenu(runs_select),
             CreateActionRow::SelectMenu(role_select),
             actions,
         ],
@@ -1009,62 +961,7 @@ async fn section_log_channel(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Section: notification channel
-// ---------------------------------------------------------------------------
-
-async fn section_notif_channel(
-    ctx: BotContext<'_>,
-    trigger: &ComponentInteraction,
-) -> Result<(), BotError> {
-    let guild_id = ctx.guild_id().unwrap().get() as i64;
-    let (embed, components) = channel_section_view(
-        ctx,
-        "🔔 Notification channel",
-        "Where the self-assign role picker lives (posted later by `/notifications`). \
-         A channel raiders can see, but not spam — the message sticks around.\n\
-         \n\
-         Leave empty to configure later.",
-        |g| g.notification_channel_id,
-        "setup:notif:pick",
-        "setup:notif:clear",
-        "setup:notif:back",
-    )
-    .await?;
-    respond_with_view(ctx, trigger, embed, components).await?;
-
-    let msg_id = trigger.message.id;
-    loop {
-        let Some(mci) = await_next(ctx, msg_id).await else {
-            return Ok(());
-        };
-        match mci.data.custom_id.as_str() {
-            "setup:notif:back" => {
-                back_to_dashboard(ctx, &mci).await?;
-                return Ok(());
-            }
-            "setup:notif:clear" => {
-                db::guild::set_notification_channel(&ctx.data().db, guild_id, None).await?;
-                back_to_dashboard(ctx, &mci).await?;
-                return Ok(());
-            }
-            "setup:notif:pick" => {
-                if let ComponentInteractionDataKind::ChannelSelect { values } = &mci.data.kind {
-                    let cid = values.first().map(|c| c.get() as i64);
-                    db::guild::set_notification_channel(&ctx.data().db, guild_id, cid).await?;
-                }
-                back_to_dashboard(ctx, &mci).await?;
-                return Ok(());
-            }
-            _ => {
-                mci.defer(ctx.http()).await?;
-            }
-        }
-    }
-}
-
-/// Shared view builder for the log-channel and notification-channel sections.
-/// Both pages are identical except for labels and custom_ids.
+/// Shared view builder for channel-picker sections.
 async fn channel_section_view(
     ctx: BotContext<'_>,
     title: &str,
@@ -1172,19 +1069,19 @@ async fn back_to_dashboard(
     respond_with_view(ctx, interaction, embed, components).await
 }
 
-/// Find-or-create a "Raids" category + `{slug}-headcount` + `{slug}-raid-room`
-/// text channels under it. Idempotent — re-running picks up existing channels
-/// with the expected names rather than duplicating.
+/// Find-or-create a "Raids" category + `{slug}-runs` text channel under it.
+/// Idempotent — re-running picks up the existing channel rather than
+/// duplicating. R3 collapsed the old headcount/raid split to a single
+/// channel: both headcounts and runs post here.
 async fn create_default_channels(
     ctx: BotContext<'_>,
     tier_name: &str,
-) -> Result<(ChannelId, ChannelId)> {
+) -> Result<ChannelId> {
     let guild_id = ctx.guild_id().unwrap();
     let http = ctx.http();
 
     let slug = slugify(tier_name);
-    let headcount_name = format!("{slug}-headcount");
-    let raid_name = format!("{slug}-raid-room");
+    let runs_name = format!("{slug}-runs");
     let category_name = "Raids";
 
     let existing = guild_id.channels(http).await?;
@@ -1204,17 +1101,22 @@ async fn create_default_channels(
         }
     };
 
-    let hc_id = match existing.values().find(|c| {
+    // Accept the new `{slug}-runs` name first; if this is an upgraded guild
+    // whose pre-R3 channels still exist under their old names, pick the
+    // raid-room channel as a courtesy so setup stays idempotent.
+    let legacy_raid_name = format!("{slug}-raid-room");
+    let runs_id = match existing.values().find(|c| {
         c.kind == ChannelType::Text
             && c.parent_id == Some(category_id)
-            && c.name.eq_ignore_ascii_case(&headcount_name)
+            && (c.name.eq_ignore_ascii_case(&runs_name)
+                || c.name.eq_ignore_ascii_case(&legacy_raid_name))
     }) {
         Some(c) => c.id,
         None => {
             guild_id
                 .create_channel(
                     http,
-                    CreateChannel::new(&headcount_name)
+                    CreateChannel::new(&runs_name)
                         .kind(ChannelType::Text)
                         .category(category_id),
                 )
@@ -1223,26 +1125,7 @@ async fn create_default_channels(
         }
     };
 
-    let raid_id = match existing.values().find(|c| {
-        c.kind == ChannelType::Text
-            && c.parent_id == Some(category_id)
-            && c.name.eq_ignore_ascii_case(&raid_name)
-    }) {
-        Some(c) => c.id,
-        None => {
-            guild_id
-                .create_channel(
-                    http,
-                    CreateChannel::new(&raid_name)
-                        .kind(ChannelType::Text)
-                        .category(category_id),
-                )
-                .await?
-                .id
-        }
-    };
-
-    Ok((hc_id, raid_id))
+    Ok(runs_id)
 }
 
 /// Discord channel names: lowercase, alphanumeric + hyphens, no runs of

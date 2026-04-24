@@ -1021,6 +1021,81 @@ shiny variants were missing entirely.
 - **`cargo build` passes**; migration applied; operator ran
   `cargo run -- sync-wiki` successfully (wiki-snapshot updated).
 
+### 2026-04-24 — Rework R3 complete (setup simplification + `/pingroles`)
+
+Landed:
+- `migrations/20260424000004_tier_runs_channel.sql` — adds
+  `tiers.runs_channel_id BIGINT`, backfilled via
+  `COALESCE(raid_channel_id, headcount_channel_id)`. Legacy
+  `raid_channel_id` / `headcount_channel_id` / `guilds.notification_channel_id`
+  survive this phase (R3 dual-writes; R4 drops them).
+- `src/db/models.rs` — `Tier` gains `runs_channel_id: Option<i64>` and a
+  `runs_channel()` helper that returns the unified value with fallback to
+  the legacy columns.
+- `src/db/tier.rs` — every SELECT/RETURNING updated; `update()` replaced its
+  `raid_channel_id + headcount_channel_id` pair with a single
+  `runs_channel_id` parameter that dual-writes to the legacy columns for the
+  R3→R4 window.
+- `src/db/dungeon.rs` — new `set_notification_role(guild_id, template_id,
+  role_id)`: updates in place when the template is already guild-specific,
+  otherwise clones the global template into a guild-specific row (clones are
+  preferred by `list_for_guild`'s `DISTINCT ON (name)` + `NULLS LAST`).
+- `src/services/raid.rs` — `start_headcount` now pings
+  `dungeon_templates.notification_role_id` just like `start_run` already
+  did, so subscribers hear about a headcount the moment it opens.
+- `src/commands/headcount.rs` + `src/commands/run.rs` +
+  `src/handlers/component.rs::handle_start` — all three post targets now
+  prefer `Tier::runs_channel()`, falling back to whichever channel the
+  headcount originally posted in if the unified column is still null.
+- `src/commands/setup.rs`:
+  - Intro + dashboard + summary copy rewritten to describe a single runs
+    channel ("headcounts and runs both live there").
+  - Quick setup creates one `{slug}-runs` text channel under a "Raids"
+    category, plus `🚀starship-log` (falls back to plain `starship-log` if
+    Discord rejects the emoji prefix). Notifications-channel concept is
+    gone end-to-end: no channel created, no dashboard section, no
+    `setup:section:notif` handler. `set_notification_channel` DB function
+    survives unused (R4 drops the column).
+  - First-tier section (`tier_view` + `section_first_tier`) collapsed to a
+    single "Runs channel" select; `TierDraft` holds `runs_channel` +
+    `access_roles` only.
+  - `create_default_channels` returns one `ChannelId`; also accepts the
+    legacy `{slug}-raid-room` name when picking up an existing channel,
+    so mid-migration guilds don't double-create.
+- `src/commands/tier.rs` — `/tier edit` exposes a single `runs_channel`
+  param; `/tier list` renders one "Runs: <#…>" line per tier.
+- `src/commands/pingroles.rs` (new) — one root command with three admin
+  subcommands and a default self-service flow:
+  - `/pingroles` (anyone) — paginated ephemeral picker (10 dungeons/page)
+    with a StringSelect per page, `default_selection` preloaded from the
+    user's current role membership. Prev/Next buttons rotate pages;
+    selections from each page accumulate into an in-memory `HashSet<i32>`.
+    On **Apply** the command re-fetches the Discord member, computes
+    desired vs. current role diff scoped to Starship-managed roles only,
+    and fires `member.add_role` / `member.remove_role` with a 3× retry and
+    200→400→800 ms backoff per mutation. Partial failures produce a clear
+    per-role error list without aborting the batch.
+  - `/pingroles set <dungeon> <role>` (ConfigureGuild) — binds an existing
+    role.
+  - `/pingroles unset <dungeon>` (ConfigureGuild) — clears the binding.
+  - `/pingroles create <dungeon>` (ConfigureGuild) — creates (or reuses) a
+    mentionable role named `"<display name> Pings"` and binds it.
+- `src/commands/notifications.rs` — deleted.
+- `src/commands/mod.rs` — unregisters `notifications`, registers
+  `pingroles`.
+- **`cargo build` passes** (17 dead-code warnings for future phases, no
+  errors). **`cargo test`** passes (5/5 slug + section tests).
+- **Migration applied** against the local dev DB (`sqlx migrate info`
+  shows 6/6 installed).
+
+R4 prerequisites are now met: every code path writes + reads
+`runs_channel_id`; the legacy `tiers.raid_channel_id` /
+`tiers.headcount_channel_id` / `guilds.notification_channel_id` columns
+remain dual-written for safety but have no live readers outside the SELECT
+column lists in `db::tier`. R4 can drop them, strip the `Tier` struct
+fields + the `runs_channel()` fallback chain, and delete the
+`set_notification_channel` helper in one pass.
+
 ### Credentials still needed from the user
 
 Collected into `.env` when we're ready to boot:

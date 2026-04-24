@@ -102,10 +102,10 @@ pub async fn headcount(
     perm_svc::require(ctx, Action::StartHeadcount, Some(resolved_tier.id), Some(template.id))
         .await?;
 
-    // Check that a headcount channel is configured for this tier.
-    let Some(channel_id) = resolved_tier.headcount_channel_id else {
+    // Check that a runs channel is configured for this tier.
+    let Some(channel_id) = resolved_tier.runs_channel() else {
         ctx.send(ephemeral(format!(
-            "Tier **{}** has no headcount channel. Use `/setup` or `/tier edit` to set one.",
+            "Tier **{}** has no runs channel. Use `/setup` or `/tier edit` to set one.",
             resolved_tier.name
         )))
         .await?;

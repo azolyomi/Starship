@@ -40,13 +40,19 @@ pub async fn start_headcount(
         &threshold,
     );
 
+    let mut create = serenity::CreateMessage::new()
+        .add_embed(embed)
+        .components(components);
+
+    // Ping the notification role if the template has one. Matches what
+    // `start_run` does so subscribers hear about a headcount the moment
+    // it opens, not only when it converts.
+    if let Some(role_id) = template.notification_role_id {
+        create = create.content(format!("<@&{role_id}>"));
+    }
+
     let msg = serenity::ChannelId::new(channel_id as u64)
-        .send_message(
-            serenity_ctx,
-            serenity::CreateMessage::new()
-                .add_embed(embed)
-                .components(components),
-        )
+        .send_message(serenity_ctx, create)
         .await?;
 
     db::headcount::set_message_id(pool, hc.id, msg.id.get() as i64).await?;
