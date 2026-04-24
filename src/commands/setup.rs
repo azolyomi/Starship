@@ -2,13 +2,14 @@ use std::time::Duration;
 
 use anyhow::Result;
 use poise::serenity_prelude as serenity;
-use poise::CreateReply;
+use poise::{CreateReply, ReplyHandle};
 use serenity::{
     ButtonStyle, ChannelId, ChannelType, ComponentInteraction,
     ComponentInteractionCollector, ComponentInteractionDataKind, CreateActionRow,
     CreateButton, CreateChannel, CreateEmbed, CreateEmbedFooter,
-    CreateInteractionResponse, CreateInteractionResponseMessage, CreateSelectMenu,
-    CreateSelectMenuKind, MessageId, RoleId, UserId,
+    EditInteractionResponse, EditRole, CreateInteractionResponse,
+    CreateInteractionResponseMessage, CreateSelectMenu, CreateSelectMenuKind, MessageId,
+    Permissions, RoleId, UserId,
 };
 
 use crate::db::models::Tier;
@@ -31,8 +32,28 @@ pub async fn setup(ctx: BotContext<'_>) -> Result<(), BotError> {
     // Make sure the guild row exists before any downstream FK target is needed.
     db::guild::upsert(&ctx.data().db, guild_id).await?;
 
-    // Initial dashboard render.
-    let (embed, components) = dashboard_view(ctx).await?;
+    let guild_row = db::guild::get(&ctx.data().db, guild_id)
+        .await?
+        .expect("guild row upserted immediately above");
+
+    // Servers that have already finished setup skip the intro screen —
+    // `/setup` just reopens the dashboard for tweaks.
+    if guild_row.setup_complete {
+        let (embed, components) = dashboard_view(ctx).await?;
+        let handle = ctx
+            .send(
+                CreateReply::default()
+                    .embed(embed)
+                    .components(components)
+                    .ephemeral(true),
+            )
+            .await?;
+        let msg_id = handle.message().await?.id;
+        return run_dashboard_loop(ctx, &handle, msg_id).await;
+    }
+
+    // Fresh server — show a quick/custom chooser first.
+    let (embed, components) = intro_view();
     let handle = ctx
         .send(
             CreateReply::default()
@@ -43,10 +64,45 @@ pub async fn setup(ctx: BotContext<'_>) -> Result<(), BotError> {
         .await?;
     let msg_id = handle.message().await?.id;
 
-    // Event loop: every click is either a section-entry, finish, or cancel.
-    // Each section handler takes over the same message and returns once the
-    // user navigates back — at which point it has already re-rendered the
-    // dashboard via UpdateMessage, so we just wait for the next click.
+    let Some(mci) = await_next(ctx, msg_id).await else {
+        handle
+            .edit(
+                ctx,
+                CreateReply::default()
+                    .content("Setup wizard timed out. Run `/setup` again.")
+                    .components(vec![]),
+            )
+            .await?;
+        return Ok(());
+    };
+
+    match mci.data.custom_id.as_str() {
+        "setup:intro:quick" => quick_setup(ctx, &mci).await,
+        "setup:intro:custom" => {
+            let (embed, components) = dashboard_view(ctx).await?;
+            respond_with_view(ctx, &mci, embed, components).await?;
+            run_dashboard_loop(ctx, &handle, msg_id).await
+        }
+        "setup:intro:close" => {
+            respond_plain(ctx, &mci, "Wizard closed. Run `/setup` any time.").await?;
+            Ok(())
+        }
+        _ => {
+            mci.defer(ctx.http()).await?;
+            Ok(())
+        }
+    }
+}
+
+/// Main dashboard event loop, extracted so it can be entered from either the
+/// intro screen's "Custom setup" button or directly for already-set-up guilds.
+async fn run_dashboard_loop(
+    ctx: BotContext<'_>,
+    handle: &ReplyHandle<'_>,
+    msg_id: MessageId,
+) -> Result<(), BotError> {
+    let guild_id = ctx.guild_id().unwrap().get() as i64;
+
     loop {
         let Some(mci) = await_next(ctx, msg_id).await else {
             handle
@@ -90,6 +146,225 @@ pub async fn setup(ctx: BotContext<'_>) -> Result<(), BotError> {
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Intro / Quick setup
+// ---------------------------------------------------------------------------
+
+fn intro_view() -> (CreateEmbed, Vec<CreateActionRow>) {
+    let embed = CreateEmbed::new()
+        .title("🛠 Starship setup")
+        .description(
+            "Welcome! How would you like to set up?\n\
+             \n\
+             **Quick setup** — one click, sensible defaults:\n\
+             • Creates a **Raids** category with `main-headcount` and \
+               `main-raid-room` channels\n\
+             • Creates `#starship-log` for audit events and \
+               `#starship-notifications` for role pings\n\
+             • Creates a **Raid Leader** role with raid-management \
+               permissions\n\
+             • Makes you the superadmin\n\
+             \n\
+             **Custom setup** — pick every channel and role yourself via a \
+             dashboard. Best if you already have a channel structure.",
+        )
+        .color(0x5865F2)
+        .footer(CreateEmbedFooter::new(
+            "You can re-run `/setup` any time to change anything.",
+        ));
+
+    let buttons = CreateActionRow::Buttons(vec![
+        CreateButton::new("setup:intro:quick")
+            .label("Quick setup")
+            .style(ButtonStyle::Success),
+        CreateButton::new("setup:intro:custom")
+            .label("Custom setup")
+            .style(ButtonStyle::Primary),
+        CreateButton::new("setup:intro:close")
+            .label("Close")
+            .style(ButtonStyle::Secondary),
+    ]);
+
+    (embed, vec![buttons])
+}
+
+/// One-click default provisioning. Creates channels, a Raid Leader role with
+/// raid-management permissions, assigns the invoking user as superadmin, and
+/// marks setup complete. Idempotent on re-entry — re-uses existing channels /
+/// roles when they already match the expected names.
+async fn quick_setup(
+    ctx: BotContext<'_>,
+    trigger: &ComponentInteraction,
+) -> Result<(), BotError> {
+    // Acknowledge silently so we can take >3s on HTTP calls without the
+    // button showing "interaction failed".
+    trigger
+        .create_response(ctx.http(), CreateInteractionResponse::Acknowledge)
+        .await?;
+
+    match do_quick_setup(ctx).await {
+        Ok(()) => {
+            let summary = summary_view(ctx).await?;
+            trigger
+                .edit_response(
+                    ctx.http(),
+                    EditInteractionResponse::new()
+                        .embed(summary)
+                        .components(vec![]),
+                )
+                .await?;
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "quick setup failed");
+            trigger
+                .edit_response(
+                    ctx.http(),
+                    EditInteractionResponse::new()
+                        .content(format!(
+                            "⚠ Quick setup failed: {e}\n\n\
+                             Make sure I have **Manage Channels** and **Manage Roles** \
+                             permissions, then run `/setup` again. Or try **Custom setup** \
+                             to configure things by hand."
+                        ))
+                        .embeds(vec![])
+                        .components(vec![]),
+                )
+                .await?;
+        }
+    }
+
+    Ok(())
+}
+
+async fn do_quick_setup(ctx: BotContext<'_>) -> Result<()> {
+    let guild_id_struct = ctx.guild_id().unwrap();
+    let guild_id = guild_id_struct.get() as i64;
+    let pool = &ctx.data().db;
+    let user_id = ctx.author().id.get() as i64;
+
+    // Tier channels (Raids category + main-headcount + main-raid-room).
+    let (hc_id, raid_id) = create_default_channels(ctx, "Main").await?;
+
+    // Log + notification channels — sibling text channels, no category.
+    let log_id = find_or_create_text_channel(ctx, "starship-log", None).await?;
+    let notif_id =
+        find_or_create_text_channel(ctx, "starship-notifications", None).await?;
+
+    // Main tier.
+    let existing_main = db::tier::list(pool, guild_id)
+        .await?
+        .into_iter()
+        .find(|t| t.name == "Main");
+    let tier_id = match existing_main {
+        Some(t) => {
+            db::tier::update(
+                pool,
+                t.id,
+                None,
+                None,
+                Some(raid_id.get() as i64),
+                Some(hc_id.get() as i64),
+            )
+            .await?;
+            t.id
+        }
+        None => {
+            let created = db::tier::create(pool, guild_id, "Main", None).await?;
+            db::tier::update(
+                pool,
+                created.id,
+                None,
+                None,
+                Some(raid_id.get() as i64),
+                Some(hc_id.get() as i64),
+            )
+            .await?;
+            // Attach every global dungeon so `/headcount` works out of the box.
+            for d in db::dungeon::list_for_guild(pool, guild_id).await? {
+                db::tier::add_dungeon(pool, created.id, d.id).await?;
+            }
+            created.id
+        }
+    };
+    // Leave tier access roles empty = anyone in the server can participate.
+    let _ = tier_id;
+
+    db::guild::set_log_channel(pool, guild_id, Some(log_id.get() as i64)).await?;
+    db::guild::set_notification_channel(pool, guild_id, Some(notif_id.get() as i64))
+        .await?;
+    db::guild::set_superadmin(pool, guild_id, Some(user_id)).await?;
+
+    // Raid Leader role + raid-management permission grants.
+    let role_id = find_or_create_raid_leader_role(ctx).await?;
+    for action in [
+        "StartHeadcount",
+        "ConvertHeadcount",
+        "CancelHeadcount",
+        "StartRun",
+        "EndRun",
+        "ManageRuns",
+        "CreateVcRaid",
+    ] {
+        db::permission::grant(pool, guild_id, role_id.get() as i64, action, None, None)
+            .await?;
+    }
+
+    db::guild::mark_setup_complete(pool, guild_id, true).await?;
+    Ok(())
+}
+
+/// Find-or-create a text channel by name at the guild root. Idempotent.
+async fn find_or_create_text_channel(
+    ctx: BotContext<'_>,
+    name: &str,
+    parent: Option<ChannelId>,
+) -> Result<ChannelId> {
+    let guild_id = ctx.guild_id().unwrap();
+    let http = ctx.http();
+
+    let existing = guild_id.channels(http).await?;
+    if let Some(c) = existing.values().find(|c| {
+        c.kind == ChannelType::Text
+            && c.parent_id == parent
+            && c.name.eq_ignore_ascii_case(name)
+    }) {
+        return Ok(c.id);
+    }
+
+    let mut builder = CreateChannel::new(name).kind(ChannelType::Text);
+    if let Some(p) = parent {
+        builder = builder.category(p);
+    }
+    Ok(guild_id.create_channel(http, builder).await?.id)
+}
+
+/// Find-or-create a "Raid Leader" role. The role itself has no Discord
+/// permissions — Starship's permission checks happen in-bot. Idempotent.
+async fn find_or_create_raid_leader_role(ctx: BotContext<'_>) -> Result<RoleId> {
+    let guild_id = ctx.guild_id().unwrap();
+    let http = ctx.http();
+
+    let roles = guild_id.roles(http).await?;
+    if let Some((id, _)) = roles
+        .iter()
+        .find(|(_, r)| r.name.eq_ignore_ascii_case("Raid Leader"))
+    {
+        return Ok(*id);
+    }
+
+    let role = guild_id
+        .create_role(
+            http,
+            EditRole::new()
+                .name("Raid Leader")
+                .permissions(Permissions::empty())
+                .mentionable(true)
+                .hoist(false),
+        )
+        .await?;
+    Ok(role.id)
 }
 
 // ---------------------------------------------------------------------------
