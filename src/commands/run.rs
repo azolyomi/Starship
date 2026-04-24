@@ -57,6 +57,10 @@ pub async fn run(
     #[description = "Tier (required if multiple tiers exist)"]
     #[autocomplete = "autocomplete_tier"]
     tier: Option<String>,
+    #[description = "Prefill location"]
+    location: Option<String>,
+    #[description = "Prefill party composition"]
+    party: Option<String>,
 ) -> Result<(), BotError> {
     let guild_id = ctx.guild_id().unwrap().get() as i64;
     let pool = &ctx.data().db;
@@ -115,6 +119,9 @@ pub async fn run(
         return Ok(());
     };
 
+    let location = location.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let party = party.as_deref().map(str::trim).filter(|s| !s.is_empty());
+
     raid::start_run(
         ctx.serenity_context(),
         pool,
@@ -123,7 +130,8 @@ pub async fn run(
         &template,
         raid_channel_id,
         ctx.author().id.get() as i64,
-        None,
+        location,
+        party,
     )
     .await?;
 

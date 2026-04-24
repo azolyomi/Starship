@@ -84,6 +84,8 @@ pub struct Permission {
     pub dungeon_template_id: Option<i32>,
 }
 
+/// A live headcount. Rows exist only while the headcount is waiting for a
+/// leader to hit Start / Cancel — terminal transitions delete the row.
 #[derive(Debug, sqlx::FromRow)]
 pub struct Headcount {
     pub id: i32,
@@ -93,18 +95,18 @@ pub struct Headcount {
     pub channel_id: i64,
     pub message_id: i64,
     pub leader_user_id: i64,
-    pub status: String,
+    pub location: Option<String>,
+    pub party: Option<String>,
     pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
 }
 
+/// A live run. Rows exist only while the run is active — End deletes.
 #[derive(Debug, sqlx::FromRow)]
 pub struct Run {
     pub id: i32,
     pub guild_id: i64,
     pub tier_id: i32,
     pub dungeon_template_id: i32,
-    pub headcount_id: Option<i32>,
     pub channel_id: i64,
     pub message_id: i64,
     pub leader_user_id: i64,
@@ -112,7 +114,5 @@ pub struct Run {
     pub party: Option<String>,
     pub voice_channel_id: Option<i64>,
     pub is_vc_raid: bool,
-    pub status: String,
     pub created_at: DateTime<Utc>,
-    pub ended_at: Option<DateTime<Utc>>,
 }

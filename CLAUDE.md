@@ -79,6 +79,39 @@ Secrets are handled with the same rigour as production code.
 - Log files must not contain secret values — the masked-`Debug` rule above
   is what prevents this by default.
 
+## Root-cause before patching (IMPORTANT)
+
+When a bug's immediate symptom can be fixed with special-case code — a
+cleanup pass, an FK-violation handler, a filter that hides bad rows,
+retry-with-fallback — stop and ask **why the broken state exists at all**
+before writing the patch.
+
+The rule:
+
+1. Trace the state one step back. "Why is that row there? What writes it?
+   What reads it? What's supposed to delete it?"
+2. If the answer is "nothing reads it" or "nothing deletes it" or "the
+   schema allows this but the code assumed otherwise" — that's the bug.
+   The visible symptom is downstream of a design gap.
+3. Surface the architectural question to the user *before* coding. Lay
+   out the coherent options. Do not graft a special case onto a broken
+   baseline without an explicit call from the user.
+
+Anti-patterns this is meant to prevent:
+- Adding a "skip if FK violation" branch to a deletion path instead of
+  asking why the referencing rows were never cleaned up.
+- Adding a `hidden`/`archived` flag to filter garbage out of a list
+  instead of asking why the garbage is being produced.
+- Adding retry-with-fallback to paper over a state machine that never
+  reaches its terminal cleanup.
+- Writing a one-off migration to repair bad data instead of fixing the
+  code path that keeps generating it.
+
+Patches to the symptom are OK once the root cause has been diagnosed and
+the user has chosen to defer it — but that choice belongs to the user,
+not to Claude. Surfacing a diagnosis is free; applying a shortcut without
+one costs compounding tech debt.
+
 ## Workflow
 
 - Feature branches only — never commit directly to `main` without user

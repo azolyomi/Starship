@@ -217,6 +217,30 @@ pub async fn upsert_global_template(
     Ok(id)
 }
 
+/// Names of every global dungeon template (`guild_id IS NULL`).
+pub async fn list_global_names(pool: &PgPool) -> Result<Vec<String>> {
+    let rows: Vec<(String,)> = sqlx::query_as(
+        "SELECT name FROM dungeon_templates WHERE guild_id IS NULL",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(|(n,)| n).collect())
+}
+
+/// Delete a global (`guild_id IS NULL`) template by name. Returns true iff
+/// a row was removed. The FK from live headcounts/runs is the only thing
+/// that can block this now — and that means the dungeon is *actively in
+/// use*, so the seeder should back off and retry on the next boot.
+pub async fn delete_global_by_name(pool: &PgPool, name: &str) -> Result<bool> {
+    let rows = sqlx::query(
+        "DELETE FROM dungeon_templates WHERE guild_id IS NULL AND name = $1",
+    )
+    .bind(name)
+    .execute(pool)
+    .await?;
+    Ok(rows.rows_affected() > 0)
+}
+
 /// Delete reactions on `template_id` whose `name` is not in `keep_names`.
 /// Called after upserting the desired reaction set so stale rows from a
 /// previous seed (e.g. sync-wiki's `key` reaction on a dungeon whose

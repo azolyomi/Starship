@@ -61,10 +61,6 @@ async fn load_active(
 ) -> Result<Option<crate::db::models::Headcount>, BotError> {
     match db::headcount::get(&data.db, hc_id).await? {
         None => {
-            mci.create_response(ctx, ephemeral_msg("Headcount not found.")).await?;
-            Ok(None)
-        }
-        Some(hc) if hc.status != "active" => {
             mci.create_response(ctx, ephemeral_msg("This headcount is no longer active."))
                 .await?;
             Ok(None)
@@ -129,6 +125,14 @@ async fn handle_start(
     // headcount was posted so a half-configured tier still works.
     let raid_channel_id = tier.runs_channel_id.unwrap_or(hc.channel_id);
 
+    // Claim the headcount atomically: only one concurrent Start/Cancel
+    // click walks away with the row, and that caller owns the side effects.
+    if !db::headcount::delete(&data.db, hc_id).await? {
+        mci.create_response(ctx, ephemeral_msg("This headcount is no longer active."))
+            .await?;
+        return Ok(());
+    }
+
     let emoji_map = db::emoji::get_all_as_map(&data.db).await?;
     let closed_embed = embeds::headcount::build_closed(
         &template,
@@ -149,10 +153,6 @@ async fn handle_start(
     )
     .await?;
 
-    // Flip headcount status *before* posting the run: if the run-post fails
-    // we still have a non-active headcount, and a retry won't double-post.
-    db::headcount::set_status(&data.db, hc_id, "converted").await?;
-
     services::raid::start_run(
         ctx,
         &data.db,
@@ -164,7 +164,8 @@ async fn handle_start(
         // organizer who hits Start on someone else's headcount hands the
         // raid off — matches how a raid lead kicks off a run for a friend.
         hc.leader_user_id,
-        Some(hc.id),
+        hc.location.as_deref(),
+        hc.party.as_deref(),
     )
     .await?;
 
@@ -184,7 +185,11 @@ async fn handle_cancel(
         return Ok(());
     }
 
-    db::headcount::set_status(&data.db, hc_id, "cancelled").await?;
+    if !db::headcount::delete(&data.db, hc_id).await? {
+        mci.create_response(ctx, ephemeral_msg("This headcount is no longer active."))
+            .await?;
+        return Ok(());
+    }
 
     let template = db::dungeon::get_by_id(&data.db, hc.dungeon_template_id)
         .await?

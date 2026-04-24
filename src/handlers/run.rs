@@ -96,11 +96,8 @@ async fn load_active(
 ) -> Result<Option<Run>, BotError> {
     match db::run::get(&data.db, run_id).await? {
         None => {
-            mci.create_response(ctx, ephemeral_msg("Run not found.")).await?;
-            Ok(None)
-        }
-        Some(run) if run.status != "active" => {
-            mci.create_response(ctx, ephemeral_msg("This run has ended.")).await?;
+            mci.create_response(ctx, ephemeral_msg("This run has ended."))
+                .await?;
             Ok(None)
         }
         Some(run) => Ok(Some(run)),
@@ -307,13 +304,9 @@ async fn handle_loc_submit(
     run_id: i32,
 ) -> Result<(), BotError> {
     let Some(run) = db::run::get(&data.db, run_id).await? else {
-        modal.create_response(ctx, ephemeral_msg("Run not found.")).await?;
-        return Ok(());
-    };
-    if run.status != "active" {
         modal.create_response(ctx, ephemeral_msg("This run has ended.")).await?;
         return Ok(());
-    }
+    };
     if !modal_caller_is_organizer(&data.db, modal, &run).await? {
         modal
             .create_response(
@@ -360,13 +353,9 @@ async fn handle_party_submit(
     run_id: i32,
 ) -> Result<(), BotError> {
     let Some(run) = db::run::get(&data.db, run_id).await? else {
-        modal.create_response(ctx, ephemeral_msg("Run not found.")).await?;
-        return Ok(());
-    };
-    if run.status != "active" {
         modal.create_response(ctx, ephemeral_msg("This run has ended.")).await?;
         return Ok(());
-    }
+    };
     if !modal_caller_is_organizer(&data.db, modal, &run).await? {
         modal
             .create_response(
@@ -512,11 +501,16 @@ async fn handle_end(
         return Ok(());
     }
 
-    db::run::set_status(&data.db, run_id, "ended").await?;
+    // Claim End atomically: two concurrent clicks both run, only one gets
+    // `true` and fires the Discord-side teardown + audit log.
+    if !db::run::delete(&data.db, run_id).await? {
+        mci.create_response(ctx, ephemeral_msg("This run has ended.")).await?;
+        return Ok(());
+    }
 
     // Tear down the temp VC if this run had one. Best-effort — by the time
-    // we get here the run is already marked ended; a dangling channel is a
-    // manual-cleanup problem, not a flow-failure problem.
+    // we get here the run is already gone from the DB; a dangling channel
+    // is a manual-cleanup problem, not a flow-failure problem.
     if let Some(vc_id) = run.voice_channel_id {
         services::voice::delete_temp_vc(
             &ctx.http,

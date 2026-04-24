@@ -8,7 +8,6 @@ pub async fn create(
     guild_id: i64,
     tier_id: i32,
     dungeon_template_id: i32,
-    headcount_id: Option<i32>,
     channel_id: i64,
     leader_user_id: i64,
     is_vc_raid: bool,
@@ -17,18 +16,17 @@ pub async fn create(
         Run,
         r#"
         INSERT INTO runs
-            (guild_id, tier_id, dungeon_template_id, headcount_id,
+            (guild_id, tier_id, dungeon_template_id,
              channel_id, message_id, leader_user_id, is_vc_raid)
-        VALUES ($1, $2, $3, $4, $5, 0, $6, $7)
-        RETURNING id, guild_id, tier_id, dungeon_template_id, headcount_id,
+        VALUES ($1, $2, $3, $4, 0, $5, $6)
+        RETURNING id, guild_id, tier_id, dungeon_template_id,
                   channel_id, message_id, leader_user_id,
                   location, party, voice_channel_id, is_vc_raid,
-                  status, created_at, ended_at
+                  created_at
         "#,
         guild_id,
         tier_id,
         dungeon_template_id,
-        headcount_id,
         channel_id,
         leader_user_id,
         is_vc_raid,
@@ -53,10 +51,10 @@ pub async fn get(pool: &PgPool, id: i32) -> Result<Option<Run>> {
     let row = sqlx::query_as!(
         Run,
         r#"
-        SELECT id, guild_id, tier_id, dungeon_template_id, headcount_id,
+        SELECT id, guild_id, tier_id, dungeon_template_id,
                channel_id, message_id, leader_user_id,
                location, party, voice_channel_id, is_vc_raid,
-               status, created_at, ended_at
+               created_at
         FROM runs WHERE id = $1
         "#,
         id
@@ -66,40 +64,14 @@ pub async fn get(pool: &PgPool, id: i32) -> Result<Option<Run>> {
     Ok(row)
 }
 
-pub async fn list_active(pool: &PgPool, guild_id: i64) -> Result<Vec<Run>> {
-    let rows = sqlx::query_as!(
-        Run,
-        r#"
-        SELECT id, guild_id, tier_id, dungeon_template_id, headcount_id,
-               channel_id, message_id, leader_user_id,
-               location, party, voice_channel_id, is_vc_raid,
-               status, created_at, ended_at
-        FROM runs WHERE guild_id = $1 AND status = 'active'
-        ORDER BY created_at
-        "#,
-        guild_id
-    )
-    .fetch_all(pool)
-    .await?;
-    Ok(rows)
-}
-
-pub async fn set_status(pool: &PgPool, id: i32, status: &str) -> Result<()> {
-    // When transitioning to 'ended', stamp ended_at at the same time so the
-    // two fields can't drift.
-    sqlx::query!(
-        r#"
-        UPDATE runs
-        SET status = $1,
-            ended_at = CASE WHEN $1 = 'ended' THEN NOW() ELSE ended_at END
-        WHERE id = $2
-        "#,
-        status,
-        id
-    )
-    .execute(pool)
-    .await?;
-    Ok(())
+/// Delete a run row. Returns true iff this call removed it — used as an
+/// atomic "end" claim so two concurrent End clicks only fire the
+/// side-effects (VC teardown, message rewrite, audit log) once.
+pub async fn delete(pool: &PgPool, id: i32) -> Result<bool> {
+    let rows = sqlx::query!("DELETE FROM runs WHERE id = $1", id)
+        .execute(pool)
+        .await?;
+    Ok(rows.rows_affected() > 0)
 }
 
 pub async fn set_location(pool: &PgPool, id: i32, location: Option<&str>) -> Result<()> {

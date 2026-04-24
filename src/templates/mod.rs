@@ -256,6 +256,27 @@ pub async fn load_and_seed(pool: &PgPool) -> Result<()> {
     for eff in &effective {
         seed_one(pool, eff).await?;
     }
+
+    // Drop globals that the current effective set no longer mentions.
+    // With raid lifecycle rows now deleted on terminal transitions, the
+    // only thing that can still pin a stale global is a *live* headcount
+    // or run — in which case we log and back off until the next boot.
+    let keep: HashSet<&str> = effective.iter().map(|e| e.name.as_str()).collect();
+    for name in db::dungeon::list_global_names(pool).await? {
+        if keep.contains(name.as_str()) {
+            continue;
+        }
+        match db::dungeon::delete_global_by_name(pool, &name).await {
+            Ok(true) => info!(dungeon = %name, "removed stale global dungeon template"),
+            Ok(false) => {}
+            Err(e) => warn!(
+                dungeon = %name,
+                error = %e,
+                "could not delete stale global dungeon template (likely a live raid still references it); will retry on next boot"
+            ),
+        }
+    }
+
     info!(
         dungeons = effective.len(),
         overrides = overrides.0.len(),

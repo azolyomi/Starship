@@ -16,14 +16,25 @@ pub async fn start_headcount(
     tier: &Tier,
     template: &DungeonTemplate,
     channel_id: i64,
+    location: Option<&str>,
+    party: Option<&str>,
 ) -> Result<()> {
     let pool = &ctx.data().db;
     let serenity_ctx = ctx.serenity_context();
     let guild_id = ctx.guild_id().unwrap().get() as i64;
     let leader_id = ctx.author().id.get() as i64;
 
-    let hc = db::headcount::create(pool, guild_id, tier.id, template.id, channel_id, leader_id)
-        .await?;
+    let hc = db::headcount::create(
+        pool,
+        guild_id,
+        tier.id,
+        template.id,
+        channel_id,
+        leader_id,
+        location,
+        party,
+    )
+    .await?;
 
     let reactions_list = db::dungeon::get_reactions(pool, template.id).await?;
     let emoji_map = db::emoji::get_all_as_map(pool).await?;
@@ -69,6 +80,7 @@ pub async fn start_headcount(
 ///
 /// Low-level shape (serenity ctx + pool) so it's callable from both the
 /// `/run` slash command and the `hc:<id>:start` component handler.
+#[allow(clippy::too_many_arguments)]
 pub async fn start_run(
     serenity_ctx: &serenity::Context,
     pool: &PgPool,
@@ -77,19 +89,32 @@ pub async fn start_run(
     template: &DungeonTemplate,
     raid_channel_id: i64,
     leader_user_id: i64,
-    headcount_id: Option<i32>,
+    location: Option<&str>,
+    party: Option<&str>,
 ) -> Result<Run> {
     let mut run = db::run::create(
         pool,
         guild_id,
         tier.id,
         template.id,
-        headcount_id,
         raid_channel_id,
         leader_user_id,
         template.requires_vc,
     )
     .await?;
+
+    // Prefill runs as a follow-up UPDATE so `create`'s signature stays
+    // tight. Skip the round-trip entirely when nothing was prefilled.
+    if location.is_some() || party.is_some() {
+        if let Some(loc) = location {
+            db::run::set_location(pool, run.id, Some(loc)).await?;
+            run.location = Some(loc.to_string());
+        }
+        if let Some(p) = party {
+            db::run::set_party(pool, run.id, Some(p)).await?;
+            run.party = Some(p.to_string());
+        }
+    }
 
     // Temp VC for VC-required dungeons. Best-effort: if creation fails we
     // log and keep going — a raid without a VC still works, a raid that
