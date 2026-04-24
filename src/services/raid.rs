@@ -4,7 +4,7 @@ use sqlx::PgPool;
 
 use crate::db::models::{DungeonTemplate, Run, Tier};
 use crate::embeds::headcount::emoji_rt;
-use crate::services::reactions;
+use crate::services::{reactions, voice};
 use crate::{db, embeds, BotContext};
 
 /// Post a headcount embed to the tier's runs channel, create the DB row,
@@ -79,7 +79,7 @@ pub async fn start_run(
     leader_user_id: i64,
     headcount_id: Option<i32>,
 ) -> Result<Run> {
-    let run = db::run::create(
+    let mut run = db::run::create(
         pool,
         guild_id,
         tier.id,
@@ -90,6 +90,34 @@ pub async fn start_run(
         template.requires_vc,
     )
     .await?;
+
+    // Temp VC for VC-required dungeons. Best-effort: if creation fails we
+    // log and keep going — a raid without a VC still works, a raid that
+    // failed to post doesn't.
+    if template.requires_vc {
+        let vc_name = format!("{} #{}", template.display_name, run.id);
+        match voice::create_temp_vc(
+            serenity_ctx,
+            serenity::GuildId::new(guild_id as u64),
+            serenity::ChannelId::new(raid_channel_id as u64),
+            &vc_name,
+        )
+        .await
+        {
+            Ok(vc_id) => {
+                let vc_i64 = vc_id.get() as i64;
+                db::run::set_voice_channel(pool, run.id, Some(vc_i64)).await?;
+                run.voice_channel_id = Some(vc_i64);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    run_id = run.id,
+                    error = %e,
+                    "failed to create temp VC for run; continuing without one",
+                );
+            }
+        }
+    }
 
     let reactions_list = db::dungeon::get_reactions(pool, template.id).await?;
     let emoji_map = db::emoji::get_all_as_map(pool).await?;

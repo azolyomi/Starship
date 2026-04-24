@@ -1176,6 +1176,47 @@ Operator follow-up:
   (no emoji resolver); upload them via the new CLI before running a
   raid.
 
+### 2026-04-24 — Phase 6 complete (temp VC lifecycle)
+
+Narrowed from the original Phase 6 scope: items 26 (create) and 28
+(cleanup) only. Item 27 (join enforcement) is deferred — users trust
+each other for now. No songbird; plain REST channel CRUD.
+
+- `Cargo.toml` — `songbird` dep removed; `"voice"` feature removed
+  from the serenity feature list. Nothing in `src/` imported either.
+- `src/services/voice.rs` — `create_temp_vc(ctx, guild_id,
+  runs_channel_id, name)` looks up the runs channel's parent category
+  via `to_channel` and creates a voice channel of the given name
+  under it (guild root if no parent). `delete_temp_vc(http,
+  channel_id)` is fire-and-forget with warn-logging — once a run is
+  ended we don't care why a delete failed.
+- `src/services/raid.rs::start_run` — when
+  `template.requires_vc`, creates `"{display_name} #{run_id}"` in
+  the runs channel's category, persists via
+  `db::run::set_voice_channel`, and updates the in-memory `Run` so
+  the embed renders the VC line (`**Voice:** <#…>`) on first post.
+  Failure is logged and the raid posts without a VC rather than
+  aborting.
+- `src/handlers/run.rs::handle_end` — after flipping status to
+  `ended`, deletes the VC if the run had one. Runs before the
+  message edit so the cleanup happens even if the edit errors.
+- `src/embeds/run.rs` — already rendered `voice_channel_id` from the
+  earlier scaffold; no change needed.
+- **`cargo build` passes** (13 dead-code warnings, no errors — one
+  down from R4, matching the songbird removal).
+  **`cargo test`** passes (5/5).
+
+VC-raid end-to-end flow: operator sets `requires_vc = true` on a
+template → `/run` or `/headcount` → `Start Run` → bot creates
+`{dungeon} #{id}` VC in the runs-channel category, mentions it in
+the embed → leader ends run → bot deletes VC.
+
+Deferred until later:
+- Join enforcement / auto-move / kick-on-missing (original item 27).
+- VC orphan recovery on bot restart (Phase 7 crash recovery).
+- Per-tier VC category override (currently always the runs
+  channel's parent).
+
 ### Credentials still needed from the user
 
 Collected into `.env` when we're ready to boot:

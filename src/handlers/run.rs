@@ -514,6 +514,17 @@ async fn handle_end(
 
     db::run::set_status(&data.db, run_id, "ended").await?;
 
+    // Tear down the temp VC if this run had one. Best-effort — by the time
+    // we get here the run is already marked ended; a dangling channel is a
+    // manual-cleanup problem, not a flow-failure problem.
+    if let Some(vc_id) = run.voice_channel_id {
+        services::voice::delete_temp_vc(
+            &ctx.http,
+            serenity::ChannelId::new(vc_id as u64),
+        )
+        .await;
+    }
+
     let pool = &data.db;
     let template = db::dungeon::get_by_id(pool, run.dungeon_template_id)
         .await?

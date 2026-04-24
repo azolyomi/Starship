@@ -22,12 +22,10 @@ serenity = { version = "0.12", default-features = false, features = [
     "http",
     "model",
     "utils",
-    "voice",
     "rustls_backend",
     "collector",
 ] }
 poise = "0.6"
-songbird = { version = "0.4", features = ["serenity", "driver"] }
 
 # Database
 sqlx = { version = "0.8", default-features = false, features = [
