@@ -121,7 +121,7 @@ async fn rebuild_and_edit_message(
     let reactions = db::dungeon::get_reactions(pool, run.dungeon_template_id).await?;
     let emoji_map = db::emoji::get_all_as_map(pool).await?;
     let bag_tiers = db::loot::list_bag_tiers(pool).await?;
-    let threshold = db::loot::get_threshold(pool, run.guild_id, run.dungeon_template_id).await?;
+    let threshold = db::loot::get_threshold(pool, run.guild_id).await?;
 
     let (embed, components) = embeds::run::build(
         run,

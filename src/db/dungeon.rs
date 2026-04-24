@@ -1,83 +1,7 @@
 use anyhow::Result;
 use sqlx::PgPool;
 
-use crate::curation::Curation;
 use crate::db::models::{DungeonReaction, DungeonTemplate};
-use crate::templates::dungeons::{BuiltinTemplate, BUILTIN_TEMPLATES};
-
-/// Seed global dungeon templates from built-in definitions.
-/// Uses DO UPDATE with a no-op so RETURNING always yields the row id.
-/// Reactions are filtered through `curation` so a reaction the user removed
-/// via `starship curate` doesn't get resurrected on the next startup.
-pub async fn seed_builtins(pool: &PgPool, curation: &Curation) -> Result<()> {
-    seed_templates(pool, BUILTIN_TEMPLATES, curation).await
-}
-
-pub async fn seed_templates(
-    pool: &PgPool,
-    templates: &[BuiltinTemplate],
-    curation: &Curation,
-) -> Result<()> {
-    for t in templates {
-        let id: i32 = sqlx::query_scalar(
-            r#"
-            INSERT INTO dungeon_templates
-                (guild_id, name, display_name, emoji, color,
-                 message_title, message_description, requires_vc, showcase_emoji)
-            VALUES (NULL, $1, $2, $3, $4, $5, $6, $7, $8)
-            ON CONFLICT ((COALESCE(guild_id, 0)), name)
-            DO UPDATE SET name = EXCLUDED.name
-            RETURNING id
-            "#,
-        )
-        .bind(t.name)
-        .bind(t.display_name)
-        .bind(t.emoji)
-        .bind(t.color)
-        .bind(t.message_title)
-        .bind(t.message_description)
-        .bind(t.requires_vc)
-        .bind(t.showcase_emoji)
-        .fetch_one(pool)
-        .await?;
-
-        for r in t.reactions {
-            if !curation.should_keep_reaction(t.name, r.name) {
-                continue;
-            }
-            // DO UPDATE so display_name / emoji / sort_order / requires_confirmation
-            // changes in the built-in definitions propagate to existing rows
-            // on bot restart. R4 flipped every builtin to
-            // `requires_confirmation: false`; without DO UPDATE, older rows
-            // would keep their stale `true`.
-            sqlx::query(
-                r#"
-                INSERT INTO dungeon_reactions
-                    (dungeon_template_id, name, display_name, emoji,
-                     num_required, requires_confirmation, sort_order)
-                VALUES ($1, $2, $3, $4, $5, $6, $7)
-                ON CONFLICT (dungeon_template_id, name)
-                DO UPDATE SET
-                    display_name          = EXCLUDED.display_name,
-                    emoji                 = EXCLUDED.emoji,
-                    num_required          = EXCLUDED.num_required,
-                    requires_confirmation = EXCLUDED.requires_confirmation,
-                    sort_order            = EXCLUDED.sort_order
-                "#,
-            )
-            .bind(id)
-            .bind(r.name)
-            .bind(r.display_name)
-            .bind(r.emoji)
-            .bind(r.num_required)
-            .bind(r.requires_confirmation)
-            .bind(r.sort_order)
-            .execute(pool)
-            .await?;
-        }
-    }
-    Ok(())
-}
 
 /// All templates visible to a guild: guild-specific rows override global ones by name.
 pub async fn list_for_guild(pool: &PgPool, guild_id: i64) -> Result<Vec<DungeonTemplate>> {
@@ -242,13 +166,19 @@ pub async fn delete_guild_template(pool: &PgPool, guild_id: i64, name: &str) -> 
     Ok(rows.rows_affected() > 0)
 }
 
-/// Upsert a global template by name (used by sync-wiki).
+/// Upsert a global template by name (called by the templates-module seeder
+/// on bot boot). Authoritative: every field is replaced on conflict, so
+/// deleting a value from overrides.json (e.g. clearing a custom
+/// `message_title`) propagates back to the DB on restart.
+#[allow(clippy::too_many_arguments)]
 pub async fn upsert_global_template(
     pool: &PgPool,
     name: &str,
     display_name: &str,
     emoji: Option<&str>,
     color: Option<i32>,
+    message_title: Option<&str>,
+    message_description: Option<&str>,
     requires_vc: bool,
     showcase_emoji: &[String],
     thumbnail_url: Option<&str>,
@@ -256,17 +186,20 @@ pub async fn upsert_global_template(
     let id: i32 = sqlx::query_scalar(
         r#"
         INSERT INTO dungeon_templates
-            (guild_id, name, display_name, emoji, color, requires_vc,
+            (guild_id, name, display_name, emoji, color,
+             message_title, message_description, requires_vc,
              showcase_emoji, thumbnail_url)
-        VALUES (NULL, $1, $2, $3, $4, $5, $6, $7)
+        VALUES (NULL, $1, $2, $3, $4, $5, $6, $7, $8, $9)
         ON CONFLICT ((COALESCE(guild_id, 0)), name)
         DO UPDATE SET
-            display_name  = EXCLUDED.display_name,
-            emoji         = COALESCE(EXCLUDED.emoji, dungeon_templates.emoji),
-            color         = COALESCE(EXCLUDED.color, dungeon_templates.color),
-            requires_vc   = EXCLUDED.requires_vc,
-            showcase_emoji = EXCLUDED.showcase_emoji,
-            thumbnail_url  = COALESCE(EXCLUDED.thumbnail_url, dungeon_templates.thumbnail_url)
+            display_name        = EXCLUDED.display_name,
+            emoji               = EXCLUDED.emoji,
+            color               = EXCLUDED.color,
+            message_title       = EXCLUDED.message_title,
+            message_description = EXCLUDED.message_description,
+            requires_vc         = EXCLUDED.requires_vc,
+            showcase_emoji      = EXCLUDED.showcase_emoji,
+            thumbnail_url       = EXCLUDED.thumbnail_url
         RETURNING id
         "#,
     )
@@ -274,12 +207,34 @@ pub async fn upsert_global_template(
     .bind(display_name)
     .bind(emoji)
     .bind(color)
+    .bind(message_title)
+    .bind(message_description)
     .bind(requires_vc)
     .bind(showcase_emoji)
     .bind(thumbnail_url)
     .fetch_one(pool)
     .await?;
     Ok(id)
+}
+
+/// Delete reactions on `template_id` whose `name` is not in `keep_names`.
+/// Called after upserting the desired reaction set so stale rows from a
+/// previous seed (e.g. sync-wiki's `key` reaction on a dungeon whose
+/// override now specifies `lost_halls_key` instead) don't linger.
+pub async fn delete_reactions_not_in(
+    pool: &PgPool,
+    template_id: i32,
+    keep_names: &[String],
+) -> Result<()> {
+    sqlx::query(
+        "DELETE FROM dungeon_reactions
+         WHERE dungeon_template_id = $1 AND NOT (name = ANY($2))",
+    )
+    .bind(template_id)
+    .bind(keep_names)
+    .execute(pool)
+    .await?;
+    Ok(())
 }
 
 /// Bind (or clear) a notification role for a dungeon in a specific guild.

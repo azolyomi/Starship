@@ -28,40 +28,26 @@ pub fn resolve_bag_emoji(tier: &BagTier, emoji_map: &HashMap<String, BotEmoji>) 
     }
 }
 
-/// Returns the stored threshold tier name for `(guild_id, dungeon_template_id)`,
-/// defaulting to `white` (strictest) when no row exists.
-pub async fn get_threshold(
-    pool: &PgPool,
-    guild_id: i64,
-    dungeon_template_id: i32,
-) -> Result<String> {
+/// Returns the guild's loot-tier threshold, defaulting to `white` (strictest)
+/// if the guild row is missing. The column itself has a NOT NULL DEFAULT,
+/// so the fallback only kicks in for guilds that haven't been `upsert`'d yet.
+pub async fn get_threshold(pool: &PgPool, guild_id: i64) -> Result<String> {
     let row: Option<(String,)> = sqlx::query_as(
-        "SELECT tier_name FROM guild_loot_tier_threshold
-         WHERE guild_id = $1 AND dungeon_template_id = $2",
+        "SELECT loot_tier_threshold FROM guilds WHERE guild_id = $1",
     )
     .bind(guild_id)
-    .bind(dungeon_template_id)
     .fetch_optional(pool)
     .await?;
     Ok(row.map(|(t,)| t).unwrap_or_else(|| "white".to_string()))
 }
 
-/// Upsert a per-dungeon bag-tier threshold for a guild. `tier_name` must be
-/// a row in `bag_tiers`; the FK enforces that at the DB level.
-pub async fn set_threshold(
-    pool: &PgPool,
-    guild_id: i64,
-    dungeon_template_id: i32,
-    tier_name: &str,
-) -> Result<()> {
+/// Update the guild-wide loot-tier threshold. `tier_name` must be a row
+/// in `bag_tiers` — the FK on `guilds.loot_tier_threshold` enforces that.
+pub async fn set_threshold(pool: &PgPool, guild_id: i64, tier_name: &str) -> Result<()> {
     sqlx::query(
-        "INSERT INTO guild_loot_tier_threshold (guild_id, dungeon_template_id, tier_name)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (guild_id, dungeon_template_id)
-         DO UPDATE SET tier_name = EXCLUDED.tier_name, updated_at = NOW()",
+        "UPDATE guilds SET loot_tier_threshold = $2, updated_at = NOW() WHERE guild_id = $1",
     )
     .bind(guild_id)
-    .bind(dungeon_template_id)
     .bind(tier_name)
     .execute(pool)
     .await?;

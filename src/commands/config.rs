@@ -6,24 +6,6 @@ use crate::{
     BotContext, BotError,
 };
 
-async fn autocomplete_dungeon<'a>(
-    ctx: BotContext<'_>,
-    partial: &'a str,
-) -> impl Iterator<Item = String> + 'a {
-    let guild_id = match ctx.guild_id() {
-        Some(id) => id.get() as i64,
-        None => return Vec::new().into_iter(),
-    };
-    db::dungeon::list_for_guild(&ctx.data().db, guild_id)
-        .await
-        .unwrap_or_default()
-        .into_iter()
-        .filter(move |d| d.name.to_lowercase().contains(&partial.to_lowercase()))
-        .map(|d| d.name)
-        .collect::<Vec<_>>()
-        .into_iter()
-}
-
 async fn autocomplete_bag_tier<'a>(
     ctx: BotContext<'_>,
     partial: &'a str,
@@ -53,7 +35,7 @@ pub async fn config(_ctx: BotContext<'_>) -> Result<(), BotError> {
     Ok(())
 }
 
-/// Set the minimum loot bag tier shown in this dungeon's embeds.
+/// Set the minimum loot bag tier shown in run and headcount embeds.
 ///
 /// Bag tiers (low to high): brown, pink, purple, cyan, blue, orange, red, white.
 /// The renderer shows every bag tier at or above the threshold. Default is `white`
@@ -61,9 +43,6 @@ pub async fn config(_ctx: BotContext<'_>) -> Result<(), BotError> {
 #[poise::command(slash_command, guild_only, rename = "threshold")]
 pub async fn threshold(
     ctx: BotContext<'_>,
-    #[description = "Dungeon to configure"]
-    #[autocomplete = "autocomplete_dungeon"]
-    dungeon: String,
     #[description = "Lowest bag tier to show (default: white)"]
     #[autocomplete = "autocomplete_bag_tier"]
     tier: String,
@@ -72,12 +51,6 @@ pub async fn threshold(
 
     let guild_id = ctx.guild_id().unwrap().get() as i64;
     let pool = &ctx.data().db;
-
-    let Some(template) = db::dungeon::get_by_name(pool, guild_id, &dungeon).await? else {
-        ctx.send(ephemeral(format!("Unknown dungeon `{dungeon}`.")))
-            .await?;
-        return Ok(());
-    };
 
     let bag_tiers = db::loot::list_bag_tiers(pool).await?;
     if !bag_tiers.iter().any(|t| t.name == tier) {
@@ -90,11 +63,10 @@ pub async fn threshold(
         return Ok(());
     }
 
-    db::loot::set_threshold(pool, guild_id, template.id, &tier).await?;
+    db::loot::set_threshold(pool, guild_id, &tier).await?;
 
     ctx.send(ephemeral(format!(
-        "Loot threshold for **{}** set to `{tier}`.",
-        template.display_name
+        "Loot threshold set to `{tier}` for this guild."
     )))
     .await?;
 

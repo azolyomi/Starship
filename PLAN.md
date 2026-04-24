@@ -1217,6 +1217,101 @@ Deferred until later:
 - Per-tier VC category override (currently always the runs
   channel's parent).
 
+### 2026-04-24 — Phase 6.5 complete (dungeon config refactor)
+
+Goals: linearise the dungeon-template data flow (kill the two-source
+collision between hardcoded builtins and the scraper), move loot-tier
+threshold from per-dungeon to per-guild, and delete the curation
+module that overrides.json now subsumes.
+
+Landed:
+- **Migration `20260424000006_per_guild_threshold.sql`** — adds
+  `guilds.loot_tier_threshold TEXT NOT NULL DEFAULT 'white'
+  REFERENCES bag_tiers(name)`, drops `guild_loot_tier_threshold`.
+- `src/db/loot.rs` — `get_threshold(pool, guild_id)` /
+  `set_threshold(pool, guild_id, tier)`. Dungeon parameter gone.
+- `src/commands/config.rs` — `/config threshold <tier>` (no dungeon
+  arg). Autocomplete list is just the 8 bag tiers.
+- `src/services/raid.rs` (two call sites) +
+  `src/handlers/run.rs::rebuild_and_edit_message` — all load the
+  guild-level threshold now.
+- `src/db/models.rs::Guild` + `src/db/guild.rs` SELECT/RETURNING
+  lists — gain `loot_tier_threshold: String`.
+- **`src/templates/mod.rs`** (new) — authors the dump+overrides
+  pipeline:
+  - `WikiDump` / `WikiDungeon` / `WikiEmoji` (serde types for
+    `data/wiki_dump.json`; replaces `WikiSnapshot` et al.).
+  - `Overrides` (BTreeMap<String, DungeonOverride>) backed by
+    `data/dungeon_overrides.json`. Two patterns: `extends: "<wiki>"`
+    (additive clone) or no-extends (patch). Scalar fields are
+    Option<T>; `reactions` is Option<Vec<OverrideReaction>>.
+  - `load_and_seed(pool)` — validates extends targets, merges dump
+    + overrides into effective templates, upserts each to Postgres.
+    Default reactions (when override doesn't set them) =
+    interest(✅) + key (if dump has one), both
+    `requires_confirmation: false` (fixes the R4 gap where sync-wiki
+    had key=true).
+  - Three unit tests: `extends_clones_source_and_applies_overrides`,
+    `extends_unknown_target_errors`, `patch_override_replaces_scalars_and_reactions`.
+- `src/db/dungeon.rs` — `seed_builtins` / `seed_templates` deleted.
+  `upsert_global_template` gains `message_title` +
+  `message_description` params and is now authoritative on conflict
+  (no more COALESCE-preserve; the seeder writes what the files say).
+  New `delete_reactions_not_in(pool, template_id, keep_names)` for
+  orphan-reaction cleanup after the desired set is upserted —
+  closes the long-standing R4 orphan issue.
+- **`data/dungeon_overrides.json`** (new, committed) — the 5
+  non-trivial migrations from the deleted hardcoded builtins, plus
+  `fullskip_void` as the motivating `extends` example:
+  - `oryxs_sanctuary` (5 reactions + requires_vc),
+  - `the_void` (3 reactions, requires_vc:false explicit),
+  - `fullskip_void` (`extends: "the_void"` + requires_vc:true +
+    display_name + message_title),
+  - `the_shatters` (3 reactions + requires_vc),
+  - `lost_halls` (requires_vc),
+  - `cultist_hideout` (requires_vc).
+- **`data/wiki_dump.json`** — renamed from `data/wiki-snapshot.json`
+  (git mv). Committed so fresh clones seed without first running
+  `sync-wiki`.
+- `src/cli/sync_wiki.rs` — rewritten to write only
+  `data/wiki_dump.json` + `bot_emoji` rows. The direct
+  `upsert_global_template` / `upsert_reaction` calls are gone; so
+  are the curation gatekeepers (every scraped drop goes in the
+  dump). Shinies are now appended to the dump's `drops` so the
+  seeder's showcase derivation picks them up.
+- `src/main.rs` — `mod curation` removed; `Curate` CLI subcommand
+  removed; `run_bot` now calls `templates::load_and_seed(&pool)`
+  in place of `seed_builtins`.
+- **Deleted:** `src/templates/dungeons.rs` (the 9 BUILTIN_TEMPLATES),
+  `src/curation.rs` (Curation + migrate_legacy_slugs + WikiSnapshot),
+  `src/cli/curate.rs` (the curate subcommand).
+
+Verification:
+- `cargo build` — 13 warnings (unchanged baseline). No errors.
+- `cargo test` — 8 passed (5 pre-existing slug/section + 3 new
+  merge tests).
+- `sqlx migrate info` — 8/8 installed; the new migration applied
+  cleanly.
+- Live seed on the dev DB (via `cargo run -- bot`) — "seeded
+  dungeon templates dungeons=62 overrides=6". Verified in psql:
+  `oryxs_sanctuary` has interest + wine_cellar_incantation + 3
+  runes (sort_order 0-4); `fullskip_void` exists with
+  requires_vc=true and 3 inherited reactions (interest +
+  lost_halls_key + vial_of_pure_darkness); the 5 VC dungeons all
+  flipped to `requires_vc=true`, the 3 non-VC dungeons stayed
+  false, and `the_void` correctly flipped to false.
+
+Operator follow-ups / notes:
+- Existing DB carries ~26 global template rows from older
+  sync-wiki runs that aren't in the current `wiki_dump.json`. The
+  new seeder doesn't delete them (to avoid nuking guild overrides
+  that might share a name by accident). They're stale but
+  harmless — they just render in `/headcount` autocomplete until
+  pruned by hand.
+- If the threshold ever needs to diverge per-guild beyond "the
+  floor," we'd add a new table rather than resurrect the per-
+  dungeon knob — simpler semantics have real value.
+
 ### Credentials still needed from the user
 
 Collected into `.env` when we're ready to boot:

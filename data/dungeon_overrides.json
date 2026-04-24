@@ -1,0 +1,95 @@
+{
+  "oryxs_sanctuary": {
+    "requires_vc": true,
+    "reactions": [
+      {
+        "name": "interest",
+        "display_name": "Reacts",
+        "emoji": "✅",
+        "sort_order": 0
+      },
+      {
+        "name": "wine_cellar_incantation",
+        "display_name": "Wine Cellar Incantation",
+        "emoji": "wine_cellar_incantation",
+        "sort_order": 1
+      },
+      {
+        "name": "shield_rune",
+        "display_name": "Shield Rune",
+        "emoji": "shield_rune",
+        "sort_order": 2
+      },
+      {
+        "name": "sword_rune",
+        "display_name": "Sword Rune",
+        "emoji": "sword_rune",
+        "sort_order": 3
+      },
+      {
+        "name": "helmet_rune",
+        "display_name": "Helmet Rune",
+        "emoji": "helmet_rune",
+        "sort_order": 4
+      }
+    ]
+  },
+  "the_void": {
+    "requires_vc": false,
+    "reactions": [
+      {
+        "name": "interest",
+        "display_name": "Reacts",
+        "emoji": "✅",
+        "sort_order": 0
+      },
+      {
+        "name": "lost_halls_key",
+        "display_name": "Lost Halls Key",
+        "emoji": "lost_halls_key",
+        "sort_order": 1
+      },
+      {
+        "name": "vial_of_pure_darkness",
+        "display_name": "Vial of Pure Darkness",
+        "emoji": "vial_of_pure_darkness",
+        "sort_order": 2
+      }
+    ]
+  },
+  "fullskip_void": {
+    "extends": "the_void",
+    "display_name": "Fullskip Void",
+    "message_title": "Fullskip Void Headcount",
+    "requires_vc": true
+  },
+  "the_shatters": {
+    "requires_vc": true,
+    "reactions": [
+      {
+        "name": "interest",
+        "display_name": "Reacts",
+        "emoji": "✅",
+        "sort_order": 0
+      },
+      {
+        "name": "the_forgotten_crown",
+        "display_name": "The Forgotten Crown",
+        "emoji": "the_forgotten_crown",
+        "sort_order": 1
+      },
+      {
+        "name": "tome_of_the_rites",
+        "display_name": "Tome of the Rites",
+        "emoji": "tome_of_the_rites",
+        "sort_order": 2
+      }
+    ]
+  },
+  "lost_halls": {
+    "requires_vc": true
+  },
+  "cultist_hideout": {
+    "requires_vc": true
+  }
+}

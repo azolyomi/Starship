@@ -7,7 +7,7 @@ pub async fn get(pool: &PgPool, guild_id: i64) -> Result<Option<Guild>> {
     let guild = sqlx::query_as!(
         Guild,
         "SELECT guild_id, log_channel_id, superadmin_user_id,
-                setup_complete, created_at, updated_at
+                setup_complete, loot_tier_threshold, created_at, updated_at
          FROM guilds WHERE guild_id = $1",
         guild_id
     )
@@ -23,7 +23,7 @@ pub async fn upsert(pool: &PgPool, guild_id: i64) -> Result<Guild> {
          VALUES ($1)
          ON CONFLICT (guild_id) DO UPDATE SET updated_at = NOW()
          RETURNING guild_id, log_channel_id, superadmin_user_id,
-                   setup_complete, created_at, updated_at",
+                   setup_complete, loot_tier_threshold, created_at, updated_at",
         guild_id
     )
     .fetch_one(pool)

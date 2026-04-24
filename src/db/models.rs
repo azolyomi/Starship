@@ -6,6 +6,7 @@ pub struct Guild {
     pub log_channel_id: Option<i64>,
     pub superadmin_user_id: Option<i64>,
     pub setup_complete: bool,
+    pub loot_tier_threshold: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

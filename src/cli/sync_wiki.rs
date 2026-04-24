@@ -15,9 +15,9 @@ use scraper::{Html, Selector};
 use tracing::{info, warn};
 
 use crate::config::Config;
-use crate::curation::{Curation, SnapshotDungeon, SnapshotEmoji, WikiSnapshot};
 use crate::db;
 use crate::db::emoji::ApplicationEmojiClient;
+use crate::templates::{WikiDump, WikiDungeon, WikiEmoji};
 
 // ---------------------------------------------------------------------------
 // Selector constants — update these if RealmEye changes their HTML.
@@ -152,8 +152,6 @@ struct DrySummary {
     existing_reused: usize,
     would_upload: usize,
     would_upsert_emoji: usize,
-    would_upsert_template: usize,
-    would_upsert_reaction: usize,
 }
 
 enum UploadOutcome {
@@ -168,35 +166,16 @@ enum UploadOutcome {
 pub async fn run(dry_run: bool, purge: bool) -> Result<()> {
     let config = Config::from_env()?;
 
-    // curation.json is the user's allowlist of reactions and drops per
-    // dungeon. Dungeons missing from the file are uncurated — treated as
-    // "keep everything the scraper finds" so first-time syncs capture the
-    // full picture and the curator can prompt for selections afterward.
-    let mut curation = Curation::load()?;
-    let migrated = curation.migrate_legacy_slugs();
-    if curation.dungeons.is_empty() {
-        info!("no curation found at data/curation.json — syncing everything");
-    } else {
-        info!(
-            "loaded curation: {} dungeons curated — entries outside the allowlist will be skipped",
-            curation.dungeons.len()
-        );
-    }
-    if migrated > 0 && !dry_run {
-        curation.save()?;
-        info!("migrated {migrated} legacy curation slug(s) (apostrophe fix) and rewrote data/curation.json");
-    } else if migrated > 0 {
-        info!("[dry-run] would migrate {migrated} legacy curation slug(s) (apostrophe fix)");
-    }
-
-    // In dry-run we never touch the DB: no migrate, no seed, no writes.
+    // In dry-run we never touch the DB: no migrate, no writes.
+    // sync-wiki only writes `bot_emoji` (emoji mappings) + `data/wiki_dump.json`.
+    // Dungeon templates + reactions are seeded separately on bot boot from
+    // the dump + `data/dungeon_overrides.json` via `templates::load_and_seed`.
     let pool = if dry_run {
         info!("dry-run mode: no Discord POSTs and no DB writes will be performed");
         None
     } else {
         let p = db::create_pool(&config.database_url).await?;
         sqlx::migrate!("./migrations").run(&p).await?;
-        db::dungeon::seed_builtins(&p, &curation).await?;
         Some(p)
     };
 
@@ -245,7 +224,7 @@ pub async fn run(dry_run: bool, purge: bool) -> Result<()> {
     info!("found {} dungeons", dungeons.len());
 
     let mut summary = DrySummary::default();
-    let mut snapshot = WikiSnapshot {
+    let mut dump = WikiDump {
         generated_at: Some(chrono::Utc::now()),
         dungeons: Vec::with_capacity(dungeons.len()),
     };
@@ -253,7 +232,7 @@ pub async fn run(dry_run: bool, purge: bool) -> Result<()> {
     for dungeon in &dungeons {
         info!("processing: {}", dungeon.display_name);
 
-        let mut snap_dungeon = SnapshotDungeon {
+        let mut dump_dungeon = WikiDungeon {
             name: dungeon.name.clone(),
             display_name: dungeon.display_name.clone(),
             wiki_path: dungeon.wiki_path.clone(),
@@ -266,7 +245,7 @@ pub async fn run(dry_run: bool, purge: bool) -> Result<()> {
         let portal_emoji_name = format!("portal_{}", dungeon.name);
         let portal_discord_name = discord_name(&portal_emoji_name);
         if let Some(url) = &dungeon.portal_img_url {
-            snap_dungeon.portal = Some(SnapshotEmoji {
+            dump_dungeon.portal = Some(WikiEmoji {
                 logical_name: portal_emoji_name.clone(),
                 img_url: url.clone(),
             });
@@ -309,11 +288,10 @@ pub async fn run(dry_run: bool, purge: bool) -> Result<()> {
         }
 
         // Upload key emoji.
-        let mut key_emoji_name = None;
         if let Some(url) = &dungeon.key_img_url {
             let name = format!("key_{}", dungeon.name);
             let dname = discord_name(&name);
-            snap_dungeon.key = Some(SnapshotEmoji {
+            dump_dungeon.key = Some(WikiEmoji {
                 logical_name: name.clone(),
                 img_url: url.clone(),
             });
@@ -344,12 +322,10 @@ pub async fn run(dry_run: bool, purge: bool) -> Result<()> {
                         )
                         .await?;
                     }
-                    key_emoji_name = Some(name);
                 }
                 Ok(UploadOutcome::WouldUpload) => {
                     info!("[dry-run] would upsert bot_emoji name={name} category=key");
                     summary.would_upsert_emoji += 1;
-                    key_emoji_name = Some(name);
                 }
                 Err(e) => warn!("key emoji {dname}: {e:#}"),
             }
@@ -365,25 +341,13 @@ pub async fn run(dry_run: bool, purge: bool) -> Result<()> {
         };
 
         // Upload drop item emojis. Shiny variants uploaded below are
-        // appended here so the dungeon's showcase_emoji list picks them
-        // up alongside their parent drops.
-        let mut showcase_extras: Vec<String> = Vec::new();
+        // pushed into `dump_dungeon.drops` so the seeder's showcase_emoji
+        // derivation picks them up alongside their parent drops.
         for item in &details.drop_items {
-            snap_dungeon.drops.push(SnapshotEmoji {
+            dump_dungeon.drops.push(WikiEmoji {
                 logical_name: item.logical_name.clone(),
                 img_url: item.img_url.clone(),
             });
-
-            // Curated-out drops aren't uploaded or written to the DB. They
-            // still appear in the snapshot, so the curator sees them as
-            // available to (re)select.
-            if !curation.should_keep_drop(&dungeon.name, &item.logical_name) {
-                info!(
-                    "skipping drop {} (not in curation for {})",
-                    item.logical_name, dungeon.name
-                );
-                continue;
-            }
 
             // Fetch the item's wiki page to classify its bag tier and grab
             // the bag-icon image URL. Cache by drop-table img URL so we
@@ -502,9 +466,8 @@ pub async fn run(dry_run: bool, purge: bool) -> Result<()> {
 
             // If the item page has a shiny sprite, upload it as a
             // separate emoji tagged with bag_tier='shiny' and append it
-            // to the dungeon's showcase_emoji. Shinies inherit the
-            // parent drop's curation decision (same wiki page, same
-            // "keep this item" intent).
+            // to the wiki dump's drops so the seeder derives it into the
+            // effective dungeon's showcase_emoji.
             if let Some(shiny_url) = shiny_image_url.as_deref() {
                 let shiny_logical = format!("{}_shiny", item.logical_name);
                 let shiny_dname = discord_name(&shiny_logical);
@@ -535,129 +498,45 @@ pub async fn run(dry_run: bool, purge: bool) -> Result<()> {
                             )
                             .await?;
                         }
-                        showcase_extras.push(shiny_logical);
+                        dump_dungeon.drops.push(WikiEmoji {
+                            logical_name: shiny_logical,
+                            img_url: shiny_url.to_string(),
+                        });
                     }
                     Ok(UploadOutcome::WouldUpload) => {
                         info!(
                             "[dry-run] would upsert bot_emoji name={shiny_logical} category=drop_shiny bag_tier=shiny"
                         );
                         summary.would_upsert_emoji += 1;
-                        showcase_extras.push(shiny_logical);
+                        dump_dungeon.drops.push(WikiEmoji {
+                            logical_name: shiny_logical,
+                            img_url: shiny_url.to_string(),
+                        });
                     }
                     Err(e) => warn!("shiny emoji {shiny_dname}: {e:#}"),
                 }
             }
         }
 
-        // Upsert the dungeon template.
-        // showcase_emoji now carries *every* scraped drop for this dungeon
-        // (not just white-bag items). The R2 renderer groups them by
-        // bag_tier via the bot_emoji table and hides tiers below the
-        // per-guild threshold. Built-in templates may still seed an initial
-        // set but the scraper's full list is the source of truth.
-        let portal_emoji = dungeon.portal_img_url.as_ref().map(|_| portal_emoji_name.as_str());
-        let mut showcase: Vec<String> = details
-            .drop_items
-            .iter()
-            .map(|i| i.logical_name.clone())
-            .collect();
-        showcase.extend(showcase_extras);
-
-        let template_id = if let Some(pool) = &pool {
-            db::dungeon::upsert_global_template(
-                pool,
-                &dungeon.name,
-                &dungeon.display_name,
-                portal_emoji,
-                None,
-                false,
-                &showcase,
-                dungeon.portal_img_url.as_deref(),
-            )
-            .await?
-        } else {
-            info!(
-                "[dry-run] would upsert dungeon_template name={} display=\"{}\" portal={:?} showcase={:?}",
-                dungeon.name, dungeon.display_name, portal_emoji, showcase
-            );
-            summary.would_upsert_template += 1;
-            // Sentinel template id — no reactions will be inserted in dry-run.
-            0
-        };
-
-        // Seed a basic interest reaction and key reaction. Filtered through
-        // curation so the user's "only keep `interest`" decision doesn't get
-        // resurrected by the next sync.
-        let want_interest = curation.should_keep_reaction(&dungeon.name, "interest");
-        let want_key = curation.should_keep_reaction(&dungeon.name, "key");
-
-        if let Some(pool) = &pool {
-            if want_interest {
-                db::dungeon::upsert_reaction(
-                    pool,
-                    template_id,
-                    "interest",
-                    "Reacts",
-                    "✅",
-                    1,
-                    false,
-                    0,
-                )
-                .await?;
-            }
-
-            if want_key {
-                if let Some(key_name) = &key_emoji_name {
-                    db::dungeon::upsert_reaction(
-                        pool,
-                        template_id,
-                        "key",
-                        "Key",
-                        key_name,
-                        1,
-                        true,
-                        1,
-                    )
-                    .await?;
-                }
-            }
-        } else {
-            if want_interest {
-                info!(
-                    "[dry-run] would upsert reaction template={} key=interest label=\"Reacts\" emoji=\"✅\"",
-                    dungeon.name
-                );
-                summary.would_upsert_reaction += 1;
-            }
-            if want_key {
-                if let Some(key_name) = &key_emoji_name {
-                    info!(
-                        "[dry-run] would upsert reaction template={} key=key label=\"Key\" emoji={key_name} confirm=true",
-                        dungeon.name
-                    );
-                    summary.would_upsert_reaction += 1;
-                }
-            }
-        }
-
-        snapshot.dungeons.push(snap_dungeon);
+        dump.dungeons.push(dump_dungeon);
     }
 
     if !dry_run {
-        snapshot.save()?;
-        info!("wrote wiki snapshot → data/wiki-snapshot.json");
+        dump.save()?;
+        info!("wrote wiki dump → data/wiki_dump.json");
     } else {
-        info!("[dry-run] would write data/wiki-snapshot.json ({} dungeons)", snapshot.dungeons.len());
+        info!(
+            "[dry-run] would write data/wiki_dump.json ({} dungeons)",
+            dump.dungeons.len()
+        );
     }
 
     if dry_run {
         info!(
-            "[dry-run] summary: {} existing emojis reused, {} new uploads skipped, {} bot_emoji rows skipped, {} dungeon_templates skipped, {} dungeon_reactions skipped",
+            "[dry-run] summary: {} existing emojis reused, {} new uploads skipped, {} bot_emoji rows skipped",
             summary.existing_reused,
             summary.would_upload,
             summary.would_upsert_emoji,
-            summary.would_upsert_template,
-            summary.would_upsert_reaction,
         );
     }
 
