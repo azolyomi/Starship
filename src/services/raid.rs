@@ -39,7 +39,6 @@ pub async fn start_headcount(
     let reactions_list = db::dungeon::get_reactions(pool, template.id).await?;
     let emoji_map = db::emoji::get_all_as_map(pool).await?;
     let bag_tiers = db::loot::list_bag_tiers(pool).await?;
-    let threshold = db::loot::get_threshold(pool, guild_id).await?;
 
     let (embed, components) = embeds::headcount::build(
         hc.id,
@@ -48,13 +47,14 @@ pub async fn start_headcount(
         &emoji_map,
         leader_id as u64,
         &bag_tiers,
-        &threshold,
     );
 
     let mut create = serenity::CreateMessage::new()
         .add_embed(embed)
         .components(components);
-    if let Some(role_id) = template.notification_role_id {
+    if let Some(role_id) =
+        db::dungeon::get_notification_role(pool, guild_id, &template.name).await?
+    {
         create = create.content(format!("<@&{role_id}>"));
     }
 
@@ -62,24 +62,27 @@ pub async fn start_headcount(
     let msg = channel.send_message(serenity_ctx, create).await?;
     db::headcount::set_message_id(pool, hc.id, msg.id.get() as i64).await?;
 
-    attach_signup_reactions(
+    let resolved: Vec<serenity::ReactionType> = reactions_list
+        .iter()
+        .filter_map(|r| emoji_rt(&r.emoji, &emoji_map))
+        .collect();
+    let failures =
+        reactions::attach_reactions(&serenity_ctx.http, channel, msg.id, &resolved).await;
+    reactions::ping_organizer_on_failure(
         &serenity_ctx.http,
         channel,
-        msg.id,
-        &reactions_list,
-        &emoji_map,
         leader_id as u64,
+        msg.id,
+        &failures,
     )
     .await;
 
     Ok(())
 }
 
-/// Post a run embed to the tier's runs channel, create the DB row, and
-/// attach native reactions for each required item.
-///
-/// Low-level shape (serenity ctx + pool) so it's callable from both the
-/// `/run` slash command and the `hc:<id>:start` component handler.
+/// Post a run embed. Reactions from the source headcount already carry the
+/// signup state, so this does *not* attach native reactions to the run
+/// message — it's a plain announcement with a Control Panel button.
 #[allow(clippy::too_many_arguments)]
 pub async fn start_run(
     serenity_ctx: &serenity::Context,
@@ -161,7 +164,9 @@ pub async fn start_run(
     let mut create = serenity::CreateMessage::new()
         .add_embed(embed)
         .components(components);
-    if let Some(role_id) = template.notification_role_id {
+    if let Some(role_id) =
+        db::dungeon::get_notification_role(pool, guild_id, &template.name).await?
+    {
         create = create.content(format!("<@&{role_id}>"));
     }
 
@@ -169,43 +174,8 @@ pub async fn start_run(
     let msg = channel.send_message(serenity_ctx, create).await?;
     db::run::set_message_id(pool, run.id, msg.id.get() as i64).await?;
 
-    attach_signup_reactions(
-        &serenity_ctx.http,
-        channel,
-        msg.id,
-        &reactions_list,
-        &emoji_map,
-        leader_user_id as u64,
-    )
-    .await;
-
     Ok(Run {
         message_id: msg.id.get() as i64,
         ..run
     })
-}
-
-/// Resolve each `DungeonReaction` to a `ReactionType`, attach it via the
-/// retry helper, and ping the organizer with a summary of any that failed
-/// after all retries. Reactions with no resolvable emoji (logical name
-/// not yet synced) are silently skipped — the next `sync-wiki` will fix
-/// them on the next raid, and we don't want to block the raid posting
-/// just because one icon is missing.
-async fn attach_signup_reactions(
-    http: &serenity::Http,
-    channel_id: serenity::ChannelId,
-    message_id: serenity::MessageId,
-    reactions_list: &[crate::db::models::DungeonReaction],
-    emoji_map: &std::collections::HashMap<String, crate::db::models::BotEmoji>,
-    organizer_id: u64,
-) {
-    let resolved: Vec<serenity::ReactionType> = reactions_list
-        .iter()
-        .filter_map(|r| emoji_rt(&r.emoji, emoji_map))
-        .collect();
-
-    let failures =
-        reactions::attach_reactions(http, channel_id, message_id, &resolved).await;
-    reactions::ping_organizer_on_failure(http, channel_id, organizer_id, message_id, &failures)
-        .await;
 }

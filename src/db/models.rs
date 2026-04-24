@@ -36,7 +36,6 @@ pub struct DungeonTemplate {
     pub thumbnail_url: Option<String>,
     pub image_url: Option<String>,
     pub requires_vc: bool,
-    pub notification_role_id: Option<i64>,
     pub showcase_emoji: Vec<String>,
     pub created_at: DateTime<Utc>,
 }

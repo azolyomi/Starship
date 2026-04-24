@@ -74,10 +74,11 @@ async fn self_service_picker(ctx: BotContext<'_>) -> Result<(), BotError> {
     let guild_id = ctx.guild_id().unwrap().get() as i64;
     let pool = &ctx.data().db;
 
+    let bindings = db::dungeon::list_notification_roles(pool, guild_id).await?;
     let dungeons: Vec<DungeonTemplate> = db::dungeon::list_for_guild(pool, guild_id)
         .await?
         .into_iter()
-        .filter(|d| d.notification_role_id.is_some())
+        .filter(|d| bindings.contains_key(&d.name))
         .collect();
 
     if dungeons.is_empty() {
@@ -99,8 +100,9 @@ async fn self_service_picker(ctx: BotContext<'_>) -> Result<(), BotError> {
     let mut desired: HashSet<i32> = dungeons
         .iter()
         .filter(|d| {
-            d.notification_role_id
-                .map(|r| current_role_ids.contains(&(r as u64)))
+            bindings
+                .get(&d.name)
+                .map(|r| current_role_ids.contains(&(*r as u64)))
                 .unwrap_or(false)
         })
         .map(|d| d.id)
@@ -298,18 +300,20 @@ async fn apply_subscription_diff(
     let http = ctx.http();
     let guild_id = ctx.guild_id().unwrap();
     let user_id = ctx.author().id;
+    let bindings =
+        db::dungeon::list_notification_roles(&ctx.data().db, guild_id.get() as i64).await?;
 
     // Role IDs in Starship's "managed" set (only these are touched — unrelated
     // roles the user holds stay untouched).
     let managed_roles: HashSet<u64> = dungeons
         .iter()
-        .filter_map(|d| d.notification_role_id.map(|r| r as u64))
+        .filter_map(|d| bindings.get(&d.name).map(|r| *r as u64))
         .collect();
 
     let desired_roles: HashSet<u64> = dungeons
         .iter()
         .filter(|d| desired.contains(&d.id))
-        .filter_map(|d| d.notification_role_id.map(|r| r as u64))
+        .filter_map(|d| bindings.get(&d.name).map(|r| *r as u64))
         .collect();
 
     // Fetch fresh member state so we diff against truth, not the
@@ -421,7 +425,7 @@ pub async fn set_(
         return Ok(());
     };
 
-    db::dungeon::set_notification_role(pool, guild_id, template.id, Some(role.id.get() as i64))
+    db::dungeon::set_notification_role(pool, guild_id, &template.name, Some(role.id.get() as i64))
         .await?;
 
     ctx.send(ephemeral(format!(
@@ -451,7 +455,7 @@ pub async fn unset(
         return Ok(());
     };
 
-    db::dungeon::set_notification_role(pool, guild_id, template.id, None).await?;
+    db::dungeon::set_notification_role(pool, guild_id, &template.name, None).await?;
 
     ctx.send(ephemeral(format!(
         "Cleared the notification role for **{}**.",
@@ -509,7 +513,7 @@ pub async fn create(
         }
     };
 
-    db::dungeon::set_notification_role(pool, guild_id, template.id, Some(role_id.get() as i64))
+    db::dungeon::set_notification_role(pool, guild_id, &template.name, Some(role_id.get() as i64))
         .await?;
 
     ctx.send(ephemeral(format!(

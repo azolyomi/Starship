@@ -836,15 +836,17 @@ fn extract_drops_section(html: &str) -> Option<String> {
     let lower = html.to_lowercase();
 
     // Find the earliest `<hN>` (N in 1..=4) whose inner text contains one
-    // of our drops-section names.
-    let start = find_heading_text_offset(&lower, DROP_SECTION_HEADINGS)?;
+    // of our drops-section names. Track the level so we stop at the next
+    // heading of *equal or higher* level — subheadings inside the drops
+    // section (e.g. per-boss drop tables on Cultist Hideout) must be
+    // included, not used as terminators.
+    let (start, level) = find_heading_with_level(&lower, DROP_SECTION_HEADINGS)?;
 
-    // End at the next heading of any level. We only need to get *out* of
-    // the drops table before whatever comes next.
     let tail = &lower[start + 1..];
     let mut next_heading: Option<usize> = None;
-    for tag in &["<h1", "<h2", "<h3", "<h4"] {
-        if let Some(rel) = tail.find(tag) {
+    for lvl in 1..=level {
+        let tag = format!("<h{lvl}");
+        if let Some(rel) = tail.find(&tag) {
             next_heading = Some(match next_heading {
                 Some(x) => x.min(rel),
                 None => rel,
@@ -858,15 +860,17 @@ fn extract_drops_section(html: &str) -> Option<String> {
     })
 }
 
-/// Scan every `<hN ...>...</hN>` (N in 1..=4) and return the byte offset of
-/// the first whose inner text contains any of `needles_lower` (already
-/// lowercased). Used for flexible drop-section detection where the exact
-/// heading text varies per dungeon page.
-fn find_heading_text_offset(haystack_lower: &str, needles_lower: &[&str]) -> Option<usize> {
-    for tag in &["<h1", "<h2", "<h3", "<h4"] {
-        let close_tag = format!("</{}>", &tag[1..]);
+/// Like `find_heading_text_offset` but also returns the heading level
+/// (1..=4) so callers can scope the section end to equal-or-higher headings.
+fn find_heading_with_level(
+    haystack_lower: &str,
+    needles_lower: &[&str],
+) -> Option<(usize, u32)> {
+    for lvl in 1u32..=4 {
+        let tag = format!("<h{lvl}");
+        let close_tag = format!("</h{lvl}>");
         let mut cursor = 0;
-        while let Some(rel) = haystack_lower[cursor..].find(tag) {
+        while let Some(rel) = haystack_lower[cursor..].find(&tag) {
             let open_start = cursor + rel;
             let after_open = match haystack_lower[open_start..].find('>') {
                 Some(e) => open_start + e + 1,
@@ -878,7 +882,7 @@ fn find_heading_text_offset(haystack_lower: &str, needles_lower: &[&str]) -> Opt
             };
             let inner = &haystack_lower[after_open..after_open + close_rel];
             if needles_lower.iter().any(|n| inner.contains(n)) {
-                return Some(open_start);
+                return Some((open_start, lvl));
             }
             cursor = after_open + close_rel + close_tag.len();
         }
@@ -943,18 +947,26 @@ async fn scrape_item_page(client: &Client, item_path: &str) -> Result<ItemBagInf
         }
     }
 
-    // Pass 2 — find the shiny sprite. RealmEye renders it inside the
-    // item's top-of-page sprite table as `<img alt="<Name> (Shiny)">`. The
-    // shiny projectile image (alt starts with "Shiny " and ends in
-    // "Projectile") is explicitly excluded so we capture the sprite, not
-    // the bullet.
+    // Pass 2 — find the shiny sprite. RealmEye has used a couple of
+    // conventions for alt text across recent redesigns: `<Name> (Shiny)`
+    // on older pages, `Shiny <Name>` on some newer ones, and occasionally
+    // bare `Shiny` on sprite-sheet cells. Accept all of them, but skip
+    // projectile/bullet cells and obvious non-sprite UI chrome.
     let mut shiny_image_url: Option<String> = None;
     for img in doc.select(&img_sel) {
         let alt = img.value().attr("alt").unwrap_or("");
-        if !alt.contains("(Shiny)") {
+        let alt_lower = alt.to_lowercase();
+        if !alt_lower.contains("shiny") {
             continue;
         }
-        if alt.to_lowercase().contains("projectile") {
+        // Skip projectile/bullet sprites and bag/icon UI chrome that also
+        // happen to have "shiny" in their alt text.
+        if alt_lower.contains("projectile")
+            || alt_lower.contains("bullet")
+            || alt_lower.contains("fragment")
+            || alt_lower.contains(" bag")
+            || alt_lower.contains("icon")
+        {
             continue;
         }
         shiny_image_url = img.value().attr("src").map(absolute_url);
@@ -1021,7 +1033,27 @@ fn slug_from_display(name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{keep_dungeon_sections, slug_from_display};
+    use super::{extract_drops_section, keep_dungeon_sections, slug_from_display};
+
+    #[test]
+    fn drops_section_preserves_subsection_tables() {
+        // Cultist Hideout-shaped layout: an h2 "Drops of Interest" followed
+        // by an h3 boss subheading whose drop table must stay inside the
+        // returned slice. Prior to tracking the heading level, the h3
+        // terminated the section and we lost the boss drops.
+        let html = "\
+            <h2 id=\"drops\">Drops of Interest</h2>\
+            <table class=\"table-striped\"><tr><td>NORMAL</td></tr></table>\
+            <h3>Malus</h3>\
+            <table class=\"table-striped\"><tr><td>BOSS</td></tr></table>\
+            <h2 id=\"history\">History</h2>\
+            <p>log</p>\
+        ";
+        let extracted = extract_drops_section(html).expect("drops found");
+        assert!(extracted.contains("NORMAL"), "normal drops missing: {extracted}");
+        assert!(extracted.contains("BOSS"), "boss drops missing: {extracted}");
+        assert!(!extracted.contains("log"), "history leaked: {extracted}");
+    }
 
     #[test]
     fn slug_strips_straight_apostrophe() {

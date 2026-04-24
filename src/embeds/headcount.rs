@@ -4,7 +4,7 @@ use poise::serenity_prelude as serenity;
 use serenity::{ButtonStyle, CreateActionRow, CreateButton, CreateEmbed, EmojiId, ReactionType};
 
 use crate::db::models::{BagTier, BotEmoji, DungeonReaction, DungeonTemplate};
-use crate::embeds::build_loot_fields;
+use crate::embeds::build_loot_fields_all;
 
 /// A reaction's `emoji` field is normally a logical name that maps to a
 /// custom `bot_emoji` row, but some built-ins (notably the "Reacts" interest
@@ -56,7 +56,6 @@ pub fn build(
     emoji_map: &HashMap<String, BotEmoji>,
     leader_id: u64,
     bag_tiers: &[BagTier],
-    threshold: &str,
 ) -> (CreateEmbed, Vec<CreateActionRow>) {
     let color = template.color.unwrap_or(0x5865F2) as u32;
 
@@ -89,11 +88,13 @@ pub fn build(
 
     let description = format!("{base_desc}\n\nLeader: <@{leader_id}>{required_line}");
 
-    let fields = build_loot_fields(
+    // Headcounts show every classified drop — the signup decision happens
+    // here, so raiders want the full loot picture regardless of the guild's
+    // run-view threshold.
+    let fields = build_loot_fields_all(
         &template.showcase_emoji,
         emoji_map,
         bag_tiers,
-        threshold,
     );
 
     let mut embed = CreateEmbed::default()

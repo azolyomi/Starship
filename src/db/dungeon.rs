@@ -10,7 +10,7 @@ pub async fn list_for_guild(pool: &PgPool, guild_id: i64) -> Result<Vec<DungeonT
         SELECT DISTINCT ON (name)
             id, guild_id, name, display_name, emoji, color,
             message_title, message_description, thumbnail_url, image_url,
-            requires_vc, notification_role_id, showcase_emoji, created_at
+            requires_vc, showcase_emoji, created_at
         FROM dungeon_templates
         WHERE guild_id = $1 OR guild_id IS NULL
         ORDER BY name, guild_id NULLS LAST
@@ -32,7 +32,7 @@ pub async fn get_by_name(
         r#"
         SELECT id, guild_id, name, display_name, emoji, color,
                message_title, message_description, thumbnail_url, image_url,
-               requires_vc, notification_role_id, showcase_emoji, created_at
+               requires_vc, showcase_emoji, created_at
         FROM dungeon_templates
         WHERE name = $1 AND (guild_id = $2 OR guild_id IS NULL)
         ORDER BY guild_id NULLS LAST
@@ -52,7 +52,7 @@ pub async fn get_by_id(pool: &PgPool, id: i32) -> Result<Option<DungeonTemplate>
         r#"
         SELECT id, guild_id, name, display_name, emoji, color,
                message_title, message_description, thumbnail_url, image_url,
-               requires_vc, notification_role_id, showcase_emoji, created_at
+               requires_vc, showcase_emoji, created_at
         FROM dungeon_templates WHERE id = $1
         "#,
     )
@@ -263,65 +263,73 @@ pub async fn delete_reactions_not_in(
 
 /// Bind (or clear) a notification role for a dungeon in a specific guild.
 ///
-/// Returns the `id` of the dungeon_templates row that now carries the role
-/// binding — either the existing guild-specific override, or a freshly
-/// upserted guild-specific copy of a global template.
-///
-/// Bindings must be guild-scoped: a global template row (`guild_id IS NULL`)
-/// would leak a role ID across every guild that uses it. So when the
-/// currently-visible template for this guild is global, we clone the
-/// content into a guild-specific row and set the notification_role_id there.
-/// `list_for_guild` already prefers guild-specific rows over globals, so the
-/// clone becomes the effective template without any other plumbing.
+/// Writes to `dungeon_notification_roles` keyed by (guild_id, dungeon name)
+/// so the binding is decoupled from the template row. No cloning, no
+/// shadowing — globals stay authoritative for reactions and display.
 pub async fn set_notification_role(
     pool: &PgPool,
     guild_id: i64,
-    dungeon_template_id: i32,
+    dungeon_name: &str,
     role_id: Option<i64>,
-) -> Result<i32> {
-    let current = get_by_id(pool, dungeon_template_id)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("dungeon template {dungeon_template_id} not found"))?;
-
-    if current.guild_id == Some(guild_id) {
-        sqlx::query(
-            "UPDATE dungeon_templates SET notification_role_id = $2 WHERE id = $1",
-        )
-        .bind(dungeon_template_id)
-        .bind(role_id)
-        .execute(pool)
-        .await?;
-        return Ok(dungeon_template_id);
+) -> Result<()> {
+    match role_id {
+        Some(role) => {
+            sqlx::query(
+                r#"
+                INSERT INTO dungeon_notification_roles (guild_id, dungeon_name, role_id)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (guild_id, dungeon_name)
+                DO UPDATE SET role_id = EXCLUDED.role_id
+                "#,
+            )
+            .bind(guild_id)
+            .bind(dungeon_name)
+            .bind(role)
+            .execute(pool)
+            .await?;
+        }
+        None => {
+            sqlx::query(
+                "DELETE FROM dungeon_notification_roles WHERE guild_id = $1 AND dungeon_name = $2",
+            )
+            .bind(guild_id)
+            .bind(dungeon_name)
+            .execute(pool)
+            .await?;
+        }
     }
+    Ok(())
+}
 
-    // Global (or different-guild) template: upsert a guild-specific copy.
-    let new_id: i32 = sqlx::query_scalar(
-        r#"
-        INSERT INTO dungeon_templates
-            (guild_id, name, display_name, emoji, color,
-             message_title, message_description, requires_vc,
-             notification_role_id, showcase_emoji, thumbnail_url, image_url)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-        ON CONFLICT ((COALESCE(guild_id, 0)), name)
-        DO UPDATE SET notification_role_id = EXCLUDED.notification_role_id
-        RETURNING id
-        "#,
+/// Look up the notification role ID bound to a dungeon in this guild, if any.
+pub async fn get_notification_role(
+    pool: &PgPool,
+    guild_id: i64,
+    dungeon_name: &str,
+) -> Result<Option<i64>> {
+    let row: Option<(i64,)> = sqlx::query_as(
+        "SELECT role_id FROM dungeon_notification_roles WHERE guild_id = $1 AND dungeon_name = $2",
     )
     .bind(guild_id)
-    .bind(&current.name)
-    .bind(&current.display_name)
-    .bind(current.emoji.as_deref())
-    .bind(current.color)
-    .bind(current.message_title.as_deref())
-    .bind(current.message_description.as_deref())
-    .bind(current.requires_vc)
-    .bind(role_id)
-    .bind(&current.showcase_emoji)
-    .bind(current.thumbnail_url.as_deref())
-    .bind(current.image_url.as_deref())
-    .fetch_one(pool)
+    .bind(dungeon_name)
+    .fetch_optional(pool)
     .await?;
-    Ok(new_id)
+    Ok(row.map(|(r,)| r))
+}
+
+/// Every (dungeon_name → role_id) binding in this guild. Used by the
+/// `/pingroles` self-service picker to render the subscription list.
+pub async fn list_notification_roles(
+    pool: &PgPool,
+    guild_id: i64,
+) -> Result<std::collections::HashMap<String, i64>> {
+    let rows: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT dungeon_name, role_id FROM dungeon_notification_roles WHERE guild_id = $1",
+    )
+    .bind(guild_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().collect())
 }
 
 /// Upsert a reaction for a template (used by sync-wiki).

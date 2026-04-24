@@ -313,6 +313,11 @@ fn merge(dump: &WikiDump, overrides: &Overrides) -> Result<Vec<Effective>> {
             if ovr.extends.is_none() {
                 eff.apply(ovr);
                 seen_override_names.insert(dungeon.name.clone());
+                info!(
+                    dungeon = %dungeon.name,
+                    reactions = eff.reactions.len(),
+                    "applied patch override"
+                );
             }
         }
         by_name.insert(eff.name.clone(), eff);

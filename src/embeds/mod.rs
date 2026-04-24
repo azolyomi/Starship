@@ -43,7 +43,25 @@ pub fn build_loot_fields(
         Some(t) => t.sort_order,
         None => return Vec::new(),
     };
+    build_loot_fields_from(showcase_emoji, emoji_map, bag_tiers, Some(threshold_order))
+}
 
+/// Like `build_loot_fields` but ignores any tier threshold — used for the
+/// headcount view where raiders want the full drop list before committing.
+pub fn build_loot_fields_all(
+    showcase_emoji: &[String],
+    emoji_map: &HashMap<String, BotEmoji>,
+    bag_tiers: &[BagTier],
+) -> Vec<(String, String, bool)> {
+    build_loot_fields_from(showcase_emoji, emoji_map, bag_tiers, None)
+}
+
+fn build_loot_fields_from(
+    showcase_emoji: &[String],
+    emoji_map: &HashMap<String, BotEmoji>,
+    bag_tiers: &[BagTier],
+    threshold_order: Option<i32>,
+) -> Vec<(String, String, bool)> {
     let mut by_tier: HashMap<&str, Vec<&BotEmoji>> = HashMap::new();
     for logical in showcase_emoji {
         let Some(e) = emoji_map.get(logical) else { continue };
@@ -56,8 +74,10 @@ pub fn build_loot_fields(
 
     let mut fields = Vec::new();
     for tier in sorted {
-        if tier.sort_order < threshold_order {
-            continue;
+        if let Some(min) = threshold_order {
+            if tier.sort_order < min {
+                continue;
+            }
         }
         let Some(drops) = by_tier.get(tier.name.as_str()) else { continue };
         if drops.is_empty() {
@@ -65,7 +85,7 @@ pub fn build_loot_fields(
         }
         let rendered: Vec<String> = drops.iter().map(|e| render_bot_emoji(e)).collect();
         let bag_icon = resolve_bag_emoji(tier, emoji_map);
-        let field_name = format!("{bag_icon} {} Bag", tier_display_name(&tier.name));
+        let field_name = format!("{bag_icon} {} Bags", tier_display_name(&tier.name));
         fields.push((field_name, rendered.join(" "), false));
     }
 
