@@ -70,17 +70,21 @@ const EXCLUDED_SLUGS: &[&str] = &[
     "wine_cellar",
 ];
 
-/// Section headings on /wiki/dungeons whose tables we ignore. Only the
-/// "Regular Dungeons" heading's tables are consumed.
+/// h2 section headings on /wiki/dungeons whose tables we skip. Matched as a
+/// case-insensitive substring against the lowercased inner text of each
+/// `<h2>` on the page. RealmEye uses a curly apostrophe in "Oryx's Castle"
+/// so both variants are listed.
+///
+/// Included sections (everything not in this list): Realm Dungeons, Realm
+/// Event Dungeons, Advanced Dungeons, Wormholes, Heroic Dungeons.
 const EXCLUDED_SECTIONS: &[&str] = &[
+    "contents",
+    "oryx\u{2019}s castle",
+    "oryx's castle",
     "special event dungeons",
-    "special event",
     "other dungeons",
-    "mini dungeons",
-    "realm dungeons", // some wiki revisions name it this
+    "history",
 ];
-
-const KEEP_SECTIONS: &[&str] = &["regular dungeons", "dungeons"];
 
 /// Case-insensitive text matches (section heading name contains) for the
 /// drops-of-interest section on a dungeon page. The wiki isn't consistent —
@@ -665,14 +669,13 @@ async fn scrape_dungeon_list(client: &Client) -> Result<Vec<DungeonEntry>> {
         .text()
         .await?;
 
-    // Slice out just the "Regular Dungeons" section of the page. Special
-    // Event + Other Dungeons sections contain content we don't want to
-    // sync (event-gated dungeons, mini-dungeons, etc.), so ignore them
-    // entirely rather than filtering row-by-row.
-    let section_html = extract_regular_dungeons_section(&html).unwrap_or_else(|| {
-        warn!("could not locate 'Regular Dungeons' heading — falling back to full page");
-        html.clone()
-    });
+    // RealmEye splits dungeons across several `<h2>` sections (Realm
+    // Dungeons, Realm Event Dungeons, Advanced Dungeons, Oryx's Castle,
+    // Wormholes, Heroic Dungeons, Special Event Dungeons, Other Dungeons).
+    // We drop the sections we don't want (EXCLUDED_SECTIONS) and keep the
+    // rest. Dungeon-level EXCLUDED_SLUGS below is a second safety net for
+    // individual dungeons we don't want even from kept sections.
+    let section_html = keep_dungeon_sections(&html);
 
     let doc = Html::parse_fragment(&section_html);
     let row_sel = Selector::parse(SEL_INDEX_ROWS).unwrap();
@@ -744,55 +747,74 @@ async fn scrape_dungeon_list(client: &Client) -> Result<Vec<DungeonEntry>> {
     Ok(dungeons)
 }
 
-/// Slice the HTML between the "Regular Dungeons" heading and the next
-/// section heading we want to exclude. Returns `None` if the heading can't
-/// be located (caller falls back to the full page and logs a warning).
-fn extract_regular_dungeons_section(html: &str) -> Option<String> {
+/// Walk every `<h2>` on the dungeons page, partition the HTML into
+/// per-section ranges, and concatenate only the ranges whose heading text
+/// isn't in `EXCLUDED_SECTIONS`.
+///
+/// Walking top-level `<h2>`s rather than searching for a single "keep"
+/// heading is deliberate: RealmEye doesn't have a "Regular Dungeons"
+/// umbrella heading — dungeons are split across Realm / Event / Advanced /
+/// Wormholes / Heroic sections — so we identify each section and drop the
+/// ones we don't want.
+fn keep_dungeon_sections(html: &str) -> String {
     let lower = html.to_lowercase();
+    let sections = find_h2_sections(&lower);
 
-    // Start at the first heading whose text matches one of KEEP_SECTIONS.
-    let start = KEEP_SECTIONS
-        .iter()
-        .filter_map(|needle| find_heading_offset(&lower, needle))
-        .min()?;
-
-    // End at the next heading whose text matches any EXCLUDED_SECTIONS, or
-    // end-of-document.
-    let tail = &lower[start + 1..];
-    let end_rel = EXCLUDED_SECTIONS
-        .iter()
-        .filter_map(|needle| find_heading_offset(tail, needle))
-        .min();
-
-    match end_rel {
-        Some(rel) => Some(html[start..start + 1 + rel].to_string()),
-        None => Some(html[start..].to_string()),
+    if sections.is_empty() {
+        // No headings parsed — return the raw HTML so the caller still
+        // gets *something* to work with. Better a noisy over-scrape than
+        // an empty result.
+        return html.to_string();
     }
+
+    let mut out = String::new();
+    for (i, sec) in sections.iter().enumerate() {
+        let end = sections
+            .get(i + 1)
+            .map(|next| next.start)
+            .unwrap_or(html.len());
+        if is_excluded_section(&sec.text_lower) {
+            continue;
+        }
+        out.push_str(&html[sec.start..end]);
+    }
+    out
 }
 
-/// Find the byte offset of the first `<hN>` tag whose inner text contains
-/// `needle_lower` (case-insensitive — `haystack_lower` is already lowercased).
-fn find_heading_offset(haystack_lower: &str, needle_lower: &str) -> Option<usize> {
-    // Walk each heading marker (h1-h4 plausible; RealmEye uses h2/h3).
-    for tag in &["<h1", "<h2", "<h3", "<h4"] {
-        let mut cursor = 0;
-        while let Some(rel) = haystack_lower[cursor..].find(tag) {
-            let start = cursor + rel;
-            // Scan to the closing "</hN>" to bound the heading's text.
-            let rest = &haystack_lower[start..];
-            let end_tag = format!("</{}>", &tag[1..]);
-            if let Some(close_rel) = rest.find(&end_tag) {
-                let heading_text = &rest[..close_rel];
-                if heading_text.contains(needle_lower) {
-                    return Some(start);
-                }
-                cursor = start + close_rel + end_tag.len();
-            } else {
-                break;
-            }
-        }
+#[derive(Debug)]
+struct H2Section {
+    start: usize,
+    text_lower: String,
+}
+
+/// Walk all `<h2 ...>...</h2>` occurrences and return their start offsets
+/// plus inner text (lowercased). Malformed pairs are skipped.
+fn find_h2_sections(haystack_lower: &str) -> Vec<H2Section> {
+    let mut out = Vec::new();
+    let mut cursor = 0;
+    while let Some(rel) = haystack_lower[cursor..].find("<h2") {
+        let start = cursor + rel;
+        // Advance past the opening tag (`<h2 ...>`).
+        let after_open = match haystack_lower[start..].find('>') {
+            Some(end) => start + end + 1,
+            None => break,
+        };
+        // Find the matching closing tag.
+        let close_rel = match haystack_lower[after_open..].find("</h2>") {
+            Some(e) => e,
+            None => break,
+        };
+        let text_lower = haystack_lower[after_open..after_open + close_rel].to_string();
+        out.push(H2Section { start, text_lower });
+        cursor = after_open + close_rel + "</h2>".len();
     }
-    None
+    out
+}
+
+fn is_excluded_section(text_lower: &str) -> bool {
+    EXCLUDED_SECTIONS
+        .iter()
+        .any(|needle| text_lower.contains(needle))
 }
 
 async fn scrape_dungeon_page(client: &Client, wiki_path: &str) -> Result<DungeonDetails> {
@@ -875,15 +897,12 @@ async fn scrape_dungeon_page(client: &Client, wiki_path: &str) -> Result<Dungeon
 fn extract_drops_section(html: &str) -> Option<String> {
     let lower = html.to_lowercase();
 
-    // Find the earliest heading that matches any of our drops-section names.
-    let start = DROP_SECTION_HEADINGS
-        .iter()
-        .filter_map(|needle| find_heading_offset(&lower, needle))
-        .min()?;
+    // Find the earliest `<hN>` (N in 1..=4) whose inner text contains one
+    // of our drops-section names.
+    let start = find_heading_text_offset(&lower, DROP_SECTION_HEADINGS)?;
 
-    // End at the next heading of any recognised level. We treat all
-    // h1-h4 equivalently — Phase 6 only needs to get *out* of the drops
-    // table before the next unrelated table starts.
+    // End at the next heading of any level. We only need to get *out* of
+    // the drops table before whatever comes next.
     let tail = &lower[start + 1..];
     let mut next_heading: Option<usize> = None;
     for tag in &["<h1", "<h2", "<h3", "<h4"] {
@@ -899,6 +918,34 @@ fn extract_drops_section(html: &str) -> Option<String> {
         Some(rel) => html[start..start + 1 + rel].to_string(),
         None => html[start..].to_string(),
     })
+}
+
+/// Scan every `<hN ...>...</hN>` (N in 1..=4) and return the byte offset of
+/// the first whose inner text contains any of `needles_lower` (already
+/// lowercased). Used for flexible drop-section detection where the exact
+/// heading text varies per dungeon page.
+fn find_heading_text_offset(haystack_lower: &str, needles_lower: &[&str]) -> Option<usize> {
+    for tag in &["<h1", "<h2", "<h3", "<h4"] {
+        let close_tag = format!("</{}>", &tag[1..]);
+        let mut cursor = 0;
+        while let Some(rel) = haystack_lower[cursor..].find(tag) {
+            let open_start = cursor + rel;
+            let after_open = match haystack_lower[open_start..].find('>') {
+                Some(e) => open_start + e + 1,
+                None => break,
+            };
+            let close_rel = match haystack_lower[after_open..].find(&close_tag) {
+                Some(e) => e,
+                None => break,
+            };
+            let inner = &haystack_lower[after_open..after_open + close_rel];
+            if needles_lower.iter().any(|n| inner.contains(n)) {
+                return Some(open_start);
+            }
+            cursor = after_open + close_rel + close_tag.len();
+        }
+    }
+    None
 }
 
 /// Fetch an item's RealmEye wiki page and pull the "Loot Bag" classification
@@ -1012,7 +1059,7 @@ fn slug_from_display(name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::slug_from_display;
+    use super::{keep_dungeon_sections, slug_from_display};
 
     #[test]
     fn slug_strips_straight_apostrophe() {
@@ -1034,6 +1081,41 @@ mod tests {
     #[test]
     fn slug_collapses_multiple_separators() {
         assert_eq!(slug_from_display("  Lost   Halls  "), "lost_halls");
+    }
+
+    #[test]
+    fn sections_keep_desired_drop_excluded() {
+        // Mirrors the real RealmEye /wiki/dungeons heading layout as of
+        // 2026-04: a TOC, several keep sections, an Oryx's Castle section
+        // we want to drop, and trailing Special Event / Other / History.
+        // The real page uses a curly apostrophe in "Oryx's Castle" — we
+        // format-insert it so the escape is actually interpreted.
+        let curly = '\u{2019}';
+        let html = format!("\
+            <h2 id=\"contents\">Contents</h2>\
+            <p>TOC</p>\
+            <h2 id=\"realm-dungeons\">Realm Dungeons</h2>\
+            <table class=\"table-striped\"><tr><td>REALM_ROW</td></tr></table>\
+            <h2 id=\"advanced-dungeons\">Advanced Dungeons</h2>\
+            <table class=\"table-striped\"><tr><td>ADVANCED_ROW</td></tr></table>\
+            <h2 id=\"oryx-s-castle\">Oryx{curly}s Castle</h2>\
+            <table class=\"table-striped\"><tr><td>CASTLE_ROW_DROP</td></tr></table>\
+            <h2 id=\"heroic\">Heroic Dungeons</h2>\
+            <table class=\"table-striped\"><tr><td>HEROIC_ROW</td></tr></table>\
+            <h2 id=\"special-event-dungeons\">Special Event Dungeons</h2>\
+            <table class=\"table-striped\"><tr><td>EVENT_ROW_DROP</td></tr></table>\
+            <h2 id=\"other-dungeons\">Other Dungeons</h2>\
+            <table class=\"table-striped\"><tr><td>OTHER_ROW_DROP</td></tr></table>\
+            <h2 id=\"history\">History</h2>\
+            <p>log</p>\
+        ");
+        let kept = keep_dungeon_sections(&html);
+        assert!(kept.contains("REALM_ROW"), "missing REALM: {kept}");
+        assert!(kept.contains("ADVANCED_ROW"), "missing ADVANCED: {kept}");
+        assert!(kept.contains("HEROIC_ROW"), "missing HEROIC: {kept}");
+        assert!(!kept.contains("CASTLE_ROW_DROP"), "castle leaked: {kept}");
+        assert!(!kept.contains("EVENT_ROW_DROP"), "event leaked: {kept}");
+        assert!(!kept.contains("OTHER_ROW_DROP"), "other leaked: {kept}");
     }
 }
 
