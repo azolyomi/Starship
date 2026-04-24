@@ -1,6 +1,6 @@
 {
   "oryxs_sanctuary": {
-    "requires_vc": true,
+    "requires_vc": false,
     "reactions": [
       {
         "name": "interest",
@@ -61,35 +61,6 @@
     "extends": "the_void",
     "display_name": "Fullskip Void",
     "message_title": "Fullskip Void Headcount",
-    "requires_vc": true
-  },
-  "the_shatters": {
-    "requires_vc": true,
-    "reactions": [
-      {
-        "name": "interest",
-        "display_name": "Reacts",
-        "emoji": "✅",
-        "sort_order": 0
-      },
-      {
-        "name": "the_forgotten_crown",
-        "display_name": "The Forgotten Crown",
-        "emoji": "the_forgotten_crown",
-        "sort_order": 1
-      },
-      {
-        "name": "tome_of_the_rites",
-        "display_name": "Tome of the Rites",
-        "emoji": "tome_of_the_rites",
-        "sort_order": 2
-      }
-    ]
-  },
-  "lost_halls": {
-    "requires_vc": true
-  },
-  "cultist_hideout": {
     "requires_vc": true
   }
 }
