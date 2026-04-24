@@ -97,9 +97,12 @@ const DROP_SECTION_HEADINGS: &[&str] = &[
 
 /// Ordered list of bag tier names (matches the bag_tiers lookup table). Used
 /// to classify items from their "Loot Bag" row on RealmEye. When an item
-/// lists multiple bag tiers, we keep the rarest (last match wins).
+/// lists multiple bag tiers, we keep the rarest (last match wins). `shiny`
+/// is appended for completeness but never appears in a "Loot Bag" row —
+/// the scraper tags the shiny *variant* of each item with this tier
+/// separately (see `scrape_item_page` shiny extraction).
 const BAG_TIERS_ORDERED: &[&str] = &[
-    "brown", "pink", "purple", "cyan", "blue", "orange", "red", "white",
+    "brown", "pink", "purple", "cyan", "blue", "orange", "red", "white", "shiny",
 ];
 
 // ---------------------------------------------------------------------------
@@ -134,6 +137,10 @@ struct ItemBagInfo {
     /// Absolute URL of the bag icon image inside the "Loot Bag" row, if any.
     /// Used once per tier to upload the `bag_<tier>` ui emoji.
     bag_image_url: Option<String>,
+    /// Absolute URL of the item's shiny sprite, if the page contains one.
+    /// Shinies are rarer variants that share the item's wiki page — the
+    /// caller uploads them as `<logical>_shiny` with bag_tier='shiny'.
+    shiny_image_url: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -357,7 +364,10 @@ pub async fn run(dry_run: bool, purge: bool) -> Result<()> {
             }
         };
 
-        // Upload drop item emojis.
+        // Upload drop item emojis. Shiny variants uploaded below are
+        // appended here so the dungeon's showcase_emoji list picks them
+        // up alongside their parent drops.
+        let mut showcase_extras: Vec<String> = Vec::new();
         for item in &details.drop_items {
             snap_dungeon.drops.push(SnapshotEmoji {
                 logical_name: item.logical_name.clone(),
@@ -383,7 +393,7 @@ pub async fn run(dry_run: bool, purge: bool) -> Result<()> {
                     if !item_page_cache.contains_key(&item.img_url) {
                         let info = scrape_item_page(&client, path).await.unwrap_or_else(|e| {
                             warn!("item page fetch {path} failed: {e:#}");
-                            ItemBagInfo { tier: None, bag_image_url: None }
+                            ItemBagInfo { tier: None, bag_image_url: None, shiny_image_url: None }
                         });
                         item_page_cache.insert(item.img_url.clone(), info);
                     }
@@ -393,6 +403,7 @@ pub async fn run(dry_run: bool, purge: bool) -> Result<()> {
             };
             let bag_tier = bag_info.and_then(|b| b.tier.clone());
             let bag_image_url = bag_info.and_then(|b| b.bag_image_url.clone());
+            let shiny_image_url = bag_info.and_then(|b| b.shiny_image_url.clone());
 
             // First time we see a bag tier's icon in this run, upload it as
             // the global `bag_<tier>` ui emoji so the renderer can use it.
@@ -488,6 +499,54 @@ pub async fn run(dry_run: bool, purge: bool) -> Result<()> {
                 }
                 Err(e) => warn!("drop emoji {dname}: {e:#}"),
             }
+
+            // If the item page has a shiny sprite, upload it as a
+            // separate emoji tagged with bag_tier='shiny' and append it
+            // to the dungeon's showcase_emoji. Shinies inherit the
+            // parent drop's curation decision (same wiki page, same
+            // "keep this item" intent).
+            if let Some(shiny_url) = shiny_image_url.as_deref() {
+                let shiny_logical = format!("{}_shiny", item.logical_name);
+                let shiny_dname = discord_name(&shiny_logical);
+                match upload_if_new(
+                    &client,
+                    &emoji_api,
+                    &mut existing,
+                    &shiny_dname,
+                    shiny_url,
+                    dry_run,
+                    &mut summary,
+                )
+                .await
+                {
+                    Ok(UploadOutcome::Existing(id, animated))
+                    | Ok(UploadOutcome::Uploaded(id, animated)) => {
+                        if let Some(pool) = &pool {
+                            db::emoji::upsert(
+                                pool,
+                                &shiny_logical,
+                                id as i64,
+                                &shiny_dname,
+                                animated,
+                                None,
+                                Some("drop_shiny"),
+                                Some(shiny_url),
+                                Some("shiny"),
+                            )
+                            .await?;
+                        }
+                        showcase_extras.push(shiny_logical);
+                    }
+                    Ok(UploadOutcome::WouldUpload) => {
+                        info!(
+                            "[dry-run] would upsert bot_emoji name={shiny_logical} category=drop_shiny bag_tier=shiny"
+                        );
+                        summary.would_upsert_emoji += 1;
+                        showcase_extras.push(shiny_logical);
+                    }
+                    Err(e) => warn!("shiny emoji {shiny_dname}: {e:#}"),
+                }
+            }
         }
 
         // Upsert the dungeon template.
@@ -497,11 +556,12 @@ pub async fn run(dry_run: bool, purge: bool) -> Result<()> {
         // per-guild threshold. Built-in templates may still seed an initial
         // set but the scraper's full list is the source of truth.
         let portal_emoji = dungeon.portal_img_url.as_ref().map(|_| portal_emoji_name.as_str());
-        let showcase: Vec<String> = details
+        let mut showcase: Vec<String> = details
             .drop_items
             .iter()
             .map(|i| i.logical_name.clone())
             .collect();
+        showcase.extend(showcase_extras);
 
         let template_id = if let Some(pool) = &pool {
             db::dungeon::upsert_global_template(
@@ -948,8 +1008,9 @@ fn find_heading_text_offset(haystack_lower: &str, needles_lower: &[&str]) -> Opt
 }
 
 /// Fetch an item's RealmEye wiki page and pull the "Loot Bag" classification
-/// plus the bag icon URL out of the stats infobox. Returns both values as
-/// `None` if the item page has no loot-bag row (some items are untiered).
+/// plus the bag icon URL out of the stats infobox. Also looks for the item's
+/// shiny sprite (an `<img alt="... (Shiny)">` anywhere on the page) so the
+/// caller can upload shiny variants as distinct emojis.
 async fn scrape_item_page(client: &Client, item_path: &str) -> Result<ItemBagInfo> {
     let url = format!("{}{}", REALMEYE_BASE, item_path);
     let html = client
@@ -965,44 +1026,67 @@ async fn scrape_item_page(client: &Client, item_path: &str) -> Result<ItemBagInf
     tokio::time::sleep(std::time::Duration::from_millis(250)).await;
 
     let doc = Html::parse_document(&html);
-    // The stats infobox is `table.item`, `table.stats`, or similar class
-    // combinations depending on the template. Cast a wide net and look
-    // inside all <tr> rows for one whose first cell (th or td) contains
-    // "loot bag".
     let row_sel = Selector::parse("table tr").unwrap();
     let img_sel = Selector::parse("img").unwrap();
 
-    for row in doc.select(&row_sel) {
+    // Pass 1 — find the "Loot Bag" row and classify.
+    //
+    // Colour lives in the img alt, not the row text: the RealmEye markup is
+    // `<img alt="Assigned to White Bag" src="…">` with no visible colour
+    // word in the row. Scanning `row.text()` misses every tier because the
+    // visible text is literally just "Loot Bag" from the <th>.
+    let mut tier: Option<&'static str> = None;
+    let mut bag_image_url: Option<String> = None;
+
+    'outer: for row in doc.select(&row_sel) {
         let row_text = row.text().collect::<String>().to_lowercase();
         if !row_text.contains("loot bag") {
             continue;
         }
-        // Classify by picking the bag colour word mentioned in the row.
-        // Multiple colours can be listed (some items drop from several
-        // bag tiers) — keep the rarest (highest sort_order in
-        // BAG_TIERS_ORDERED).
-        let mut tier: Option<&'static str> = None;
-        for candidate in BAG_TIERS_ORDERED {
-            if row_text.contains(&format!("{candidate} bag")) {
-                tier = Some(candidate);
+        for img in row.select(&img_sel) {
+            let alt = img.value().attr("alt").unwrap_or("").to_lowercase();
+            let title = img.value().attr("title").unwrap_or("").to_lowercase();
+            let haystack = format!("{alt} {title}");
+            // Rarest-wins: BAG_TIERS_ORDERED goes low→high, so a later
+            // match overwrites an earlier one when an item drops from
+            // multiple bag tiers.
+            for candidate in BAG_TIERS_ORDERED {
+                if haystack.contains(&format!("{candidate} bag")) {
+                    tier = Some(candidate);
+                }
+            }
+            if tier.is_some() && bag_image_url.is_none() {
+                bag_image_url = img.value().attr("src").map(absolute_url);
+            }
+            if tier.is_some() {
+                break 'outer;
             }
         }
-
-        // The bag icon lives inside the same row — img element whose src
-        // typically points at /s/a/<hash>.png for bag sprites.
-        let bag_image_url = row
-            .select(&img_sel)
-            .next()
-            .and_then(|el| el.value().attr("src"))
-            .map(absolute_url);
-
-        return Ok(ItemBagInfo {
-            tier: tier.map(|s| s.to_string()),
-            bag_image_url,
-        });
     }
 
-    Ok(ItemBagInfo { tier: None, bag_image_url: None })
+    // Pass 2 — find the shiny sprite. RealmEye renders it inside the
+    // item's top-of-page sprite table as `<img alt="<Name> (Shiny)">`. The
+    // shiny projectile image (alt starts with "Shiny " and ends in
+    // "Projectile") is explicitly excluded so we capture the sprite, not
+    // the bullet.
+    let mut shiny_image_url: Option<String> = None;
+    for img in doc.select(&img_sel) {
+        let alt = img.value().attr("alt").unwrap_or("");
+        if !alt.contains("(Shiny)") {
+            continue;
+        }
+        if alt.to_lowercase().contains("projectile") {
+            continue;
+        }
+        shiny_image_url = img.value().attr("src").map(absolute_url);
+        break;
+    }
+
+    Ok(ItemBagInfo {
+        tier: tier.map(|s| s.to_string()),
+        bag_image_url,
+        shiny_image_url,
+    })
 }
 
 // ---------------------------------------------------------------------------

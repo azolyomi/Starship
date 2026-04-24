@@ -990,6 +990,37 @@ Note: the scraper step from the R2 description ("stops filtering
 `showcase_emoji` to white-only; writes every drop") already landed in
 R1 — confirmed in that progress entry.
 
+### 2026-04-24 — R1 hotfix: bag detection + shiny tier
+
+Two issues surfaced after R2 landed and `sync-wiki` was re-run with an
+empty `bot_emoji.bag_tier` histogram: no drops were classifying, and
+shiny variants were missing entirely.
+
+- **Bag detection was broken.** `scrape_item_page` read `row.text()`
+  to classify the "Loot Bag" row, but RealmEye stores the colour in
+  the image's `alt`/`title` attributes
+  (`<img alt="Assigned to White Bag">`). Fixed by iterating the
+  images inside the row and matching colour words against the
+  combined alt+title string.
+- **New `shiny` bag tier** (migration
+  `20260424000003_shiny_bag_tier.sql`): `('shiny', 8, '✨')`, above
+  `white`. No bag-icon exists on RealmEye for shinies; the renderer
+  falls back to the unicode ✨ unless someone uploads a custom
+  `bag_shiny` application emoji later.
+- **Scraper now extracts shiny sprites.** `scrape_item_page` does a
+  second pass for `<img alt="... (Shiny)">` anywhere on the item
+  page (excluding the projectile variant which uses "Shiny … Projectile").
+  When found, `<logical>_shiny` is uploaded as a distinct drop emoji
+  with `category='drop_shiny'`, `bag_tier='shiny'`, and appended to
+  the dungeon's `showcase_emoji`. Shinies inherit their parent's
+  curation decision.
+- `BAG_TIERS_ORDERED` extended with `shiny` at the end for symmetry
+  with the lookup table (unused for Loot-Bag-row classification).
+- No schema change to `bot_emoji`; existing rows backfill on the
+  next upsert via `COALESCE(EXCLUDED.bag_tier, bot_emoji.bag_tier)`.
+- **`cargo build` passes**; migration applied; operator ran
+  `cargo run -- sync-wiki` successfully (wiki-snapshot updated).
+
 ### Credentials still needed from the user
 
 Collected into `.env` when we're ready to boot:
