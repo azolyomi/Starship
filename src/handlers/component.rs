@@ -4,7 +4,7 @@ use serenity::{
     CreateInteractionResponseMessage, EditMessage, MessageId, ReactionType,
 };
 
-use crate::{db, embeds, BotData, BotError};
+use crate::{db, embeds, services, BotData, BotError};
 
 /// Entry point for all component interactions.  Only handles custom_ids
 /// with the `hc:` prefix; all others are silently ignored (e.g. `setup:*`
@@ -16,6 +16,9 @@ pub async fn handle(
 ) -> Result<(), BotError> {
     let id = &mci.data.custom_id;
 
+    if id.starts_with("run:") {
+        return super::run::handle_component(ctx, mci, data).await;
+    }
     if !id.starts_with("hc:") {
         return Ok(());
     }
@@ -281,16 +284,20 @@ async fn handle_start(
         return Ok(());
     }
 
-    db::headcount::set_status(&data.db, hc_id, "converted").await?;
-
     let template = db::dungeon::get_by_id(&data.db, hc.dungeon_template_id)
         .await?
         .ok_or_else(|| format!("template {} not found", hc.dungeon_template_id))?;
-    let emoji_map = db::emoji::get_all_as_map(&data.db).await?;
     let tier = db::tier::get_by_id(&data.db, hc.tier_id)
         .await?
         .ok_or_else(|| format!("tier {} not found", hc.tier_id))?;
 
+    // Pick the run channel: prefer the tier's raid_channel_id; fall back to
+    // the headcount channel so a partially-configured tier still works.
+    let raid_channel_id = tier.raid_channel_id.unwrap_or(hc.channel_id);
+
+    // Respond immediately so the click doesn't time out while we post the
+    // run message. Close the headcount embed in the same response.
+    let emoji_map = db::emoji::get_all_as_map(&data.db).await?;
     let closed_embed = embeds::headcount::build_closed(
         &template,
         &emoji_map,
@@ -298,7 +305,6 @@ async fn handle_start(
         &format!("Run started by <@{}>! Watch for the run message.", hc.leader_user_id),
         false,
     );
-
     mci.create_response(
         ctx,
         CreateInteractionResponse::UpdateMessage(
@@ -309,7 +315,22 @@ async fn handle_start(
     )
     .await?;
 
-    // TODO Phase 5: create the run message here.
+    // Flip the headcount status *before* posting the run: if the message
+    // post fails we still have a non-active headcount, and a retry won't
+    // double-post.
+    db::headcount::set_status(&data.db, hc_id, "converted").await?;
+
+    services::raid::start_run(
+        ctx,
+        &data.db,
+        hc.guild_id,
+        &tier,
+        &template,
+        raid_channel_id,
+        hc.leader_user_id,
+        Some(hc.id),
+    )
+    .await?;
 
     Ok(())
 }

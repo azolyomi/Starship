@@ -4,6 +4,7 @@ pub mod guild;
 pub mod headcount;
 pub mod models;
 pub mod permission;
+pub mod run;
 pub mod tier;
 
 use anyhow::Result;

@@ -720,6 +720,71 @@ Landed:
 Phase 5 prerequisites are now met: the `/headcount` command works end-to-end.
 The `hc:<id>:start` handler has a `// TODO Phase 5` marker where `start_run` will plug in.
 
+### 2026-04-23 — Phase 5 complete
+
+Landed:
+- `src/db/run.rs` — DB layer: `create`, `set_message_id`, `get`, `list_active`,
+  `set_status` (stamps `ended_at` when flipping to `ended`), `set_location`,
+  `set_party`, `set_leader`, `set_voice_channel`; `add_participant`
+  (NULL-safe upsert via `NOT EXISTS` on the COALESCEd unique index),
+  `remove_participant_all`, `list_participants`, `list_user_ids`. Introduces
+  a `Participant` struct (user_id, dungeon_reaction_id, confirmed).
+- `src/db/mod.rs` — exposes `run` module.
+- `src/embeds/run.rs` — `build()` active embed (per-reaction fields with
+  `{count}/{required}`, ✅ for confirmed participants, "Joined" roster) +
+  Join / Leave / Control Panel row + per-confirmation-reaction Confirm
+  buttons; `build_ended()` grey embed preserving the per-item breakdown;
+  `control_panel()` leader-only ephemeral with Set Location / Set Party /
+  Transfer Leader / End Run.
+- `src/services/raid.rs` — `start_run(serenity_ctx, pool, guild_id, tier,
+  template, raid_channel_id, leader_user_id, headcount_id)`. Low-level shape
+  so both `/run` and the `hc:<id>:start` handler can call it. Migrates
+  headcount reactions into `run_participants`: `requires_confirmation`
+  reactions carry their `confirmed` flag and keep their `dungeon_reaction_id`;
+  plain interest reactions become NULL (joined, no declared item). Pings the
+  template's `notification_role_id` on the run message when set.
+- `src/commands/run.rs` — `/run <dungeon> [tier]` slash command with
+  autocomplete for both args, `StartRun` permission check, tier auto-resolve
+  for single-tier guilds, fallback to headcount channel if `raid_channel_id`
+  is unset. Registered in `commands/mod.rs`.
+- `src/handlers/run.rs` — new module: component + modal routing for
+  `run:*` custom_ids:
+  - `run:<id>:join` — add self as NULL-item participant; leader-leave
+    blocked (must transfer or end first).
+  - `run:<id>:leave` — remove all of the user's participant rows.
+  - `run:<id>:cp` — open the ephemeral Control Panel (leader only).
+  - `run:<id>:loc` / `run:<id>:party` — leader opens a Modal pre-filled
+    with the current value; submission trims input, treats empty as clear,
+    and refreshes the public embed via HTTP (modal submissions can't
+    UpdateMessage another message).
+  - `run:<id>:transfer` → `run:<id>:xfer` — leader opens a UserSelect
+    ephemeral, submission updates leader, auto-joins the new leader,
+    refreshes the public embed, dismisses the ephemeral.
+  - `run:<id>:end` — leader flips status to `ended`, public message becomes
+    the grey ended embed with no components; best-effort log follow-up in
+    the guild's `log_channel_id` if set.
+  - `run:<id>:confirm:<rid>` / `run:<id>:confirm_do:<rid>` /
+    `run:<id>:confirm_cancel` — two-click ephemeral confirm flow identical
+    in spirit to the headcount confirm (single-button yes/no, no modal).
+- `src/handlers/component.rs` — top-level dispatcher now routes `run:*` to
+  `handlers::run::handle_component` before falling through to the existing
+  `hc:*` logic. `handle_start` no longer has its Phase 5 TODO — it closes
+  the headcount embed, flips status to `converted`, then calls
+  `services::raid::start_run` with the headcount id so participants
+  auto-migrate.
+- `src/handlers/modal.rs` — dispatches `run:*` modal submissions to
+  `handlers::run::handle_modal`; no other modal flows in use (headcount
+  confirm is one-click, not a modal).
+- `src/handlers/mod.rs` — exposes new `run` submodule.
+- **`cargo build` passes** (16 warnings, all for dead code in Phase 6+
+  scaffolding, no errors).
+
+Phase 6 prerequisites are now met. End-to-end flow works: `/setup` →
+`/headcount dungeon` (or `/run dungeon`) → participants click Join/Confirm →
+leader clicks Control Panel → Set Location / Party / Transfer / End. Runs
+"continue until the leader ends it" (Phase 5 item 25) by default — chained
+re-run prompts are a future polish item.
+
 ### Credentials still needed from the user
 
 Collected into `.env` when we're ready to boot:
