@@ -1,3 +1,4 @@
+pub mod config;
 pub mod dungeon;
 pub mod headcount;
 pub mod notifications;
@@ -11,6 +12,7 @@ use crate::{BotData, BotError};
 pub fn all() -> Vec<poise::Command<BotData, BotError>> {
     vec![
         setup::setup(),
+        config::config(),
         dungeon::dungeon(),
         headcount::headcount(),
         run::run(),

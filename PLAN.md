@@ -935,6 +935,61 @@ Runbook:
    legacy emoji set and rebuild under the fixed slug rules.
 2. `cargo run -- sync-wiki` on subsequent runs.
 
+### 2026-04-23 — Rework R2 complete (bag-tier rendering + threshold)
+
+Landed:
+- `migrations/20260424000002_guild_loot_tier_threshold.sql` — new
+  `guild_loot_tier_threshold(guild_id, dungeon_template_id, tier_name)`
+  table, composite PK, FK to `bag_tiers(name)`. Absence of a row =
+  default `white` (strictest).
+- `src/db/models.rs` — added `BagTier { name, sort_order, default_emoji }`.
+- `src/db/loot.rs` (new) — `list_bag_tiers`, `resolve_bag_emoji`
+  (prefers the `bag_<tier>` application emoji, falls back to
+  `bag_tiers.default_emoji` unicode literal), `get_threshold`
+  (defaults to `white` on miss), `set_threshold` (upsert).
+- `src/db/mod.rs` — exposes the `loot` module.
+- `src/embeds/mod.rs` — new `build_loot_fields` helper groups a
+  dungeon's `showcase_emoji` by `bot_emoji.bag_tier`, emits one embed
+  field per tier ≥ threshold in descending order (white first). Drops
+  without a `bag_tier` classification are silently skipped. Added
+  `render_bot_emoji` + `tier_display_name` helpers.
+- `src/embeds/headcount.rs` — `build` signature loses `tier_name`,
+  gains `bag_tiers: &[BagTier]` and `threshold: &str`. Footer
+  (`Tier: {name}`) removed. Loot fields appended after reaction
+  fields. `build_closed` loses `tier_name` and its footer too.
+- `src/embeds/run.rs` — same treatment: `build` and `build_ended`
+  swap `tier_name` for `bag_tiers` + `threshold`, drop the footer,
+  and append loot fields after the "Joined" roster.
+- `src/services/raid.rs` — `start_headcount` and `start_run` load
+  bag tiers + threshold per call and thread them through to the
+  embed builders.
+- `src/handlers/component.rs` — four call sites (`rebuild_and_update`,
+  `handle_confirm_click`, `handle_start`, `handle_cancel`) updated.
+  The two rebuild paths drop their `tier` DB load (no longer needed
+  for the footer); `handle_start` keeps it for `raid_channel_id`.
+- `src/handlers/run.rs` — `rebuild_and_edit_message` and `handle_end`
+  drop their `tier` loads and pass bag tiers + threshold instead.
+- `src/commands/config.rs` (new) — `/config threshold <dungeon> <tier>`
+  subcommand, ConfigureGuild-gated, with autocompletion over both
+  guild-visible dungeons and bag tier names. Persists via
+  `db::loot::set_threshold`. `/config` is subcommand-required so
+  future settings (`log_channel`, `notification_channel`, …) can
+  slot in as sibling subcommands.
+- `src/commands/mod.rs` — registers `/config`.
+- **`cargo build` passes** (16 dead-code warnings for future phases,
+  no errors).
+- **Migration applied** against the local dev DB
+  (`sqlx migrate info` shows 4/4 installed).
+
+R3 prerequisites are now met: the renderer filters drops by bag tier
+per dungeon, guild admins can raise or lower the threshold with
+`/config threshold`, and the tier footer is gone from every embed
+variant.
+
+Note: the scraper step from the R2 description ("stops filtering
+`showcase_emoji` to white-only; writes every drop") already landed in
+R1 — confirmed in that progress entry.
+
 ### Credentials still needed from the user
 
 Collected into `.env` when we're ready to boot:

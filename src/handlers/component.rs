@@ -106,9 +106,8 @@ async fn rebuild_and_update(
     let reactions = db::dungeon::get_reactions(pool, hc.dungeon_template_id).await?;
     let counts = db::headcount::reaction_counts(pool, hc.id).await?;
     let emoji_map = db::emoji::get_all_as_map(pool).await?;
-    let tier = db::tier::get_by_id(pool, hc.tier_id)
-        .await?
-        .ok_or_else(|| format!("tier {} not found", hc.tier_id))?;
+    let bag_tiers = db::loot::list_bag_tiers(pool).await?;
+    let threshold = db::loot::get_threshold(pool, hc.guild_id, hc.dungeon_template_id).await?;
 
     let (embed, components) = embeds::headcount::build(
         hc.id,
@@ -117,7 +116,8 @@ async fn rebuild_and_update(
         &counts,
         &emoji_map,
         hc.leader_user_id as u64,
-        &tier.name,
+        &bag_tiers,
+        &threshold,
     );
 
     mci.create_response(
@@ -217,9 +217,8 @@ async fn handle_confirm_click(
     let reactions = db::dungeon::get_reactions(pool, hc.dungeon_template_id).await?;
     let counts = db::headcount::reaction_counts(pool, hc.id).await?;
     let emoji_map = db::emoji::get_all_as_map(pool).await?;
-    let tier = db::tier::get_by_id(pool, hc.tier_id)
-        .await?
-        .ok_or_else(|| format!("tier {} not found", hc.tier_id))?;
+    let bag_tiers = db::loot::list_bag_tiers(pool).await?;
+    let threshold = db::loot::get_threshold(pool, hc.guild_id, hc.dungeon_template_id).await?;
 
     let (embed, components) = embeds::headcount::build(
         hc.id,
@@ -228,7 +227,8 @@ async fn handle_confirm_click(
         &counts,
         &emoji_map,
         hc.leader_user_id as u64,
-        &tier.name,
+        &bag_tiers,
+        &threshold,
     );
 
     serenity::ChannelId::new(hc.channel_id as u64)
@@ -301,7 +301,6 @@ async fn handle_start(
     let closed_embed = embeds::headcount::build_closed(
         &template,
         &emoji_map,
-        &tier.name,
         &format!("Run started by <@{}>! Watch for the run message.", hc.leader_user_id),
         false,
     );
@@ -363,14 +362,10 @@ async fn handle_cancel(
         .await?
         .ok_or_else(|| format!("template {} not found", hc.dungeon_template_id))?;
     let emoji_map = db::emoji::get_all_as_map(&data.db).await?;
-    let tier = db::tier::get_by_id(&data.db, hc.tier_id)
-        .await?
-        .ok_or_else(|| format!("tier {} not found", hc.tier_id))?;
 
     let closed_embed = embeds::headcount::build_closed(
         &template,
         &emoji_map,
-        &tier.name,
         &format!("Headcount cancelled by <@{user_id}>."),
         true,
     );

@@ -1,13 +1,11 @@
 use std::collections::HashMap;
 
 use poise::serenity_prelude as serenity;
-use serenity::{
-    ButtonStyle, CreateActionRow, CreateButton, CreateEmbed, CreateEmbedFooter, EmojiId,
-    ReactionType,
-};
+use serenity::{ButtonStyle, CreateActionRow, CreateButton, CreateEmbed, EmojiId, ReactionType};
 
 use crate::db::headcount::ReactionCount;
-use crate::db::models::{BotEmoji, DungeonReaction, DungeonTemplate};
+use crate::db::models::{BagTier, BotEmoji, DungeonReaction, DungeonTemplate};
+use crate::embeds::build_loot_fields;
 
 /// A reaction's `emoji` field is normally a logical name that maps to a
 /// custom `bot_emoji` row, but some built-ins (notably the "Reacts" interest
@@ -44,6 +42,7 @@ pub fn emoji_rt(logical_name: &str, map: &HashMap<String, BotEmoji>) -> Option<R
 }
 
 /// Build the headcount embed and action rows.
+#[allow(clippy::too_many_arguments)]
 pub fn build(
     headcount_id: i32,
     template: &DungeonTemplate,
@@ -51,7 +50,8 @@ pub fn build(
     counts: &HashMap<i32, ReactionCount>,
     emoji_map: &HashMap<String, BotEmoji>,
     leader_id: u64,
-    tier_name: &str,
+    bag_tiers: &[BagTier],
+    threshold: &str,
 ) -> (CreateEmbed, Vec<CreateActionRow>) {
     let color = template.color.unwrap_or(0x5865F2) as u32;
 
@@ -65,7 +65,7 @@ pub fn build(
 
     let description = format!("{base_desc}\n\nLeader: <@{leader_id}>");
 
-    let fields: Vec<(String, String, bool)> = reactions
+    let mut fields: Vec<(String, String, bool)> = reactions
         .iter()
         .map(|r| {
             let cnt = counts.get(&r.id);
@@ -89,12 +89,18 @@ pub fn build(
         })
         .collect();
 
+    fields.extend(build_loot_fields(
+        &template.showcase_emoji,
+        emoji_map,
+        bag_tiers,
+        threshold,
+    ));
+
     let mut embed = CreateEmbed::default()
         .title(title)
         .description(&description)
         .color(color)
-        .fields(fields)
-        .footer(CreateEmbedFooter::new(format!("Tier: {tier_name}")));
+        .fields(fields);
 
     if let Some(url) = &template.thumbnail_url {
         embed = embed.thumbnail(url);
@@ -136,7 +142,6 @@ pub fn build(
 pub fn build_closed(
     template: &DungeonTemplate,
     emoji_map: &HashMap<String, BotEmoji>,
-    tier_name: &str,
     reason: &str,
     cancelled: bool,
 ) -> CreateEmbed {
@@ -161,5 +166,4 @@ pub fn build_closed(
         .title(full_title)
         .description(reason)
         .color(color)
-        .footer(CreateEmbedFooter::new(format!("Tier: {tier_name}")))
 }

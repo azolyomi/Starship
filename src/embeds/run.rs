@@ -1,24 +1,25 @@
 use std::collections::HashMap;
 
 use poise::serenity_prelude as serenity;
-use serenity::{
-    ButtonStyle, CreateActionRow, CreateButton, CreateEmbed, CreateEmbedFooter, ReactionType,
-};
+use serenity::{ButtonStyle, CreateActionRow, CreateButton, CreateEmbed, ReactionType};
 
-use crate::db::models::{BotEmoji, DungeonReaction, DungeonTemplate, Run};
+use crate::db::models::{BagTier, BotEmoji, DungeonReaction, DungeonTemplate, Run};
 use crate::db::run::Participant;
+use crate::embeds::build_loot_fields;
 use crate::embeds::headcount::{emoji_rt, emoji_str};
 
 /// Build the active run embed + its public action rows (Join / Leave /
 /// Control Panel, plus one Confirm button per `requires_confirmation`
 /// reaction).
+#[allow(clippy::too_many_arguments)]
 pub fn build(
     run: &Run,
     template: &DungeonTemplate,
     reactions: &[DungeonReaction],
     participants: &[Participant],
     emoji_map: &HashMap<String, BotEmoji>,
-    tier_name: &str,
+    bag_tiers: &[BagTier],
+    threshold: &str,
 ) -> (CreateEmbed, Vec<CreateActionRow>) {
     let color = template.color.unwrap_or(0x5865F2) as u32;
 
@@ -101,12 +102,18 @@ pub fn build(
         false,
     ));
 
+    fields.extend(build_loot_fields(
+        &template.showcase_emoji,
+        emoji_map,
+        bag_tiers,
+        threshold,
+    ));
+
     let mut embed = CreateEmbed::default()
         .title(full_title)
         .description(&description)
         .color(color)
-        .fields(fields)
-        .footer(CreateEmbedFooter::new(format!("Tier: {tier_name}")));
+        .fields(fields);
 
     if let Some(url) = &template.thumbnail_url {
         embed = embed.thumbnail(url);
@@ -153,13 +160,15 @@ pub fn build(
 }
 
 /// Ended-run embed (no components). Grey color, strikethrough-style header.
+#[allow(clippy::too_many_arguments)]
 pub fn build_ended(
     run: &Run,
     template: &DungeonTemplate,
     reactions: &[DungeonReaction],
     participants: &[Participant],
     emoji_map: &HashMap<String, BotEmoji>,
-    tier_name: &str,
+    bag_tiers: &[BagTier],
+    threshold: &str,
 ) -> CreateEmbed {
     let default_title = format!("{} Run", template.display_name);
     let title = template.message_title.as_deref().unwrap_or(&default_title);
@@ -224,12 +233,18 @@ pub fn build_ended(
         false,
     ));
 
+    fields.extend(build_loot_fields(
+        &template.showcase_emoji,
+        emoji_map,
+        bag_tiers,
+        threshold,
+    ));
+
     CreateEmbed::default()
         .title(full_title)
         .description(&description)
         .color(0x808080u32)
         .fields(fields)
-        .footer(CreateEmbedFooter::new(format!("Tier: {tier_name}")))
 }
 
 /// Leader-only control panel (ephemeral). Each button is a separate

@@ -52,6 +52,13 @@ pub struct DungeonReaction {
     pub sort_order: i32,
 }
 
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct BagTier {
+    pub name: String,
+    pub sort_order: i32,
+    pub default_emoji: String,
+}
+
 #[derive(Debug, sqlx::FromRow)]
 pub struct BotEmoji {
     pub id: i32,

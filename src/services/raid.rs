@@ -26,6 +26,8 @@ pub async fn start_headcount(
     let reactions = db::dungeon::get_reactions(pool, template.id).await?;
     let emoji_map = db::emoji::get_all_as_map(pool).await?;
     let counts: HashMap<_, _> = HashMap::new(); // empty on creation
+    let bag_tiers = db::loot::list_bag_tiers(pool).await?;
+    let threshold = db::loot::get_threshold(pool, guild_id, template.id).await?;
 
     let (embed, components) = embeds::headcount::build(
         hc.id,
@@ -34,7 +36,8 @@ pub async fn start_headcount(
         &counts,
         &emoji_map,
         leader_id as u64,
-        &tier.name,
+        &bag_tiers,
+        &threshold,
     );
 
     let msg = serenity::ChannelId::new(channel_id as u64)
@@ -91,6 +94,8 @@ pub async fn start_run(
     let reactions = db::dungeon::get_reactions(pool, template.id).await?;
     let emoji_map = db::emoji::get_all_as_map(pool).await?;
     let participants = db::run::list_participants(pool, run.id).await?;
+    let bag_tiers = db::loot::list_bag_tiers(pool).await?;
+    let threshold = db::loot::get_threshold(pool, guild_id, template.id).await?;
 
     let (embed, components) = embeds::run::build(
         &run,
@@ -98,7 +103,8 @@ pub async fn start_run(
         &reactions,
         &participants,
         &emoji_map,
-        &tier.name,
+        &bag_tiers,
+        &threshold,
     );
 
     let mut create = serenity::CreateMessage::new()

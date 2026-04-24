@@ -2,6 +2,7 @@ pub mod dungeon;
 pub mod emoji;
 pub mod guild;
 pub mod headcount;
+pub mod loot;
 pub mod models;
 pub mod permission;
 pub mod run;

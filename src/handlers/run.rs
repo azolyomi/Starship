@@ -140,9 +140,8 @@ async fn rebuild_and_edit_message(
     let reactions = db::dungeon::get_reactions(pool, run.dungeon_template_id).await?;
     let participants = db::run::list_participants(pool, run.id).await?;
     let emoji_map = db::emoji::get_all_as_map(pool).await?;
-    let tier = db::tier::get_by_id(pool, run.tier_id)
-        .await?
-        .ok_or_else(|| format!("tier {} not found", run.tier_id))?;
+    let bag_tiers = db::loot::list_bag_tiers(pool).await?;
+    let threshold = db::loot::get_threshold(pool, run.guild_id, run.dungeon_template_id).await?;
 
     let (embed, components) = embeds::run::build(
         run,
@@ -150,7 +149,8 @@ async fn rebuild_and_edit_message(
         &reactions,
         &participants,
         &emoji_map,
-        &tier.name,
+        &bag_tiers,
+        &threshold,
     );
 
     serenity::ChannelId::new(run.channel_id as u64)
@@ -558,9 +558,8 @@ async fn handle_end(
     let reactions = db::dungeon::get_reactions(pool, run.dungeon_template_id).await?;
     let participants = db::run::list_participants(pool, run.id).await?;
     let emoji_map = db::emoji::get_all_as_map(pool).await?;
-    let tier = db::tier::get_by_id(pool, run.tier_id)
-        .await?
-        .ok_or_else(|| format!("tier {} not found", run.tier_id))?;
+    let bag_tiers = db::loot::list_bag_tiers(pool).await?;
+    let threshold = db::loot::get_threshold(pool, run.guild_id, run.dungeon_template_id).await?;
 
     let ended_embed = embeds::run::build_ended(
         &run,
@@ -568,7 +567,8 @@ async fn handle_end(
         &reactions,
         &participants,
         &emoji_map,
-        &tier.name,
+        &bag_tiers,
+        &threshold,
     );
 
     serenity::ChannelId::new(run.channel_id as u64)
