@@ -27,7 +27,7 @@ pub struct BuiltinTemplate {
 
 pub const BUILTIN_TEMPLATES: &[BuiltinTemplate] = &[
     BuiltinTemplate {
-        name: "oryx_s_sanctuary",
+        name: "oryxs_sanctuary",
         display_name: "Oryx's Sanctuary",
         emoji: "portal_sanctuary",
         color: 0xFF6B35,

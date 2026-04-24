@@ -40,6 +40,13 @@ enum CliCommand {
         /// fetch wiki pages) still run.
         #[arg(long)]
         dry_run: bool,
+        /// DESTRUCTIVE: before scraping, delete every application emoji
+        /// owned by this bot app and TRUNCATE bot_emoji. Interactive
+        /// Y/N prompt. Use after renaming a batch of logical names
+        /// (e.g. the 2026-04 apostrophe slug fix) so stale names don't
+        /// linger on Discord. Combine with --dry-run to preview.
+        #[arg(long)]
+        purge: bool,
     },
     /// Interactively curate which reactions + drops to keep per dungeon.
     /// Writes data/curation.json, then deletes de-selected Discord emojis
@@ -72,7 +79,7 @@ async fn main() -> Result<()> {
 
     match cli.command.unwrap_or(CliCommand::Bot) {
         CliCommand::Bot => run_bot(config).await,
-        CliCommand::SyncWiki { dry_run } => cli::sync_wiki::run(dry_run).await,
+        CliCommand::SyncWiki { dry_run, purge } => cli::sync_wiki::run(dry_run, purge).await,
         CliCommand::Curate { recurate, dry_run } => cli::curate::run(recurate, dry_run).await,
     }
 }

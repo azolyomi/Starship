@@ -12,6 +12,7 @@ use crate::db::models::BotEmoji;
 // DB helpers.
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::too_many_arguments)]
 pub async fn upsert(
     pool: &PgPool,
     logical_name: &str,
@@ -21,12 +22,18 @@ pub async fn upsert(
     source_guild_id: Option<i64>,
     category: Option<&str>,
     realmeye_url: Option<&str>,
+    bag_tier: Option<&str>,
 ) -> Result<()> {
+    // bag_tier updates use COALESCE so a later write with None doesn't erase
+    // an earlier value. A scrape that finds a drop's bag tier keeps that
+    // classification even if a subsequent upsert (e.g. a re-run that fails
+    // the item-page fetch) passes NULL.
     sqlx::query(
         r#"
         INSERT INTO bot_emoji
-            (logical_name, discord_emoji_id, name_on_discord, animated, source_guild_id, category, realmeye_url)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+            (logical_name, discord_emoji_id, name_on_discord, animated,
+             source_guild_id, category, realmeye_url, bag_tier)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         ON CONFLICT (logical_name)
         DO UPDATE SET
             discord_emoji_id = EXCLUDED.discord_emoji_id,
@@ -35,6 +42,7 @@ pub async fn upsert(
             source_guild_id  = EXCLUDED.source_guild_id,
             category         = COALESCE(EXCLUDED.category, bot_emoji.category),
             realmeye_url     = COALESCE(EXCLUDED.realmeye_url, bot_emoji.realmeye_url),
+            bag_tier         = COALESCE(EXCLUDED.bag_tier, bot_emoji.bag_tier),
             uploaded_at      = NOW()
         "#,
     )
@@ -45,6 +53,7 @@ pub async fn upsert(
     .bind(source_guild_id)
     .bind(category)
     .bind(realmeye_url)
+    .bind(bag_tier)
     .execute(pool)
     .await?;
     Ok(())
@@ -54,7 +63,7 @@ pub async fn get_by_logical_name(pool: &PgPool, name: &str) -> Result<Option<Bot
     let row = sqlx::query_as::<_, BotEmoji>(
         r#"
         SELECT id, logical_name, discord_emoji_id, name_on_discord, animated,
-               source_guild_id, category, realmeye_url, uploaded_at
+               source_guild_id, category, realmeye_url, uploaded_at, bag_tier
         FROM bot_emoji WHERE logical_name = $1
         "#,
     )
@@ -73,13 +82,22 @@ pub async fn get_all(pool: &PgPool) -> Result<Vec<BotEmoji>> {
     let rows = sqlx::query_as::<_, BotEmoji>(
         r#"
         SELECT id, logical_name, discord_emoji_id, name_on_discord, animated,
-               source_guild_id, category, realmeye_url, uploaded_at
+               source_guild_id, category, realmeye_url, uploaded_at, bag_tier
         FROM bot_emoji ORDER BY logical_name
         "#,
     )
     .fetch_all(pool)
     .await?;
     Ok(rows)
+}
+
+/// Delete every row in bot_emoji. Used by `sync-wiki --purge` to clear stale
+/// mappings after an emoji set has been wiped on the Discord side.
+pub async fn truncate(pool: &PgPool) -> Result<()> {
+    sqlx::query("TRUNCATE TABLE bot_emoji RESTART IDENTITY CASCADE")
+        .execute(pool)
+        .await?;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

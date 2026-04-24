@@ -63,6 +63,7 @@ pub struct BotEmoji {
     pub category: Option<String>,
     pub realmeye_url: Option<String>,
     pub uploaded_at: DateTime<Utc>,
+    pub bag_tier: Option<String>,
 }
 
 #[derive(Debug, sqlx::FromRow)]

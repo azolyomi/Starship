@@ -6,6 +6,8 @@
 //
 // Run as: starship sync-wiki
 
+use std::collections::{HashMap, HashSet};
+
 use anyhow::{Context, Result};
 use image::imageops::FilterType;
 use reqwest::Client;
@@ -56,6 +58,48 @@ const DUNGEONS_PATH: &str = "/wiki/dungeons";
 const EMOJI_MAX_SIDE: u32 = 128;
 
 // ---------------------------------------------------------------------------
+// Dungeon-level filtering. Applied after `scrape_dungeon_list` pulls the
+// Regular Dungeons section, before any per-dungeon HTTP traffic. Slugs here
+// are post-`slug_from_display` (apostrophes already stripped).
+// ---------------------------------------------------------------------------
+
+const EXCLUDED_SLUGS: &[&str] = &[
+    "court_of_oryx",
+    "oryxs_castle",
+    "oryxs_chamber",
+    "wine_cellar",
+];
+
+/// Section headings on /wiki/dungeons whose tables we ignore. Only the
+/// "Regular Dungeons" heading's tables are consumed.
+const EXCLUDED_SECTIONS: &[&str] = &[
+    "special event dungeons",
+    "special event",
+    "other dungeons",
+    "mini dungeons",
+    "realm dungeons", // some wiki revisions name it this
+];
+
+const KEEP_SECTIONS: &[&str] = &["regular dungeons", "dungeons"];
+
+/// Case-insensitive text matches (section heading name contains) for the
+/// drops-of-interest section on a dungeon page. The wiki isn't consistent —
+/// some dungeons use "Drops of Interest" while others use "Notable Drops" or
+/// plain "Drops".
+const DROP_SECTION_HEADINGS: &[&str] = &[
+    "drops of interest",
+    "notable drops",
+    "drops",
+];
+
+/// Ordered list of bag tier names (matches the bag_tiers lookup table). Used
+/// to classify items from their "Loot Bag" row on RealmEye. When an item
+/// lists multiple bag tiers, we keep the rarest (last match wins).
+const BAG_TIERS_ORDERED: &[&str] = &[
+    "brown", "pink", "purple", "cyan", "blue", "orange", "red", "white",
+];
+
+// ---------------------------------------------------------------------------
 // Data types for intermediate scraping results.
 // ---------------------------------------------------------------------------
 
@@ -74,7 +118,19 @@ struct DungeonDetails {
 struct DropItem {
     logical_name: String,
     img_url: String,
-    is_white_bag: bool,
+    /// RealmEye link to the item's own wiki page. Source for the bag-tier
+    /// classification (parsed from the "Loot Bag" table row).
+    item_wiki_path: Option<String>,
+}
+
+/// Result of fetching an item's wiki page for bag-tier classification.
+struct ItemBagInfo {
+    /// Bag tier name (matches bag_tiers.name). `None` if the "Loot Bag" row
+    /// wasn't found or no known colour word was present.
+    tier: Option<String>,
+    /// Absolute URL of the bag icon image inside the "Loot Bag" row, if any.
+    /// Used once per tier to upload the `bag_<tier>` ui emoji.
+    bag_image_url: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -99,14 +155,15 @@ enum UploadOutcome {
     WouldUpload,
 }
 
-pub async fn run(dry_run: bool) -> Result<()> {
+pub async fn run(dry_run: bool, purge: bool) -> Result<()> {
     let config = Config::from_env()?;
 
     // curation.json is the user's allowlist of reactions and drops per
     // dungeon. Dungeons missing from the file are uncurated — treated as
     // "keep everything the scraper finds" so first-time syncs capture the
     // full picture and the curator can prompt for selections afterward.
-    let curation = Curation::load()?;
+    let mut curation = Curation::load()?;
+    let migrated = curation.migrate_legacy_slugs();
     if curation.dungeons.is_empty() {
         info!("no curation found at data/curation.json — syncing everything");
     } else {
@@ -114,6 +171,12 @@ pub async fn run(dry_run: bool) -> Result<()> {
             "loaded curation: {} dungeons curated — entries outside the allowlist will be skipped",
             curation.dungeons.len()
         );
+    }
+    if migrated > 0 && !dry_run {
+        curation.save()?;
+        info!("migrated {migrated} legacy curation slug(s) (apostrophe fix) and rewrote data/curation.json");
+    } else if migrated > 0 {
+        info!("[dry-run] would migrate {migrated} legacy curation slug(s) (apostrophe fix)");
     }
 
     // In dry-run we never touch the DB: no migrate, no seed, no writes.
@@ -137,6 +200,18 @@ pub async fn run(dry_run: bool) -> Result<()> {
         config.discord_application_id,
     );
 
+    // One-shot destructive reset: wipe every application emoji the bot owns
+    // plus every bot_emoji row. Used when renaming a batch of logical names
+    // (e.g. apostrophe slug fix: oryx_s_sanctuary -> oryxs_sanctuary) where
+    // the old names would otherwise linger on Discord forever.
+    if purge {
+        if dry_run {
+            info!("[dry-run] --purge would delete all application emojis and TRUNCATE bot_emoji");
+        } else {
+            purge_all(&emoji_api, pool.as_ref()).await?;
+        }
+    }
+
     // Emojis already registered on this application. We mutate this map as
     // new uploads succeed so the same logical emoji isn't uploaded twice in
     // a single run — e.g. `potion_of_wisdom` appears in many dungeons'
@@ -147,6 +222,13 @@ pub async fn run(dry_run: bool) -> Result<()> {
         std::collections::HashMap::new()
     });
     info!("{} emojis already registered", existing.len());
+
+    // Per-run cache of item-page fetches. Keyed on the item's drops-table
+    // img URL so duplicate items across dungeons (e.g. Potion of Wisdom
+    // drops from half the dungeon list) are fetched once.
+    let mut item_page_cache: HashMap<String, ItemBagInfo> = HashMap::new();
+    // Bag tiers we've already uploaded an icon for this run.
+    let mut uploaded_bag_tiers: HashSet<String> = HashSet::new();
 
     info!("scraping dungeon list from RealmEye wiki…");
     let dungeons = scrape_dungeon_list(&client).await?;
@@ -201,6 +283,7 @@ pub async fn run(dry_run: bool) -> Result<()> {
                             None,
                             Some("portal"),
                             Some(url),
+                            None,
                         )
                         .await?;
                     }
@@ -247,6 +330,7 @@ pub async fn run(dry_run: bool) -> Result<()> {
                             None,
                             Some("key"),
                             Some(url),
+                            None,
                         )
                         .await?;
                     }
@@ -288,8 +372,82 @@ pub async fn run(dry_run: bool) -> Result<()> {
                 continue;
             }
 
+            // Fetch the item's wiki page to classify its bag tier and grab
+            // the bag-icon image URL. Cache by drop-table img URL so we
+            // don't re-fetch a given item across dungeons.
+            let bag_info = match &item.item_wiki_path {
+                Some(path) => {
+                    if !item_page_cache.contains_key(&item.img_url) {
+                        let info = scrape_item_page(&client, path).await.unwrap_or_else(|e| {
+                            warn!("item page fetch {path} failed: {e:#}");
+                            ItemBagInfo { tier: None, bag_image_url: None }
+                        });
+                        item_page_cache.insert(item.img_url.clone(), info);
+                    }
+                    item_page_cache.get(&item.img_url)
+                }
+                None => None,
+            };
+            let bag_tier = bag_info.and_then(|b| b.tier.clone());
+            let bag_image_url = bag_info.and_then(|b| b.bag_image_url.clone());
+
+            // First time we see a bag tier's icon in this run, upload it as
+            // the global `bag_<tier>` ui emoji so the renderer can use it.
+            if let (Some(tier), Some(bag_url)) = (bag_tier.as_deref(), bag_image_url.as_deref()) {
+                if !uploaded_bag_tiers.contains(tier) {
+                    let bag_name = format!("bag_{tier}");
+                    let bag_dname = discord_name(&bag_name);
+                    match upload_if_new(
+                        &client,
+                        &emoji_api,
+                        &mut existing,
+                        &bag_dname,
+                        bag_url,
+                        dry_run,
+                        &mut summary,
+                    )
+                    .await
+                    {
+                        Ok(UploadOutcome::Existing(id, animated))
+                        | Ok(UploadOutcome::Uploaded(id, animated)) => {
+                            if let Some(pool) = &pool {
+                                db::emoji::upsert(
+                                    pool,
+                                    &bag_name,
+                                    id as i64,
+                                    &bag_dname,
+                                    animated,
+                                    None,
+                                    Some("ui"),
+                                    Some(bag_url),
+                                    None,
+                                )
+                                .await?;
+                            }
+                            uploaded_bag_tiers.insert(tier.to_string());
+                        }
+                        Ok(UploadOutcome::WouldUpload) => {
+                            info!(
+                                "[dry-run] would upsert bot_emoji name={bag_name} category=ui (bag icon for tier {tier})"
+                            );
+                            summary.would_upsert_emoji += 1;
+                            uploaded_bag_tiers.insert(tier.to_string());
+                        }
+                        Err(e) => warn!("bag icon {bag_dname}: {e:#}"),
+                    }
+                }
+            }
+
             let dname = discord_name(&item.logical_name);
-            let category = if item.is_white_bag { "drop_white" } else { "drop" };
+            // Categorise white-bag items separately so operators can filter
+            // the emoji picker by category if they want a "rare drops only"
+            // view. Bag-tier grouping in the renderer (R2) is what actually
+            // drives headcount/raid display.
+            let category = if bag_tier.as_deref() == Some("white") {
+                "drop_white"
+            } else {
+                "drop"
+            };
             match upload_if_new(
                 &client,
                 &emoji_api,
@@ -313,14 +471,15 @@ pub async fn run(dry_run: bool) -> Result<()> {
                             None,
                             Some(category),
                             Some(&item.img_url),
+                            bag_tier.as_deref(),
                         )
                         .await?;
                     }
                 }
                 Ok(UploadOutcome::WouldUpload) => {
                     info!(
-                        "[dry-run] would upsert bot_emoji name={} category={category}",
-                        item.logical_name
+                        "[dry-run] would upsert bot_emoji name={} category={category} bag_tier={:?}",
+                        item.logical_name, bag_tier
                     );
                     summary.would_upsert_emoji += 1;
                 }
@@ -329,11 +488,15 @@ pub async fn run(dry_run: bool) -> Result<()> {
         }
 
         // Upsert the dungeon template.
+        // showcase_emoji now carries *every* scraped drop for this dungeon
+        // (not just white-bag items). The R2 renderer groups them by
+        // bag_tier via the bot_emoji table and hides tiers below the
+        // per-guild threshold. Built-in templates may still seed an initial
+        // set but the scraper's full list is the source of truth.
         let portal_emoji = dungeon.portal_img_url.as_ref().map(|_| portal_emoji_name.as_str());
         let showcase: Vec<String> = details
             .drop_items
             .iter()
-            .filter(|i| i.is_white_bag)
             .map(|i| i.logical_name.clone())
             .collect();
 
@@ -502,7 +665,16 @@ async fn scrape_dungeon_list(client: &Client) -> Result<Vec<DungeonEntry>> {
         .text()
         .await?;
 
-    let doc = Html::parse_document(&html);
+    // Slice out just the "Regular Dungeons" section of the page. Special
+    // Event + Other Dungeons sections contain content we don't want to
+    // sync (event-gated dungeons, mini-dungeons, etc.), so ignore them
+    // entirely rather than filtering row-by-row.
+    let section_html = extract_regular_dungeons_section(&html).unwrap_or_else(|| {
+        warn!("could not locate 'Regular Dungeons' heading — falling back to full page");
+        html.clone()
+    });
+
+    let doc = Html::parse_fragment(&section_html);
     let row_sel = Selector::parse(SEL_INDEX_ROWS).unwrap();
     let name_sel = Selector::parse(SEL_DUNGEON_NAME_CELL).unwrap();
     let portal_sel = Selector::parse(SEL_PORTAL_IMG).unwrap();
@@ -546,9 +718,15 @@ async fn scrape_dungeon_list(client: &Client) -> Result<Vec<DungeonEntry>> {
             // RealmEye reuses the generic "dungeon-keys" icon as a placeholder
             // on some dungeons that don't have their own key — filter those out.
             .filter(|src| !src.contains("dungeon-keys"))
-            .map(|src| absolute_url(src));
+            .map(absolute_url);
 
         let logical_name = slug_from_display(&display_name);
+
+        if EXCLUDED_SLUGS.contains(&logical_name.as_str()) {
+            info!("excluding dungeon {logical_name} (on denylist)");
+            continue;
+        }
+
         if !seen_slugs.insert(logical_name.clone()) {
             // Same dungeon appears in multiple index tables; keep the first.
             continue;
@@ -566,6 +744,57 @@ async fn scrape_dungeon_list(client: &Client) -> Result<Vec<DungeonEntry>> {
     Ok(dungeons)
 }
 
+/// Slice the HTML between the "Regular Dungeons" heading and the next
+/// section heading we want to exclude. Returns `None` if the heading can't
+/// be located (caller falls back to the full page and logs a warning).
+fn extract_regular_dungeons_section(html: &str) -> Option<String> {
+    let lower = html.to_lowercase();
+
+    // Start at the first heading whose text matches one of KEEP_SECTIONS.
+    let start = KEEP_SECTIONS
+        .iter()
+        .filter_map(|needle| find_heading_offset(&lower, needle))
+        .min()?;
+
+    // End at the next heading whose text matches any EXCLUDED_SECTIONS, or
+    // end-of-document.
+    let tail = &lower[start + 1..];
+    let end_rel = EXCLUDED_SECTIONS
+        .iter()
+        .filter_map(|needle| find_heading_offset(tail, needle))
+        .min();
+
+    match end_rel {
+        Some(rel) => Some(html[start..start + 1 + rel].to_string()),
+        None => Some(html[start..].to_string()),
+    }
+}
+
+/// Find the byte offset of the first `<hN>` tag whose inner text contains
+/// `needle_lower` (case-insensitive — `haystack_lower` is already lowercased).
+fn find_heading_offset(haystack_lower: &str, needle_lower: &str) -> Option<usize> {
+    // Walk each heading marker (h1-h4 plausible; RealmEye uses h2/h3).
+    for tag in &["<h1", "<h2", "<h3", "<h4"] {
+        let mut cursor = 0;
+        while let Some(rel) = haystack_lower[cursor..].find(tag) {
+            let start = cursor + rel;
+            // Scan to the closing "</hN>" to bound the heading's text.
+            let rest = &haystack_lower[start..];
+            let end_tag = format!("</{}>", &tag[1..]);
+            if let Some(close_rel) = rest.find(&end_tag) {
+                let heading_text = &rest[..close_rel];
+                if heading_text.contains(needle_lower) {
+                    return Some(start);
+                }
+                cursor = start + close_rel + end_tag.len();
+            } else {
+                break;
+            }
+        }
+    }
+    None
+}
+
 async fn scrape_dungeon_page(client: &Client, wiki_path: &str) -> Result<DungeonDetails> {
     let url = format!("{}{}", REALMEYE_BASE, wiki_path);
     let html = client
@@ -576,9 +805,10 @@ async fn scrape_dungeon_page(client: &Client, wiki_path: &str) -> Result<Dungeon
         .text()
         .await?;
 
-    // Slice the "Drops of Interest" section out of the raw HTML before parsing
-    // so CSS selectors inside only see the one relevant table. The section is
-    // bounded by <h2 id="drops"> on the top and the next <h2 id="..."> below.
+    // Slice the drops section out of the raw HTML so CSS selectors inside
+    // only see the one relevant table. Section header naming varies per
+    // dungeon (e.g. Snake Pit uses "Notable Drops", not "Drops of
+    // Interest"), so match against several known alternatives.
     let section_html = match extract_drops_section(&html) {
         Some(s) => s,
         None => {
@@ -589,6 +819,7 @@ async fn scrape_dungeon_page(client: &Client, wiki_path: &str) -> Result<Dungeon
     let doc = Html::parse_fragment(&section_html);
     let row_sel = Selector::parse(SEL_DROP_ROWS).unwrap();
     let img_sel = Selector::parse(SEL_DROP_IMG).unwrap();
+    let item_link_sel = Selector::parse(r#"td:first-child a[href^="/wiki/"]"#).unwrap();
 
     let mut drop_items = Vec::new();
 
@@ -603,8 +834,7 @@ async fn scrape_dungeon_page(client: &Client, wiki_path: &str) -> Result<Dungeon
             .attr("alt")
             .or_else(|| img_el.value().attr("title"))
             .unwrap_or("")
-            .trim()
-            .to_string();
+            .trim();
         if display_name.is_empty() {
             continue;
         }
@@ -612,33 +842,121 @@ async fn scrape_dungeon_page(client: &Client, wiki_path: &str) -> Result<Dungeon
             Some(src) => absolute_url(src),
             None => continue,
         };
-        let logical_name = slug_from_display(&display_name);
+        let logical_name = slug_from_display(display_name);
 
-        // White-bag classification isn't reliably encoded in the RealmEye HTML
-        // today, so every drop-of-interest is recorded as a generic drop.
-        // Showcase stays empty and can be populated per-guild via the UI.
+        // Item's wiki page, used by scrape_item_page to fetch the Loot Bag
+        // row. Prefer the explicit anchor over any slug-derived guess —
+        // some item pages use disambiguated URLs (e.g. /wiki/item/Fire_Sword
+        // rather than /wiki/fire_sword).
+        let item_wiki_path = row
+            .select(&item_link_sel)
+            .next()
+            .and_then(|el| el.value().attr("href"))
+            .map(|s| s.to_string());
+
         drop_items.push(DropItem {
             logical_name,
             img_url,
-            is_white_bag: false,
+            item_wiki_path,
         });
     }
 
     Ok(DungeonDetails { drop_items })
 }
 
-/// Slice out the raw HTML between `<h2 id="drops">` and the next `<h2 id="...">`
-/// sibling (or end-of-document). Returns `None` if there's no drops heading.
+/// Slice out the raw HTML between the first drops-section heading and the
+/// next sibling heading of the same level (or end-of-document). Returns
+/// `None` if no recognised drops heading is found.
+///
+/// RealmEye uses a couple of different naming conventions: older dungeons
+/// use `<h2 id="drops">Drops of Interest</h2>`; some newer pages use
+/// "Notable Drops"; a few have just "Drops". Matching is case-insensitive
+/// text search against a short allowlist (see `DROP_SECTION_HEADINGS`).
 fn extract_drops_section(html: &str) -> Option<String> {
-    let drops_marker = r#"<h2 id="drops""#;
-    let start = html.find(drops_marker)?;
-    let rest = &html[start..];
-    // Find the next <h2 id="..."> header, which terminates the drops section.
-    let end_rel = rest[1..]
-        .find(r#"<h2 id=""#)
-        .map(|i| i + 1)
-        .unwrap_or(rest.len());
-    Some(rest[..end_rel].to_string())
+    let lower = html.to_lowercase();
+
+    // Find the earliest heading that matches any of our drops-section names.
+    let start = DROP_SECTION_HEADINGS
+        .iter()
+        .filter_map(|needle| find_heading_offset(&lower, needle))
+        .min()?;
+
+    // End at the next heading of any recognised level. We treat all
+    // h1-h4 equivalently — Phase 6 only needs to get *out* of the drops
+    // table before the next unrelated table starts.
+    let tail = &lower[start + 1..];
+    let mut next_heading: Option<usize> = None;
+    for tag in &["<h1", "<h2", "<h3", "<h4"] {
+        if let Some(rel) = tail.find(tag) {
+            next_heading = Some(match next_heading {
+                Some(x) => x.min(rel),
+                None => rel,
+            });
+        }
+    }
+
+    Some(match next_heading {
+        Some(rel) => html[start..start + 1 + rel].to_string(),
+        None => html[start..].to_string(),
+    })
+}
+
+/// Fetch an item's RealmEye wiki page and pull the "Loot Bag" classification
+/// plus the bag icon URL out of the stats infobox. Returns both values as
+/// `None` if the item page has no loot-bag row (some items are untiered).
+async fn scrape_item_page(client: &Client, item_path: &str) -> Result<ItemBagInfo> {
+    let url = format!("{}{}", REALMEYE_BASE, item_path);
+    let html = client
+        .get(&url)
+        .send()
+        .await
+        .with_context(|| format!("fetching {url}"))?
+        .text()
+        .await?;
+
+    // Be polite to RealmEye on item-page scrapes (we issue one of these per
+    // unique drop; without throttling that's ~50 fast requests).
+    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+
+    let doc = Html::parse_document(&html);
+    // The stats infobox is `table.item`, `table.stats`, or similar class
+    // combinations depending on the template. Cast a wide net and look
+    // inside all <tr> rows for one whose first cell (th or td) contains
+    // "loot bag".
+    let row_sel = Selector::parse("table tr").unwrap();
+    let img_sel = Selector::parse("img").unwrap();
+
+    for row in doc.select(&row_sel) {
+        let row_text = row.text().collect::<String>().to_lowercase();
+        if !row_text.contains("loot bag") {
+            continue;
+        }
+        // Classify by picking the bag colour word mentioned in the row.
+        // Multiple colours can be listed (some items drop from several
+        // bag tiers) — keep the rarest (highest sort_order in
+        // BAG_TIERS_ORDERED).
+        let mut tier: Option<&'static str> = None;
+        for candidate in BAG_TIERS_ORDERED {
+            if row_text.contains(&format!("{candidate} bag")) {
+                tier = Some(candidate);
+            }
+        }
+
+        // The bag icon lives inside the same row — img element whose src
+        // typically points at /s/a/<hash>.png for bag sprites.
+        let bag_image_url = row
+            .select(&img_sel)
+            .next()
+            .and_then(|el| el.value().attr("src"))
+            .map(absolute_url);
+
+        return Ok(ItemBagInfo {
+            tier: tier.map(|s| s.to_string()),
+            bag_image_url,
+        });
+    }
+
+    Ok(ItemBagInfo { tier: None, bag_image_url: None })
 }
 
 // ---------------------------------------------------------------------------
@@ -672,8 +990,17 @@ async fn download_and_resize(client: &Client, url: &str) -> Result<Vec<u8>> {
 // Utilities.
 // ---------------------------------------------------------------------------
 
+/// Normalise a display name to a logical slug. Apostrophes are *stripped*
+/// (not replaced with underscores) so "Oryx's Sanctuary" collapses cleanly
+/// to "oryxs_sanctuary" rather than "oryx_s_sanctuary" — the old behaviour
+/// produced spurious single-letter segments that broke emoji name lookups.
 fn slug_from_display(name: &str) -> String {
-    name.to_lowercase()
+    let stripped: String = name
+        .chars()
+        .filter(|c| *c != '\'' && *c != '\u{2019}')
+        .collect();
+    stripped
+        .to_lowercase()
         .chars()
         .map(|c| if c.is_alphanumeric() { c } else { '_' })
         .collect::<String>()
@@ -681,6 +1008,33 @@ fn slug_from_display(name: &str) -> String {
         .filter(|s| !s.is_empty())
         .collect::<Vec<_>>()
         .join("_")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::slug_from_display;
+
+    #[test]
+    fn slug_strips_straight_apostrophe() {
+        assert_eq!(slug_from_display("Oryx's Sanctuary"), "oryxs_sanctuary");
+        assert_eq!(slug_from_display("Pirate's Cave"), "pirates_cave");
+    }
+
+    #[test]
+    fn slug_strips_curly_apostrophe() {
+        assert_eq!(slug_from_display("Oryx\u{2019}s Sanctuary"), "oryxs_sanctuary");
+    }
+
+    #[test]
+    fn slug_basic_whitespace_and_punct() {
+        assert_eq!(slug_from_display("Snake Pit"), "snake_pit");
+        assert_eq!(slug_from_display("D.O.G. Realm"), "d_o_g_realm");
+    }
+
+    #[test]
+    fn slug_collapses_multiple_separators() {
+        assert_eq!(slug_from_display("  Lost   Halls  "), "lost_halls");
+    }
 }
 
 /// Convert a logical name to a Discord-safe emoji name (alphanumeric + underscore,
@@ -704,4 +1058,55 @@ fn absolute_url(src: &str) -> String {
     } else {
         format!("{}{}", REALMEYE_BASE, src)
     }
+}
+
+// ---------------------------------------------------------------------------
+// Purge: wipe every application emoji + every bot_emoji row.
+//
+// Used once after the apostrophe-slug fix so stale `oryx_s_*` names don't
+// linger on the Discord application. Interactive: prompts for Y/N before
+// touching anything. Never auto-invoked; gated behind --purge flag.
+// ---------------------------------------------------------------------------
+
+async fn purge_all(
+    emoji_api: &ApplicationEmojiClient,
+    pool: Option<&sqlx::PgPool>,
+) -> Result<()> {
+    use std::io::Write;
+
+    let existing = emoji_api.list().await.unwrap_or_else(|e| {
+        warn!("could not list application emojis for purge: {e:#}");
+        HashMap::new()
+    });
+
+    print!(
+        "--purge will DELETE {} application emoji(s) and TRUNCATE bot_emoji. Proceed? [y/N] ",
+        existing.len()
+    );
+    std::io::stdout().flush().ok();
+    let mut answer = String::new();
+    std::io::stdin().read_line(&mut answer)?;
+    if !matches!(answer.trim().to_lowercase().as_str(), "y" | "yes") {
+        info!("purge aborted by user");
+        return Ok(());
+    }
+
+    info!("purging {} application emojis…", existing.len());
+    for (name, (id, _animated)) in &existing {
+        if let Err(e) = emoji_api.delete(*id).await {
+            warn!("failed to delete emoji {name} ({id}): {e:#}");
+        }
+        // 100ms between deletes — Discord's per-route bucket refills
+        // quickly enough that this keeps us well under rate limits without
+        // adding material runtime to the purge.
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+
+    if let Some(pool) = pool {
+        db::emoji::truncate(pool).await?;
+        info!("truncated bot_emoji");
+    }
+
+    info!("purge complete; continuing with fresh scrape");
+    Ok(())
 }

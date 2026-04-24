@@ -69,6 +69,59 @@ impl Curation {
             Some(c) => c.drops.iter().any(|d| d == name),
         }
     }
+
+    /// Rewrite dungeon keys that were produced by the pre-2026-04 slug
+    /// function (apostrophes → `_`) to the current form (apostrophes
+    /// stripped). Returns the number of keys migrated. Callers should
+    /// `save()` after a non-zero return to persist the rename.
+    ///
+    /// Detection: any key containing a single-letter segment `_s_` or
+    /// ending in `_s` is treated as a mis-slugged apostrophe-s form. This
+    /// matches "oryx_s_sanctuary", "pirate_s_cave", etc. without matching
+    /// legitimate `_s` patterns (none exist in the current dungeon set).
+    /// The migrated key is derived by collapsing the `_s` segment back
+    /// into the preceding word: "oryx_s_sanctuary" → "oryxs_sanctuary".
+    pub fn migrate_legacy_slugs(&mut self) -> usize {
+        let legacy_keys: Vec<String> = self
+            .dungeons
+            .keys()
+            .filter(|k| is_legacy_apostrophe_slug(k))
+            .cloned()
+            .collect();
+
+        let mut migrated = 0;
+        for old in legacy_keys {
+            let new = rewrite_apostrophe_slug(&old);
+            if new == old {
+                continue;
+            }
+            if let Some(value) = self.dungeons.remove(&old) {
+                // If both old + new exist, prefer the newer entry (the
+                // user hand-curated the fixed slug since then) and drop
+                // the legacy one.
+                self.dungeons.entry(new).or_insert(value);
+                migrated += 1;
+            }
+        }
+        migrated
+    }
+}
+
+fn is_legacy_apostrophe_slug(key: &str) -> bool {
+    // "_s_" or trailing "_s" — the tell-tale sign of apostrophe-s expanded
+    // to underscore-s-underscore by the old slug function.
+    key.contains("_s_") || key.ends_with("_s")
+}
+
+fn rewrite_apostrophe_slug(key: &str) -> String {
+    // Collapse every `_s_` → `s_` and trailing `_s` → `s`. A dungeon with
+    // two apostrophes would get both rewritten; RotMG doesn't have any
+    // today but the logic is symmetric so it stays correct.
+    let mut out = key.replace("_s_", "s_");
+    if let Some(stripped) = out.strip_suffix("_s") {
+        out = format!("{stripped}s");
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------

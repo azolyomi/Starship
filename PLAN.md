@@ -483,6 +483,89 @@ starship/
 24. End run
 25. Chained run support (run continues until leader ends it)
 
+### Rework 2026-04 (R1–R4)
+
+Triggered after Phase 5 by a round of user feedback. Not new features —
+corrections to `sync-wiki`, headcount/run UX, and `/setup` that change the
+project's operating model. Voice (original Phase 6) is deferred until R4
+lands. See `.claude/plans/current-problems-1-sync-sharded-kernighan.md` for
+the full design.
+
+**R1 — Scraper correctness + emoji purge**
+- Fix `slug_from_display` to strip `'` / `\u{2019}` (so "Oryx's Sanctuary"
+  → `oryxs_sanctuary`, not `oryx_s_sanctuary`).
+- Scope `scrape_dungeon_list` to the Regular Dungeons section; skip
+  Special Event + Other Dungeons; hardcode-exclude Court of Oryx,
+  Oryx's Castle/Chamber, Wine Cellar.
+- Rewrite `extract_drops_section` with a multi-heading match so Snake
+  Pit and similar dungeons land their drops.
+- New `bag_tiers` lookup table (brown→white, sort_order 0–7) + `bag_tier`
+  column on `bot_emoji`.
+- New `scrape_item_page` visits each drop's wiki page, extracts the
+  "Loot Bag" row (color word → `bag_tier`; img src → bag icon URL).
+- First time a bag-tier icon is seen in a run, upload as `bag_<tier>`
+  under `bot_emoji` (category `ui`).
+- New `--purge` flag on `sync-wiki`: DELETE all application emojis and
+  TRUNCATE `bot_emoji`, gated on `dialoguer::Confirm`. One-shot op to
+  retire the old bad-slug emoji set.
+- Rename the `oryx_s_sanctuary` built-in template to `oryxs_sanctuary`.
+- Auto-migrate old-format keys in `data/curation.json` on load.
+
+**R2 — Bag-tier rendering + per-dungeon threshold**
+- New `guild_loot_tier_threshold(guild_id, dungeon_template_id, tier_name)`
+  table. Absence = default `white` (strictest).
+- New `src/db/loot.rs` module: `list_bag_tiers`, `resolve_bag_emoji` (global,
+  falls back to `bag_tiers.default_emoji`), `get_threshold`, `set_threshold`.
+- Headcount + run embed helpers render drops grouped by bag tier: one
+  field per tier ≥ threshold, prefixed by the bag emoji, value = joined
+  drop emojis. Tier footer removed from every embed variant.
+- New `/config threshold <dungeon> <tier>` command (ConfigureGuild).
+- Scraper stops filtering `showcase_emoji` to white-only; writes every
+  drop, and grouping-by-tier in the renderer does the filtering.
+
+**R3 — Setup simplification + `/pingroles`**
+- `tiers.runs_channel_id` column; backfill from existing raid/headcount
+  channels. Phase R3 dual-writes old + new columns; R4 drops the legacy
+  columns.
+- Quick `/setup` creates one `<tier>-runs` channel (not two) and renames
+  the log channel default to `🚀starship-log` with a fallback on emoji
+  rejection.
+- Remove the notifications-channel concept entirely from `/setup`.
+- Delete `src/commands/notifications.rs`.
+- New `src/commands/pingroles.rs`:
+  - `/pingroles` (anyone) → paginated ephemeral: 10 dungeons/page,
+    multi-select to toggle opt-in for each dungeon, diffs desired vs.
+    current role membership and applies add/remove with 3× retry.
+  - `/pingroles set/unset/create <dungeon> [role]` admin subcommands
+    (ConfigureGuild-gated) that write `dungeon_templates.notification_role_id`.
+- `start_headcount` now pings `notification_role_id` just like
+  `start_run` already does.
+
+**R4 — Reactions replace buttons + multi-item unlocks + cleanup**
+- Drop `headcount_reactions` and `run_participants` tables (no longer
+  tracked — we trust users).
+- Drop legacy `tiers.raid_channel_id`, `tiers.headcount_channel_id`,
+  `guilds.notification_channel_id` columns.
+- New `src/services/reactions.rs` with `attach_reactions` helper:
+  retry 5× on 429/5xx, loud-ping organizer on final failure.
+- `start_headcount` + `start_run` call `attach_reactions` with
+  `:white_check_mark:` + each required-item emoji after the message posts.
+- Delete all button-based item flow: `hc:*:react:*`, `hc:*:confirm:*`,
+  `run:*:join|leave|confirm*` handlers + their embed components.
+- Templates: O3 gets `wine_cellar_incantation` + three existing runes
+  (5 reactions total with ✅); Void gets `lost_halls_key` +
+  `vial_of_the_void`; Cultist drops to just `lost_halls_key`. All
+  `requires_confirmation` flags set to false.
+- New `upload-emoji` CLI helper for one-off manual emoji uploads
+  (needed for `wine_cellar_incantation` if the scraper doesn't find it).
+- Organizer gating via new `require_organizer_or_manage_runs` helper:
+  leader OR `ManageRuns` permission can use start/end/cancel/control-panel
+  buttons; anyone else gets an ephemeral denial.
+- Drop per-reaction roster fields + the `👥 Joined` field from run
+  embeds. `build_ended` produces a minimal greyed embed — no roster.
+- Preflight: on startup, if active headcounts/runs exist, log loud error
+  and exit unless `STARSHIP_ALLOW_MIGRATION=1` is set.
+
 ### Phase 6: Voice Channel Management
 26. Temp VC creation for VC raids
 27. VC join enforcement
@@ -784,6 +867,73 @@ Phase 6 prerequisites are now met. End-to-end flow works: `/setup` →
 leader clicks Control Panel → Set Location / Party / Transfer / End. Runs
 "continue until the leader ends it" (Phase 5 item 25) by default — chained
 re-run prompts are a future polish item.
+
+### 2026-04-24 — Rework R1 complete (scraper correctness + emoji purge)
+
+Landed:
+- `migrations/20260424000001_bag_tiers.sql` — new `bag_tiers` lookup
+  table (8 rows, sort_order 0=brown → 7=white, each with a unicode
+  fallback emoji); `bag_tier` column added to `bot_emoji` with an index.
+- `src/cli/sync_wiki.rs`:
+  - `slug_from_display` strips straight `'` and curly `\u{2019}` before
+    the alphanumeric pass, so "Oryx's Sanctuary" now yields
+    `oryxs_sanctuary` (not `oryx_s_sanctuary`). Four unit tests cover
+    straight apostrophe, curly apostrophe, multi-word, and collapse of
+    runs of punctuation.
+  - `scrape_dungeon_list` now slices the raw HTML to just the
+    "Regular Dungeons" section via a new `extract_regular_dungeons_section`
+    helper (uses a flexible `find_heading_offset` text-matcher).
+    Special Event, Other Dungeons, Mini Dungeons sections are ignored
+    entirely. A hardcoded `EXCLUDED_SLUGS` denylist drops Court of Oryx,
+    Oryx's Castle, Oryx's Chamber, Wine Cellar.
+  - `extract_drops_section` rewritten to match any of `Drops of Interest`,
+    `Notable Drops`, `Drops` (case-insensitive) so dungeons like Snake
+    Pit that name the section differently land their drops.
+  - New `scrape_item_page` fetches each drop's wiki page (~250ms
+    throttle), finds the "Loot Bag" table row, and extracts both the
+    bag-colour word (→ `bag_tier`) and the row's img src (→ bag icon
+    URL). Results are cached per-run keyed on drop img URL so duplicates
+    across dungeons aren't re-fetched.
+  - First time each bag tier's icon is seen, it's uploaded as
+    `bag_<tier>` under `bot_emoji` (category `ui`). Subsequent drops of
+    the same tier skip the re-upload.
+  - `DropItem` struct now carries `item_wiki_path` (optional) and the
+    `is_white_bag` flag is gone — bag-tier classification is per-emoji
+    in `bot_emoji.bag_tier`, not per-drop-per-dungeon.
+  - `showcase_emoji` on `dungeon_templates` now receives every scraped
+    drop, not just white-bag items. Bag-tier grouping in the R2
+    renderer takes over the "which drops are interesting enough" job.
+  - New `--purge` flag (prompted Y/N via stdin): deletes every
+    application emoji the bot owns and TRUNCATEs `bot_emoji`, then runs
+    the usual scraper. One-shot op to retire the legacy
+    `oryx_s_*` / `pirate_s_*` names.
+- `src/db/emoji.rs` — `upsert` gained a ninth arg `bag_tier:
+  Option<&str>`, with `COALESCE(EXCLUDED.bag_tier, bot_emoji.bag_tier)`
+  so later writes without a tier don't erase a previously-found one.
+  New `truncate` helper used by `--purge`. SELECT column lists updated.
+- `src/db/models.rs` — `BotEmoji.bag_tier: Option<String>` added.
+- `src/templates/dungeons.rs` — `oryx_s_sanctuary` renamed to
+  `oryxs_sanctuary` (`.name` field only; emoji logical name
+  `portal_sanctuary` unaffected).
+- `src/curation.rs` — `Curation::migrate_legacy_slugs()` rewrites stale
+  apostrophe-expanded keys (`_s_` → `s_`, trailing `_s` → `s`) in
+  memory; sync-wiki calls it at startup and `save()`s if anything
+  changed, so `data/curation.json` self-heals.
+- `src/main.rs` — `--purge` wired through the CLI.
+- **`cargo build` passes** (16 dead-code warnings, all for R2+/future
+  phases; no errors).
+- **`cargo test`** passes: 4 new slug tests (`oryxs_sanctuary`,
+  `pirates_cave`, `snake_pit`, `d_o_g_realm`).
+
+R2 prerequisites are now met: every scraped drop has a `bag_tier`
+(if classifiable), bag icons exist as `bag_<tier>` emojis, and the
+`dungeon_templates.showcase_emoji` column holds every drop for each
+dungeon. The R2 renderer can group by tier and filter by threshold.
+
+Runbook:
+1. `cargo run -- sync-wiki --purge` once (interactive Y/N) to wipe the
+   legacy emoji set and rebuild under the fixed slug rules.
+2. `cargo run -- sync-wiki` on subsequent runs.
 
 ### Credentials still needed from the user
 
