@@ -486,12 +486,37 @@ async fn handle_transfer_submit(
         return Ok(());
     }
 
-    db::run::set_leader(&data.db, run_id, new_leader).await?;
+    // Update the run's leader and (when self-organize is in play) the
+    // claim's leader together — the per-user cap follows the new owner so
+    // the previous leader can immediately start another raid.
+    let mut tx = data.db.begin().await?;
+    db::run::set_leader_tx(&mut tx, run_id, new_leader).await?;
+    if run.is_self_organized {
+        db::self_organize::claim_set_leader(&mut tx, run_id, new_leader).await?;
+    }
+    tx.commit().await?;
 
     let refreshed = db::run::get(&data.db, run_id)
         .await?
         .expect("run existed a moment ago");
     rebuild_and_edit_message(ctx, data, &refreshed).await?;
+
+    // Refresh listing if self-organize, so the leader column updates.
+    if run.is_self_organized {
+        if let Ok(Some(tier)) = db::tier::get_by_id(&data.db, run.tier_id).await {
+            if tier.enable_self_organization {
+                if let Err(e) =
+                    services::self_organize_listing::refresh_listing(ctx, &data.db, &tier).await
+                {
+                    tracing::warn!(
+                        error = ?e,
+                        tier_id = tier.id,
+                        "failed to refresh self-organize listing after leader transfer",
+                    );
+                }
+            }
+        }
+    }
 
     mci.create_response(
         ctx,
@@ -523,12 +548,20 @@ async fn handle_end(
     }
 
     // Claim End atomically: two concurrent clicks both run, only one gets
-    // `true` and fires the Discord-side teardown + audit log.
-    if !db::run::delete(&data.db, run_id).await? {
+    // `true` and fires the Discord-side teardown + audit log. Pair with a
+    // self-organize claim release in the same tx so the slot lock vanishes
+    // alongside the run row (release is a no-op for non-self-organize
+    // tiers, so this path is uniform).
+    let mut tx = data.db.begin().await?;
+    db::self_organize::claim_release_by_run(&mut tx, run_id).await?;
+    let row_existed = db::run::delete_tx(&mut tx, run_id).await?;
+    if !row_existed {
+        tx.rollback().await?;
         mci.create_response(ctx, ephemeral_msg("This run has ended."))
             .await?;
         return Ok(());
     }
+    tx.commit().await?;
 
     // Tear down the temp VC if this run had one. Best-effort — by the time
     // we get here the run is already gone from the DB; a dangling channel
@@ -623,6 +656,22 @@ async fn handle_end(
                         "failed to write audit log entry for ended run",
                     );
                 }
+            }
+        }
+    }
+
+    // Self-organize listing refresh — best-effort, the run is already gone
+    // from the DB so a stale listing entry will get filtered out by the
+    // build_row stale-HC check anyway.
+    if let Ok(Some(tier)) = db::tier::get_by_id(pool, run.tier_id).await {
+        if tier.enable_self_organization {
+            if let Err(e) = services::self_organize_listing::refresh_listing(ctx, pool, &tier).await
+            {
+                tracing::warn!(
+                    error = ?e,
+                    tier_id = tier.id,
+                    "failed to refresh self-organize listing after run end",
+                );
             }
         }
     }

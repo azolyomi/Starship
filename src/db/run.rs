@@ -84,12 +84,10 @@ pub async fn set_message_id(pool: &PgPool, id: i32, message_id: i64) -> Result<(
 }
 
 pub async fn get(pool: &PgPool, id: i32) -> Result<Option<Run>> {
-    let row = sqlx::query_as::<_, Run>(&format!(
-        "SELECT {RUN_COLS} FROM runs WHERE id = $1"
-    ))
-    .bind(id)
-    .fetch_optional(pool)
-    .await?;
+    let row = sqlx::query_as::<_, Run>(&format!("SELECT {RUN_COLS} FROM runs WHERE id = $1"))
+        .bind(id)
+        .fetch_optional(pool)
+        .await?;
     Ok(row)
 }
 
@@ -126,13 +124,21 @@ pub async fn set_party(pool: &PgPool, id: i32, party: Option<&str>) -> Result<()
     Ok(())
 }
 
-pub async fn set_leader(pool: &PgPool, id: i32, leader_user_id: i64) -> Result<()> {
+/// Transactional setter so the leader change can ride in the same tx as
+/// the self-organize claim's `claim_set_leader` — keeps the per-user cap
+/// in sync without exposing a window where the run and the claim disagree
+/// on who the leader is.
+pub async fn set_leader_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    id: i32,
+    leader_user_id: i64,
+) -> Result<()> {
     sqlx::query!(
         "UPDATE runs SET leader_user_id = $1 WHERE id = $2",
         leader_user_id,
         id
     )
-    .execute(pool)
+    .execute(&mut **tx)
     .await?;
     Ok(())
 }
@@ -155,10 +161,8 @@ pub async fn set_voice_channel(
 /// Every live run across every guild. Used by the startup orphan sweep to
 /// reconcile DB rows against Discord state.
 pub async fn list_all(pool: &PgPool) -> Result<Vec<Run>> {
-    let rows = sqlx::query_as::<_, Run>(&format!(
-        "SELECT {RUN_COLS} FROM runs"
-    ))
-    .fetch_all(pool)
-    .await?;
+    let rows = sqlx::query_as::<_, Run>(&format!("SELECT {RUN_COLS} FROM runs"))
+        .fetch_all(pool)
+        .await?;
     Ok(rows)
 }

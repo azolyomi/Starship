@@ -40,13 +40,23 @@ pub async fn list(pool: &PgPool, guild_id: i64) -> Result<Vec<Tier>> {
     Ok(tiers)
 }
 
-pub async fn get_by_id(pool: &PgPool, id: i32) -> Result<Option<Tier>> {
-    let tier = sqlx::query_as::<_, Tier>(&format!(
-        "SELECT {TIER_COLS} FROM tiers WHERE id = $1"
+/// Every tier across every guild with `enable_self_organization = TRUE`.
+/// Used by the boot orphan sweep to repair sticky button + listing
+/// messages and reconcile dangling slot claims.
+pub async fn list_self_organize_enabled(pool: &PgPool) -> Result<Vec<Tier>> {
+    let tiers = sqlx::query_as::<_, Tier>(&format!(
+        "SELECT {TIER_COLS} FROM tiers WHERE enable_self_organization = TRUE"
     ))
-    .bind(id)
-    .fetch_optional(pool)
+    .fetch_all(pool)
     .await?;
+    Ok(tiers)
+}
+
+pub async fn get_by_id(pool: &PgPool, id: i32) -> Result<Option<Tier>> {
+    let tier = sqlx::query_as::<_, Tier>(&format!("SELECT {TIER_COLS} FROM tiers WHERE id = $1"))
+        .bind(id)
+        .fetch_optional(pool)
+        .await?;
     Ok(tier)
 }
 

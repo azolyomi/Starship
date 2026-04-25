@@ -9,6 +9,7 @@
 //! reaction — better a loud failure than a silent one a raider notices
 //! mid-raid.
 
+use std::collections::HashSet;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -141,6 +142,62 @@ pub fn reaction_types_match(a: &ReactionType, b: &ReactionType) -> bool {
         (Unicode(sa), Unicode(sb)) => sa == sb,
         _ => false,
     }
+}
+
+/// Count distinct non-bot users who reacted to a message with any emoji.
+///
+/// Used by the self-organize HC->Run convert gate (`min_reactors`) to decide
+/// whether enough humans have signed up to proceed.
+///
+/// Discord's `GET .../reactions/{emoji}` is paginated and per-emoji, so the
+/// cost scales with `#reactions * #reactors / 100`. For typical HCs (5–8
+/// reactions, <30 reactors) that's 5–10 HTTP calls; acceptable on a
+/// rare leader-driven event.
+pub async fn count_distinct_non_bot_reactors(
+    http: &Http,
+    channel_id: ChannelId,
+    message_id: MessageId,
+) -> Result<i64> {
+    // Fetch the message to enumerate which reactions are present. We can
+    // skip emojis with `count <= me` (= the bot is the only reactor) without
+    // paying for a user-list fetch.
+    let msg = channel_id.message(http, message_id).await?;
+
+    let mut users: HashSet<u64> = HashSet::new();
+    for reaction in &msg.reactions {
+        let me_offset = if reaction.me { 1 } else { 0 };
+        if reaction.count.saturating_sub(me_offset) == 0 {
+            continue;
+        }
+
+        let mut after: Option<serenity::UserId> = None;
+        loop {
+            let batch = http
+                .get_reaction_users(
+                    channel_id,
+                    message_id,
+                    &reaction.reaction_type,
+                    100,
+                    after.map(|id| id.get()),
+                )
+                .await?;
+            if batch.is_empty() {
+                break;
+            }
+            for u in &batch {
+                if !u.bot {
+                    users.insert(u.id.get());
+                }
+            }
+            let last_id = batch.last().map(|u| u.id);
+            if batch.len() < 100 {
+                break;
+            }
+            after = last_id;
+        }
+    }
+
+    Ok(users.len() as i64)
 }
 
 fn format_reaction(rt: &ReactionType) -> String {

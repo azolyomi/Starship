@@ -3,47 +3,12 @@ use sqlx::{PgPool, Postgres, Transaction};
 
 use crate::db::models::Headcount;
 
+/// Insert a fresh headcount inside a caller-provided transaction so the
+/// row can be paired with a self-organize slot-claim insert without
+/// exposing a half-written state to other connections.
 // Phase D will introduce a `NewHeadcount` parameter struct alongside the
 // snowflake-newtype migration; collapsing now would churn every caller for
 // purely cosmetic reasons.
-#[allow(clippy::too_many_arguments)]
-pub async fn create(
-    pool: &PgPool,
-    guild_id: i64,
-    tier_id: i32,
-    dungeon_template_id: i32,
-    channel_id: i64,
-    leader_user_id: i64,
-    location: Option<&str>,
-    party: Option<&str>,
-    is_self_organized: bool,
-) -> Result<Headcount> {
-    let row = sqlx::query_as::<_, Headcount>(
-        r#"
-        INSERT INTO headcounts
-            (guild_id, tier_id, dungeon_template_id, channel_id, message_id,
-             leader_user_id, location, party, is_self_organized)
-        VALUES ($1, $2, $3, $4, 0, $5, $6, $7, $8)
-        RETURNING *
-        "#,
-    )
-    .bind(guild_id)
-    .bind(tier_id)
-    .bind(dungeon_template_id)
-    .bind(channel_id)
-    .bind(leader_user_id)
-    .bind(location)
-    .bind(party)
-    .bind(is_self_organized)
-    .fetch_one(pool)
-    .await?;
-    Ok(row)
-}
-
-/// Transactional variant of [`create`]: the same insert, but bound to an
-/// existing transaction so it can be paired with a slot-claim insert in
-/// the self-organize flow without leaving an inconsistent intermediate
-/// state visible to other connections.
 #[allow(clippy::too_many_arguments)]
 pub async fn create_tx(
     tx: &mut Transaction<'_, Postgres>,
@@ -81,6 +46,26 @@ pub async fn create_tx(
 pub async fn set_message_id(pool: &PgPool, id: i32, message_id: i64) -> Result<()> {
     sqlx::query("UPDATE headcounts SET message_id = $1 WHERE id = $2")
         .bind(message_id)
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Stash the leader's intended location + party on the row at HC create
+/// time so the HC->Run convert modal can pre-fill them. Used by the
+/// self-organize flow, which collects these inputs in its own modal
+/// before the HC posts. A single `UPDATE` saves a round-trip vs. two
+/// setters and avoids partially-written rows on connection failure.
+pub async fn set_location_and_party(
+    pool: &PgPool,
+    id: i32,
+    location: Option<&str>,
+    party: Option<&str>,
+) -> Result<()> {
+    sqlx::query("UPDATE headcounts SET location = $1, party = $2 WHERE id = $3")
+        .bind(location)
+        .bind(party)
         .bind(id)
         .execute(pool)
         .await?;

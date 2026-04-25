@@ -138,6 +138,7 @@ async fn run_dashboard_loop(
             "setup:section:superadmin" => section_superadmin(ctx, &mci).await?,
             "setup:section:log" => section_log_channel(ctx, &mci).await?,
             "setup:section:verify" => section_verification(ctx, &mci).await?,
+            "setup:section:so" => section_self_organize(ctx, &mci).await?,
             _ => {
                 // Unknown custom_id — just acknowledge so Discord doesn't
                 // show "interaction failed" to the user.
@@ -658,6 +659,14 @@ async fn dashboard_view(ctx: BotContext<'_>) -> Result<(CreateEmbed, Vec<CreateA
         ButtonStyle::Primary
     };
 
+    let so_label = if first_tier
+        .map(|t| t.enable_self_organization)
+        .unwrap_or(false)
+    {
+        "Self-organize ✅"
+    } else {
+        "Self-organize"
+    };
     let sections_row = CreateActionRow::Buttons(vec![
         CreateButton::new("setup:section:tier")
             .label(tier_label)
@@ -671,6 +680,10 @@ async fn dashboard_view(ctx: BotContext<'_>) -> Result<(CreateEmbed, Vec<CreateA
         CreateButton::new("setup:section:verify")
             .label("Verification")
             .style(verify_style),
+        CreateButton::new("setup:section:so")
+            .label(so_label)
+            .style(ButtonStyle::Secondary)
+            .disabled(first_tier.is_none()),
     ]);
 
     let finish_label = if guild.setup_complete {
@@ -909,8 +922,7 @@ fn tier_view(
         .map(|c| format!("<#{c}>"))
         .unwrap_or_else(|| "_required — pick one below_".to_string());
     let roles_display = if draft.leader_roles.is_empty() {
-        "_none — only Discord admins / the bot superadmin can lead raids in this tier_"
-            .to_string()
+        "_none — only Discord admins / the bot superadmin can lead raids in this tier_".to_string()
     } else {
         draft
             .leader_roles
@@ -1427,6 +1439,343 @@ async fn handle_verify_auto(ctx: BotContext<'_>, mci: &ComponentInteraction) -> 
     db::guild::set_verify_channel(pool, guild_id, Some(channel_id.get() as i64)).await?;
     db::guild::set_verify_message(pool, guild_id, Some(message_id.get() as i64)).await?;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Section: self-organize
+// ---------------------------------------------------------------------------
+
+/// Idle / cooldown / min-reactor presets shown in the section's StringSelects.
+/// First column is the value persisted; second is the user-facing label.
+const SO_IDLE_PRESETS: &[(i32, &str)] = &[
+    (5, "5 minutes"),
+    (10, "10 minutes"),
+    (15, "15 minutes (default)"),
+    (30, "30 minutes"),
+    (60, "60 minutes"),
+];
+const SO_COOLDOWN_PRESETS: &[(i32, &str)] = &[
+    (60, "1 minute"),
+    (180, "3 minutes"),
+    (300, "5 minutes (default)"),
+    (600, "10 minutes"),
+    (1800, "30 minutes"),
+];
+const SO_MIN_REACTORS_PRESETS: &[(i32, &str)] = &[
+    (1, "1"),
+    (2, "2 (default)"),
+    (3, "3"),
+    (4, "4"),
+    (5, "5"),
+    (6, "6"),
+    (8, "8"),
+];
+
+async fn section_self_organize(
+    ctx: BotContext<'_>,
+    trigger: &ComponentInteraction,
+) -> Result<(), BotError> {
+    let guild_id = guild_id_i64(ctx);
+    let pool = &ctx.data().db;
+
+    // Self-organize is keyed off the first tier — same scope as
+    // `section_first_tier`. Subsequent tiers are tuned via `/tier` (or a
+    // future config command); the wizard intentionally limits itself to
+    // the most common case.
+    let Some(tier) = db::tier::list(pool, guild_id).await?.into_iter().next() else {
+        respond_plain(
+            ctx,
+            trigger,
+            "Set up the first tier before configuring self-organize.",
+        )
+        .await?;
+        return Ok(());
+    };
+
+    let (embed, components) = self_organize_view(&tier);
+    respond_with_view(ctx, trigger, embed, components).await?;
+
+    let msg_id = trigger.message.id;
+    loop {
+        let Some(mci) = await_next(ctx, msg_id).await else {
+            return Ok(());
+        };
+        match mci.data.custom_id.as_str() {
+            "setup:so:back" => {
+                back_to_dashboard(ctx, &mci).await?;
+                return Ok(());
+            }
+            "setup:so:channel" => {
+                if let ComponentInteractionDataKind::ChannelSelect { values } = &mci.data.kind {
+                    let new_channel: Option<i64> = values.first().map(|c| c.get() as i64);
+                    let prior_channel = current_tier(pool, tier.id)
+                        .await?
+                        .and_then(|t| t.self_organize_channel_id);
+                    db::tier::update_self_organize(
+                        pool,
+                        tier.id,
+                        None,
+                        new_channel,
+                        None,
+                        None,
+                        None,
+                    )
+                    .await?;
+                    // Channel changed: invalidate stored message IDs so the
+                    // sticky-repair path reposts in the new channel rather
+                    // than leaving the message in the old one and pointing
+                    // at a dead ID.
+                    if new_channel != prior_channel {
+                        db::tier::set_self_organize_button_message(pool, tier.id, None).await?;
+                        db::tier::set_self_organize_listing_message(pool, tier.id, None).await?;
+                    }
+                }
+                let refreshed = current_tier(pool, tier.id).await?.unwrap_or(tier.clone());
+                let (embed, components) = self_organize_view(&refreshed);
+                respond_with_view(ctx, &mci, embed, components).await?;
+            }
+            "setup:so:idle" => {
+                let value = parse_select_i32(&mci.data.kind);
+                if value.is_some() {
+                    db::tier::update_self_organize(pool, tier.id, None, None, value, None, None)
+                        .await?;
+                }
+                let refreshed = current_tier(pool, tier.id).await?.unwrap_or(tier.clone());
+                let (embed, components) = self_organize_view(&refreshed);
+                respond_with_view(ctx, &mci, embed, components).await?;
+            }
+            "setup:so:cooldown" => {
+                let value = parse_select_i32(&mci.data.kind);
+                if value.is_some() {
+                    db::tier::update_self_organize(pool, tier.id, None, None, None, value, None)
+                        .await?;
+                }
+                let refreshed = current_tier(pool, tier.id).await?.unwrap_or(tier.clone());
+                let (embed, components) = self_organize_view(&refreshed);
+                respond_with_view(ctx, &mci, embed, components).await?;
+            }
+            "setup:so:min" => {
+                let value = parse_select_i32(&mci.data.kind);
+                if value.is_some() {
+                    db::tier::update_self_organize(pool, tier.id, None, None, None, None, value)
+                        .await?;
+                }
+                let refreshed = current_tier(pool, tier.id).await?.unwrap_or(tier.clone());
+                let (embed, components) = self_organize_view(&refreshed);
+                respond_with_view(ctx, &mci, embed, components).await?;
+            }
+            "setup:so:toggle" => {
+                let live = current_tier(pool, tier.id).await?.unwrap_or(tier.clone());
+                let want_enable = !live.enable_self_organization;
+
+                if want_enable && live.self_organize_channel_id.is_none() {
+                    mci.create_response(
+                        ctx.http(),
+                        CreateInteractionResponse::Message(
+                            CreateInteractionResponseMessage::new()
+                                .content("Pick a channel before enabling self-organize.")
+                                .ephemeral(true),
+                        ),
+                    )
+                    .await?;
+                    continue;
+                }
+
+                db::tier::update_self_organize(
+                    pool,
+                    tier.id,
+                    Some(want_enable),
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .await?;
+
+                if want_enable {
+                    let refreshed = current_tier(pool, tier.id).await?.unwrap_or(live.clone());
+                    let serenity_ctx = ctx.serenity_context();
+                    if let Err(e) = crate::services::self_organize_listing::ensure_button_message(
+                        serenity_ctx,
+                        pool,
+                        &refreshed,
+                    )
+                    .await
+                    {
+                        tracing::warn!(
+                            error = ?e,
+                            tier_id = tier.id,
+                            "failed to install self-organize button message",
+                        );
+                    }
+                    let after_button = current_tier(pool, tier.id).await?.unwrap_or(refreshed);
+                    if let Err(e) = crate::services::self_organize_listing::ensure_listing_message(
+                        serenity_ctx,
+                        pool,
+                        &after_button,
+                    )
+                    .await
+                    {
+                        tracing::warn!(
+                            error = ?e,
+                            tier_id = tier.id,
+                            "failed to install self-organize listing message",
+                        );
+                    }
+                }
+
+                let refreshed = current_tier(pool, tier.id).await?.unwrap_or(tier.clone());
+                let (embed, components) = self_organize_view(&refreshed);
+                respond_with_view(ctx, &mci, embed, components).await?;
+            }
+            _ => {
+                mci.defer(ctx.http()).await?;
+            }
+        }
+    }
+}
+
+async fn current_tier(pool: &sqlx::PgPool, tier_id: i32) -> Result<Option<Tier>> {
+    db::tier::get_by_id(pool, tier_id).await
+}
+
+fn parse_select_i32(kind: &ComponentInteractionDataKind) -> Option<i32> {
+    if let ComponentInteractionDataKind::StringSelect { values } = kind {
+        values.first().and_then(|v| v.parse().ok())
+    } else {
+        None
+    }
+}
+
+fn so_preset_options(
+    presets: &[(i32, &str)],
+    current: i32,
+) -> Vec<serenity::CreateSelectMenuOption> {
+    presets
+        .iter()
+        .map(|(value, label)| {
+            let mut opt = serenity::CreateSelectMenuOption::new(*label, value.to_string());
+            if *value == current {
+                opt = opt.default_selection(true);
+            }
+            opt
+        })
+        .collect()
+}
+
+fn self_organize_view(tier: &Tier) -> (CreateEmbed, Vec<CreateActionRow>) {
+    let enabled = tier.enable_self_organization;
+    let channel_line = tier
+        .self_organize_channel_id
+        .map(|c| format!("<#{c}>"))
+        .unwrap_or_else(|| "_not set_".to_string());
+
+    let body = format!(
+        "Per-tier opt-in: any user can start a headcount via a sticky **Start a run** \
+         button — no leader role required.\n\
+         \n\
+         Anti-troll guardrails (configured below):\n\
+         • One raid per (tier, dungeon) at a time\n\
+         • One self-organized raid per leader at a time\n\
+         • Idle headcounts auto-cancel after the configured window\n\
+         • Cancel cooldown after a leader self-cancels\n\
+         • Minimum reactors required to convert HC \u{2192} Run\n\
+         \n\
+         **Status:** {status}\n\
+         **Channel:** {channel_line}\n\
+         **Idle window:** {idle} minutes\n\
+         **Cancel cooldown:** {cd} seconds\n\
+         **Min reactors:** {min}\n\
+         \n\
+         _Tip: lock the channel down to read-only for everyone but the bot \
+         to keep the sticky messages near the top._",
+        status = if enabled {
+            "✅ enabled"
+        } else {
+            "⬜ disabled"
+        },
+        idle = tier.self_organize_idle_minutes,
+        cd = tier.self_organize_cancel_cooldown_seconds,
+        min = tier.self_organize_min_reactors,
+    );
+
+    let embed = CreateEmbed::new()
+        .title("\u{1F680} Self-organize")
+        .description(body)
+        .color(0x5865F2);
+
+    let channel_select = CreateSelectMenu::new(
+        "setup:so:channel",
+        CreateSelectMenuKind::Channel {
+            channel_types: Some(vec![ChannelType::Text]),
+            default_channels: tier
+                .self_organize_channel_id
+                .map(|c| vec![ChannelId::new(c as u64)]),
+        },
+    )
+    .placeholder("Self-organize channel (sticky button + listing live here)")
+    .min_values(0)
+    .max_values(1);
+
+    let idle_select = CreateSelectMenu::new(
+        "setup:so:idle",
+        CreateSelectMenuKind::String {
+            options: so_preset_options(SO_IDLE_PRESETS, tier.self_organize_idle_minutes),
+        },
+    )
+    .placeholder("Idle window before HCs auto-cancel")
+    .min_values(0)
+    .max_values(1);
+
+    let cooldown_select = CreateSelectMenu::new(
+        "setup:so:cooldown",
+        CreateSelectMenuKind::String {
+            options: so_preset_options(
+                SO_COOLDOWN_PRESETS,
+                tier.self_organize_cancel_cooldown_seconds,
+            ),
+        },
+    )
+    .placeholder("Cooldown after a leader self-cancels")
+    .min_values(0)
+    .max_values(1);
+
+    let min_select = CreateSelectMenu::new(
+        "setup:so:min",
+        CreateSelectMenuKind::String {
+            options: so_preset_options(SO_MIN_REACTORS_PRESETS, tier.self_organize_min_reactors),
+        },
+    )
+    .placeholder("Minimum reactors to convert HC \u{2192} Run")
+    .min_values(0)
+    .max_values(1);
+
+    let toggle_label = if enabled { "Disable" } else { "Enable" };
+    let toggle_style = if enabled {
+        ButtonStyle::Danger
+    } else {
+        ButtonStyle::Success
+    };
+
+    let actions = CreateActionRow::Buttons(vec![
+        CreateButton::new("setup:so:toggle")
+            .label(toggle_label)
+            .style(toggle_style),
+        CreateButton::new("setup:so:back")
+            .label("\u{2190} Back")
+            .style(ButtonStyle::Secondary),
+    ]);
+
+    (
+        embed,
+        vec![
+            CreateActionRow::SelectMenu(channel_select),
+            CreateActionRow::SelectMenu(idle_select),
+            CreateActionRow::SelectMenu(cooldown_select),
+            CreateActionRow::SelectMenu(min_select),
+            actions,
+        ],
+    )
 }
 
 /// Shared view builder for channel-picker sections.

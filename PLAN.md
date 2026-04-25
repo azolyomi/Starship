@@ -2076,6 +2076,148 @@ Next chunk (3): `handlers/self_organize.rs` (`so:btn` /
 and orphan-sweep extensions for dangling claims and sticky-message
 repair.
 
+### 2026-04-25 — Self-organize chunk 3 complete (handlers + setup wizard + orphan sweep)
+
+Wires the chunk-1 schema and chunk-2 services into a working
+end-to-end flow: a sticky button in a self-organize channel opens a
+dungeon picker, a modal collects location/party, and the resulting
+headcount lives under the slot-claim lock through HC->Run conversion
+and Run end. Setup-wizard sub-section configures the per-tier knobs;
+orphan sweep keeps the slot-claim queue and sticky messages
+consistent across restarts.
+
+Landed:
+- `src/handlers/self_organize.rs` (new) — three-step click flow:
+  - `so:btn:<tier_id>` — sticky button responds with an ephemeral
+    StringSelect of the tier's dungeons (resolved per-id from
+    `db::tier::list_dungeons`, capped at 25). Defence-in-depth
+    `enable_self_organization` recheck on every click.
+  - `so:dpick:<tier_id>` — StringSelect submit opens a modal whose
+    custom_id (`so:start:<tier_id>:<template_id>`) carries the chosen
+    template through to submit time without a name round-trip.
+  - `so:start:<tier_id>:<template_id>` (modal) — defers ephemeral,
+    re-loads tier+template, channel-exists pre-flight, runs
+    `services::self_organize::check_can_start` (anti-troll gate),
+    calls `services::raid::start_headcount_inner` with
+    `is_self_organized=true`, then `set_location_and_party` for the
+    leader's prefill values, then `refresh_listing`. `SlotInUse`
+    surfaces the claim holder via the standard
+    `SelfOrganizeBlock::SlotInUse` message.
+- Dispatch wiring: `handlers/component.rs`, `handlers/modal.rs`, and
+  `handlers/mod.rs` route `so:*` IDs to the new module.
+- `src/services/raid.rs` — extracted
+  `finalize_run_post_create(serenity_ctx, pool, run, template,
+  raid_channel_id)` from `start_run`. Owns the temp VC creation,
+  embed render, message post, and follow-up `set_voice_channel` /
+  `set_message_id` UPDATEs. `start_run` is now a thin wrapper for
+  the slash-command path; the HC->Run convert path drives the helper
+  itself so it can run `db::run::create_tx` + `claim_swap_to_run`
+  inside its own transaction without holding a DB connection across
+  the Discord HTTP work.
+- `src/services/reactions.rs` —
+  `count_distinct_non_bot_reactors(http, channel_id, message_id)`
+  paginates `GET .../reactions/{emoji}` per non-bot-only reaction
+  on the live message and returns the union count. Gate input for
+  `check_can_convert`. Skips emojis whose only reactor is the bot.
+- `src/handlers/headcount.rs`:
+  - `handle_cancel` opens a tx, runs
+    `db::self_organize::claim_release_by_headcount` (no-op outside
+    self-organize tiers), then `db::headcount::delete_tx` as the
+    atomic "first-cancel-wins" claim. On commit and when the
+    canceller is the leader of a self-organized HC, calls
+    `services::self_organize::record_self_cancel` to set the
+    cooldown. Best-effort `refresh_listing` after the closed embed
+    edits in.
+  - `handle_confirm_start` runs
+    `count_distinct_non_bot_reactors` + `check_can_convert` for
+    self-organized HCs; on pass, branches:
+    - **Self-organize tier:** tx { `headcount::delete_tx` ->
+      `run::create_tx(is_self_organized=hc.is_self_organized)` ->
+      `claim_swap_to_run` } -> commit -> `set_location` /
+      `set_party` -> ack modal -> strip HC buttons ->
+      `finalize_run_post_create` -> `refresh_listing`.
+    - **Legacy tier:** existing
+      `headcount::delete` + `start_run` path is preserved.
+- `src/handlers/run.rs`:
+  - `handle_end` opens a tx, runs
+    `claim_release_by_run` + `run::delete_tx` together so the slot
+    lock dies with the run row. Listing refreshed at the end of the
+    handler.
+  - `handle_transfer_submit` opens a tx, runs `set_leader_tx` plus
+    (when `run.is_self_organized`) `claim_set_leader`, then
+    refreshes the listing so the new owner's name appears.
+- `src/db/headcount.rs` — `set_location_and_party(pool, id,
+  location, party)` writes both columns in a single UPDATE for the
+  self-organize HC create path; `db::headcount::create` (non-tx)
+  removed (no callers remain).
+- `src/db/run.rs` — `set_leader` rewritten as `set_leader_tx`.
+- `src/db/tier.rs` — `list_self_organize_enabled(pool)` returns
+  every tier with the flag set, used by orphan sweep.
+- `src/db/self_organize.rs` —
+  `ClaimOutcome::Acquired(SlotClaim)` field annotated
+  `#[allow(dead_code)]` (kept for symmetry with `Conflict` and
+  future logging).
+- `src/commands/setup.rs` — new dashboard button
+  (`setup:section:so`, disabled until the first tier exists) and
+  `section_self_organize` sub-section. Live-write semantics:
+  channel pick / idle / cooldown / min-reactor selects persist on
+  every change via `db::tier::update_self_organize`. Toggle button
+  flips `enable_self_organization`; on enable, synchronously calls
+  `ensure_button_message` + `ensure_listing_message` so the operator
+  sees the stickies appear without a restart. Channel changes null
+  the stored sticky message IDs so the next ensure-pass reposts
+  rather than leaving the message in the old channel.
+- `src/services/orphan_sweep.rs` — two new boot-time passes:
+  1. **Dangling claims:** `claim_list_all` ->
+     probe linked HC/Run -> `claim_force_delete` if neither exists.
+     Defence in depth against operator surgery / manual deletes
+     (the `ON DELETE NO ACTION` FK should normally prevent this).
+  2. **Sticky repair:** `list_self_organize_enabled` ->
+     `ensure_button_message` + `ensure_listing_message` for each.
+     Idempotent — successful probes are no-ops, 404s repost.
+
+Verification:
+- `cargo fmt --check` — 0 diffs.
+- `cargo build` — 0 warnings.
+- `cargo clippy --all-targets -- -D warnings` — 0 warnings.
+- `cargo test` — 15 passed (no new tests; existing 11 plus 4
+  realmeye/template suites already in tree).
+- `sqlx migrate info` — 13/13 installed (chunk-1 migration applied
+  to the dev DB earlier; no new migration in chunk 3).
+
+Operator runbook:
+1. `/setup` -> Self-organize -> pick a channel -> set knobs ->
+   Enable. The bot posts the sticky button + listing in the
+   chosen channel.
+2. Any user clicks **Start a run** -> picks a dungeon -> fills
+   location/party -> a headcount appears in the tier's runs
+   channel. The slot lock is held until the HC is cancelled, the
+   run ends, or the idle window expires.
+3. Disable: `/setup` -> Self-organize -> Disable. The sticky
+   messages stay in the channel as inert artefacts; future button
+   clicks return a "no longer enabled" ephemeral. Operator can
+   delete them manually if desired.
+
+Deferred (called out for future polish):
+- Per-tier wizard scope: only the **first** tier is configurable
+  via the wizard (matches `section_first_tier`). Multi-tier
+  self-organize requires `/tier` subcommands or rewriting the
+  wizard's tier-picker UX. Out of chunk-3 scope.
+- Disable-cleanup: turning self-organize off doesn't currently
+  delete the sticky messages or release in-flight claims. The next
+  user click sees the "disabled" message, and the per-claim FK
+  release path still works (handle_end / handle_cancel always
+  release).
+- Quick-setup auto-provision: the intro-screen Quick Setup does
+  not pre-create a self-organize channel + sticky messages. Users
+  who want self-organize must enable it explicitly via the
+  dashboard sub-section.
+- Smoke test against a live test guild: not run this session
+  (no `DISCORD_TOKEN` provisioned in this dev env). The
+  `## Verification` checklist in
+  `~/.claude/plans/i-m-experimenting-with-the-mutable-quokka.md`
+  is the next chunk's natural baseline.
+
 ### Credentials still needed from the user
 
 Collected into `.env` when we're ready to boot:

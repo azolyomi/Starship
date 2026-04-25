@@ -45,7 +45,7 @@ use crate::db;
 use crate::embeds::headcount::emoji_rt;
 use crate::services::channels::is_not_found;
 use crate::services::reactions::{self, reaction_types_match};
-use crate::services::voice;
+use crate::services::{self_organize_listing, voice};
 
 #[tracing::instrument(name = "orphan_sweep", skip_all)]
 pub async fn run(ctx: &serenity::Context, pool: &PgPool) -> Result<()> {
@@ -179,6 +179,9 @@ pub async fn run(ctx: &serenity::Context, pool: &PgPool) -> Result<()> {
         }
     }
 
+    let dangling_claims = sweep_dangling_claims(pool).await;
+    let stickies_repaired = sweep_self_organize_stickies(ctx, pool).await;
+
     info!(
         surviving_hcs,
         deleted_hcs,
@@ -188,9 +191,136 @@ pub async fn run(ctx: &serenity::Context, pool: &PgPool) -> Result<()> {
         reattached,
         expired_verifications,
         cleared_verify_messages,
+        dangling_claims,
+        stickies_repaired,
         "orphan sweep complete",
     );
     Ok(())
+}
+
+/// Reconcile `self_organize_slot_claims` against the (now-swept) HC + Run
+/// queues. With `ON DELETE NO ACTION` + transactional release this list
+/// should always be empty, but a manual `DELETE FROM headcounts` (operator
+/// surgery) or a partially-applied schema change can leak claim rows.
+/// Forces them deleted so the slot doesn't stay locked forever.
+async fn sweep_dangling_claims(pool: &PgPool) -> usize {
+    let claims = match db::self_organize::claim_list_all(pool).await {
+        Ok(c) => c,
+        Err(e) => {
+            warn!(error = ?e, "failed to list self-organize claims for sweep");
+            return 0;
+        }
+    };
+
+    let mut dangling = 0usize;
+    for claim in claims {
+        let alive = match (claim.headcount_id, claim.run_id) {
+            (Some(hc_id), _) => match db::headcount::get(pool, hc_id).await {
+                Ok(Some(_)) => true,
+                Ok(None) => false,
+                Err(e) => {
+                    warn!(
+                        error = ?e,
+                        hc_id,
+                        "failed to probe headcount during claim sweep; leaving claim alone",
+                    );
+                    continue;
+                }
+            },
+            (None, Some(run_id)) => match db::run::get(pool, run_id).await {
+                Ok(Some(_)) => true,
+                Ok(None) => false,
+                Err(e) => {
+                    warn!(
+                        error = ?e,
+                        run_id,
+                        "failed to probe run during claim sweep; leaving claim alone",
+                    );
+                    continue;
+                }
+            },
+            // CHECK constraint should make this unreachable; treat as dangling.
+            (None, None) => false,
+        };
+
+        if alive {
+            continue;
+        }
+
+        match db::self_organize::claim_force_delete(
+            pool,
+            claim.guild_id,
+            claim.tier_id,
+            claim.dungeon_template_id,
+        )
+        .await
+        {
+            Ok(true) => {
+                info!(
+                    guild_id = claim.guild_id,
+                    tier_id = claim.tier_id,
+                    dungeon_template_id = claim.dungeon_template_id,
+                    "deleted dangling self-organize claim",
+                );
+                dangling += 1;
+            }
+            Ok(false) => {}
+            Err(e) => warn!(
+                error = ?e,
+                guild_id = claim.guild_id,
+                tier_id = claim.tier_id,
+                dungeon_template_id = claim.dungeon_template_id,
+                "failed to delete dangling self-organize claim",
+            ),
+        }
+    }
+    dangling
+}
+
+/// For every tier with `enable_self_organization = TRUE`, probe and repair
+/// the sticky button + listing messages. The `ensure_*_message` helpers
+/// are 404-aware and idempotent — a successful probe is a no-op.
+async fn sweep_self_organize_stickies(ctx: &serenity::Context, pool: &PgPool) -> usize {
+    let tiers = match db::tier::list_self_organize_enabled(pool).await {
+        Ok(t) => t,
+        Err(e) => {
+            warn!(error = ?e, "failed to list self-organize tiers for sticky repair");
+            return 0;
+        }
+    };
+
+    let mut repaired = 0usize;
+    for tier in tiers {
+        if let Err(e) = self_organize_listing::ensure_button_message(ctx, pool, &tier).await {
+            warn!(
+                error = ?e,
+                tier_id = tier.id,
+                guild_id = tier.guild_id,
+                "failed to repair self-organize button message",
+            );
+        } else {
+            repaired += 1;
+        }
+        // Re-load so `ensure_listing_message` sees any newly-stored
+        // button_message_id (and similarly for listing on its own pass).
+        let refreshed = match db::tier::get_by_id(pool, tier.id).await {
+            Ok(Some(t)) => t,
+            Ok(None) => continue,
+            Err(e) => {
+                warn!(error = ?e, tier_id = tier.id, "tier vanished during sticky repair");
+                continue;
+            }
+        };
+        if let Err(e) = self_organize_listing::ensure_listing_message(ctx, pool, &refreshed).await {
+            warn!(
+                error = ?e,
+                tier_id = tier.id,
+                guild_id = tier.guild_id,
+                "failed to repair self-organize listing message",
+            );
+        }
+    }
+    repaired
 }
 
 async fn sweep_unposted_headcount(

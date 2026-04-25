@@ -177,11 +177,7 @@ pub fn check_can_convert(
 /// Set the post-cancel cooldown for a leader who cancelled their own
 /// self-organized HC. The duration comes from the tier's
 /// `self_organize_cancel_cooldown_seconds` knob.
-pub async fn record_self_cancel(
-    pool: &PgPool,
-    tier: &Tier,
-    user_id: i64,
-) -> Result<()> {
+pub async fn record_self_cancel(pool: &PgPool, tier: &Tier, user_id: i64) -> Result<()> {
     let duration = Duration::seconds(tier.self_organize_cancel_cooldown_seconds as i64);
     db::self_organize::cooldown_set(pool, tier.guild_id, tier.id, user_id, duration).await?;
     Ok(())

@@ -225,7 +225,7 @@ async fn render_listing_embed(
     }
 
     // Newest at the top so users see what's just been opened.
-    rows.sort_by(|a, b| b.acquired_at.cmp(&a.acquired_at));
+    rows.sort_by_key(|r| std::cmp::Reverse(r.acquired_at));
 
     let title = format!("Active raids \u{2022} {}", tier.name);
 

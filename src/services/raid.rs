@@ -214,6 +214,11 @@ pub async fn start_headcount_inner(
 /// Post a run embed. Reactions from the source headcount already carry the
 /// signup state, so this does *not* attach native reactions to the run
 /// message — it's a plain announcement with a Control Panel button.
+///
+/// The slash-command `/run` flow always lands here with
+/// `is_self_organized = false`; the HC->Run convert path uses
+/// [`finalize_run_post_create`] directly so it can run the run insert in
+/// the same transaction as the slot-claim swap.
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument(
     name = "start_run",
@@ -265,14 +270,34 @@ pub async fn start_run(
         }
     }
 
-    // Temp VC for VC-required dungeons. Best-effort: if creation fails we
-    // log and keep going — a raid without a VC still works, a raid that
-    // failed to post doesn't.
+    finalize_run_post_create(serenity_ctx, pool, &mut run, template, raid_channel_id).await?;
+    Ok(run)
+}
+
+/// Everything that happens *after* a run row exists in the DB: temp VC
+/// creation, embed render, message post, and the follow-up UPDATEs that
+/// stamp `voice_channel_id` and `message_id` onto the row.
+///
+/// Mutates `run` in place so callers always have an up-to-date struct
+/// after the call returns.
+///
+/// Extracted from `start_run` so the HC->Run convert path can call it
+/// after running `db::run::create_tx` + `claim_swap_to_run` inside its
+/// own transaction. The non-tx work (Discord HTTP, voice channel CRUD)
+/// always runs *outside* a tx — Postgres connections are precious and
+/// holding one across a 2-second Discord call is wasteful.
+pub async fn finalize_run_post_create(
+    serenity_ctx: &serenity::Context,
+    pool: &PgPool,
+    run: &mut Run,
+    template: &DungeonTemplate,
+    raid_channel_id: i64,
+) -> Result<()> {
     if template.requires_vc {
         let vc_name = format!("{} #{}", template.display_name, run.id);
         match voice::create_temp_vc(
             serenity_ctx,
-            serenity::GuildId::new(guild_id as u64),
+            serenity::GuildId::new(run.guild_id as u64),
             serenity::ChannelId::new(raid_channel_id as u64),
             &vc_name,
         )
@@ -295,12 +320,11 @@ pub async fn start_run(
 
     let emoji_map = db::emoji::get_all_as_map(pool).await?;
     let bag_tiers = db::loot::list_bag_tiers(pool).await?;
-    let threshold = db::loot::get_threshold(pool, guild_id).await?;
+    let threshold = db::loot::get_threshold(pool, run.guild_id).await?;
 
-    let (embed, components) =
-        embeds::run::build(&run, template, &emoji_map, &bag_tiers, &threshold);
+    let (embed, components) = embeds::run::build(run, template, &emoji_map, &bag_tiers, &threshold);
 
-    let role_id = db::dungeon::get_notification_role(pool, guild_id, &template.name).await?;
+    let role_id = db::dungeon::get_notification_role(pool, run.guild_id, &template.name).await?;
     let create = serenity::CreateMessage::new()
         .add_embed(embed)
         .components(components)
@@ -310,9 +334,7 @@ pub async fn start_run(
     let channel = serenity::ChannelId::new(raid_channel_id as u64);
     let msg = channel.send_message(serenity_ctx, create).await?;
     db::run::set_message_id(pool, run.id, msg.id.get() as i64).await?;
+    run.message_id = msg.id.get() as i64;
 
-    Ok(Run {
-        message_id: msg.id.get() as i64,
-        ..run
-    })
+    Ok(())
 }

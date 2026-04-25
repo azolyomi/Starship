@@ -32,7 +32,10 @@ const CLAIM_COLS: &str = "guild_id, tier_id, dungeon_template_id, leader_user_id
 /// already has a Lost Halls HC up").
 #[derive(Debug)]
 pub enum ClaimOutcome {
-    Acquired(SlotClaim),
+    /// Slot acquired. The inserted row is returned for symmetry with
+    /// `Conflict` (and so future logging/metrics can surface
+    /// `acquired_at`); current callers only branch on the variant tag.
+    Acquired(#[allow(dead_code)] SlotClaim),
     Conflict(SlotClaim),
 }
 
@@ -134,10 +137,7 @@ pub async fn claim_release_by_headcount(
 
 /// Release a claim that was held by a run. Must run *before* the run
 /// row is deleted (same reasoning as `claim_release_by_headcount`).
-pub async fn claim_release_by_run(
-    tx: &mut Transaction<'_, Postgres>,
-    run_id: i32,
-) -> Result<bool> {
+pub async fn claim_release_by_run(tx: &mut Transaction<'_, Postgres>, run_id: i32) -> Result<bool> {
     let res = sqlx::query!(
         "DELETE FROM self_organize_slot_claims WHERE run_id = $1",
         run_id
@@ -193,11 +193,7 @@ pub async fn claim_get_by_slot(
 /// guild. Backs the "one active raid per user" cap. Filters to
 /// `is_self_organized = TRUE` so staff-led raids in self-organize tiers
 /// don't count against the leader's quota.
-pub async fn claim_count_for_user(
-    pool: &PgPool,
-    guild_id: i64,
-    user_id: i64,
-) -> Result<i64> {
+pub async fn claim_count_for_user(pool: &PgPool, guild_id: i64, user_id: i64) -> Result<i64> {
     let count: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM self_organize_slot_claims
           WHERE guild_id = $1 AND leader_user_id = $2 AND is_self_organized = TRUE",
@@ -212,10 +208,7 @@ pub async fn claim_count_for_user(
 
 /// All claims in a guild. Used by the listing renderer (per-tier filter
 /// applied in service code) and by the boot orphan-sweep reconcile pass.
-pub async fn claim_list_for_guild(
-    pool: &PgPool,
-    guild_id: i64,
-) -> Result<Vec<SlotClaim>> {
+pub async fn claim_list_for_guild(pool: &PgPool, guild_id: i64) -> Result<Vec<SlotClaim>> {
     let rows = sqlx::query_as::<_, SlotClaim>(&format!(
         "SELECT {CLAIM_COLS}
          FROM self_organize_slot_claims
