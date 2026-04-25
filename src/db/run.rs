@@ -9,39 +9,9 @@ const RUN_COLS: &str = "id, guild_id, tier_id, dungeon_template_id, \
     channel_id, message_id, leader_user_id, location, party, \
     voice_channel_id, is_vc_raid, is_self_organized, created_at";
 
-#[allow(clippy::too_many_arguments)]
-pub async fn create(
-    pool: &PgPool,
-    guild_id: i64,
-    tier_id: i32,
-    dungeon_template_id: i32,
-    channel_id: i64,
-    leader_user_id: i64,
-    is_vc_raid: bool,
-    is_self_organized: bool,
-) -> Result<Run> {
-    let row = sqlx::query_as::<_, Run>(&format!(
-        "INSERT INTO runs
-            (guild_id, tier_id, dungeon_template_id,
-             channel_id, message_id, leader_user_id, is_vc_raid, is_self_organized)
-         VALUES ($1, $2, $3, $4, 0, $5, $6, $7)
-         RETURNING {RUN_COLS}"
-    ))
-    .bind(guild_id)
-    .bind(tier_id)
-    .bind(dungeon_template_id)
-    .bind(channel_id)
-    .bind(leader_user_id)
-    .bind(is_vc_raid)
-    .bind(is_self_organized)
-    .fetch_one(pool)
-    .await?;
-    Ok(row)
-}
-
-/// Transactional variant of [`create`]: same insert, bound to an existing
-/// transaction so the HC->Run convert path can swap the slot-claim FK
-/// from `headcount_id` to `run_id` in the same tx that creates the run.
+/// Insert a run row inside an existing transaction. The HC->Run convert
+/// path swaps the slot-claim FK from `headcount_id` to `run_id` in the
+/// same tx that creates the run, so the slot lock never gets released.
 #[allow(clippy::too_many_arguments)]
 pub async fn create_tx(
     tx: &mut Transaction<'_, Postgres>,

@@ -211,69 +211,6 @@ pub async fn start_headcount_inner(
     }))
 }
 
-/// Post a run embed. Reactions from the source headcount already carry the
-/// signup state, so this does *not* attach native reactions to the run
-/// message — it's a plain announcement with a Control Panel button.
-///
-/// The slash-command `/run` flow always lands here with
-/// `is_self_organized = false`; the HC->Run convert path uses
-/// [`finalize_run_post_create`] directly so it can run the run insert in
-/// the same transaction as the slot-claim swap.
-#[allow(clippy::too_many_arguments)]
-#[tracing::instrument(
-    name = "start_run",
-    skip_all,
-    fields(
-        guild_id,
-        leader_id = leader_user_id,
-        tier = %tier.name,
-        dungeon = %template.name,
-        requires_vc = template.requires_vc,
-        run_id = tracing::field::Empty,
-    ),
-)]
-pub async fn start_run(
-    serenity_ctx: &serenity::Context,
-    pool: &PgPool,
-    guild_id: i64,
-    tier: &Tier,
-    template: &DungeonTemplate,
-    raid_channel_id: i64,
-    leader_user_id: i64,
-    location: Option<&str>,
-    party: Option<&str>,
-) -> Result<Run> {
-    let mut run = db::run::create(
-        pool,
-        guild_id,
-        tier.id,
-        template.id,
-        raid_channel_id,
-        leader_user_id,
-        template.requires_vc,
-        false,
-    )
-    .await?;
-    tracing::Span::current().record("run_id", run.id);
-    tracing::info!("run created");
-
-    // Prefill runs as a follow-up UPDATE so `create`'s signature stays
-    // tight. Skip the round-trip entirely when nothing was prefilled.
-    if location.is_some() || party.is_some() {
-        if let Some(loc) = location {
-            db::run::set_location(pool, run.id, Some(loc)).await?;
-            run.location = Some(loc.to_string());
-        }
-        if let Some(p) = party {
-            db::run::set_party(pool, run.id, Some(p)).await?;
-            run.party = Some(p.to_string());
-        }
-    }
-
-    finalize_run_post_create(serenity_ctx, pool, &mut run, template, raid_channel_id).await?;
-    Ok(run)
-}
-
 /// Everything that happens *after* a run row exists in the DB: temp VC
 /// creation, embed render, message post, and the follow-up UPDATEs that
 /// stamp `voice_channel_id` and `message_id` onto the row.
@@ -281,11 +218,11 @@ pub async fn start_run(
 /// Mutates `run` in place so callers always have an up-to-date struct
 /// after the call returns.
 ///
-/// Extracted from `start_run` so the HC->Run convert path can call it
-/// after running `db::run::create_tx` + `claim_swap_to_run` inside its
-/// own transaction. The non-tx work (Discord HTTP, voice channel CRUD)
-/// always runs *outside* a tx — Postgres connections are precious and
-/// holding one across a 2-second Discord call is wasteful.
+/// The HC->Run convert path calls this after running
+/// `db::run::create_tx` + `claim_swap_to_run` inside its own transaction.
+/// The non-tx work (Discord HTTP, voice channel CRUD) always runs
+/// *outside* a tx — Postgres connections are precious and holding one
+/// across a 2-second Discord call is wasteful.
 pub async fn finalize_run_post_create(
     serenity_ctx: &serenity::Context,
     pool: &PgPool,

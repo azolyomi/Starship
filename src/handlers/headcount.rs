@@ -440,96 +440,94 @@ async fn handle_confirm_start(
         Some(party_trim)
     };
 
-    // Two paths diverge here:
-    //
-    // 1. Self-organize tier: delete HC + create Run + swap claim in one
-    //    transaction so the slot lock never gets briefly released. The
-    //    Discord-side post happens after commit.
-    // 2. Legacy: existing tx-less delete + start_run path.
+    // Unified HC->Run convert. One transaction creates the run row,
+    // migrates any slot claim off the HC, then deletes the HC. Order
+    // matters: the slot_claim FK to headcounts is `ON DELETE NO ACTION`,
+    // so the HC delete fails immediately if a claim still references it.
+    // Both convert variants share this skeleton — the only difference is
+    // whether we *swap* the claim to the new run (preserves the slot
+    // lock through the convert) or *release* it (tier is no longer
+    // self-organize, lock is meaningless).
+    let mut tx = data.db.begin().await?;
+    let mut run = db::run::create_tx(
+        &mut tx,
+        hc.guild_id,
+        tier.id,
+        template.id,
+        raid_channel_id,
+        hc.leader_user_id,
+        template.requires_vc,
+        hc.is_self_organized,
+    )
+    .await?;
+
+    // Migrate or release the slot claim BEFORE deleting the HC. Both
+    // helpers are no-ops when no claim row exists (e.g. HC was created
+    // when the tier was non-SO); that's fine — without a referencing
+    // claim there's nothing to violate the FK with either.
     if tier.enable_self_organization {
-        let mut tx = data.db.begin().await?;
-        let row_existed = db::headcount::delete_tx(&mut tx, hc_id).await?;
-        if !row_existed {
-            tx.rollback().await?;
-            modal
-                .create_response(ctx, ephemeral_msg("This headcount is no longer active."))
-                .await?;
-            return Ok(());
-        }
-        let mut run = db::run::create_tx(
-            &mut tx,
-            hc.guild_id,
-            tier.id,
-            template.id,
-            raid_channel_id,
-            hc.leader_user_id,
-            template.requires_vc,
-            hc.is_self_organized,
-        )
-        .await?;
-        // Swap the slot claim from HC to Run; the lock stays held the whole
-        // way through. Returns false if no claim row existed (staff `/headcount`
-        // in a self-organize tier *does* write a claim, so this should be true
-        // — but treat false as a soft signal rather than aborting).
-        let swapped = db::self_organize::claim_swap_to_run(&mut tx, hc.id, run.id).await?;
-        if !swapped {
-            tracing::warn!(
-                hc_id = hc.id,
-                run_id = run.id,
-                tier_id = tier.id,
-                "claim_swap_to_run found no claim row — slot lock not preserved across convert",
-            );
-        }
-        tx.commit().await?;
+        db::self_organize::claim_swap_to_run(&mut tx, hc.id, run.id).await?;
+    } else {
+        // Stale claim defence: if the tier was SO at HC creation but
+        // disabled before convert, a claim still references the HC.
+        // Release it so the HC delete passes the FK check.
+        db::self_organize::claim_release_by_headcount(&mut tx, hc.id).await?;
+    }
 
-        // Persist location/party as a follow-up UPDATE outside the tx
-        // (no contention; Discord HTTP is already imminent).
-        if let Some(loc) = location {
-            db::run::set_location(&data.db, run.id, Some(loc)).await?;
-            run.location = Some(loc.to_string());
-        }
-        if let Some(p) = party {
-            db::run::set_party(&data.db, run.id, Some(p)).await?;
-            run.party = Some(p.to_string());
-        }
-
+    let row_existed = db::headcount::delete_tx(&mut tx, hc_id).await?;
+    if !row_existed {
+        tx.rollback().await?;
         modal
-            .create_response(
-                ctx,
-                CreateInteractionResponse::Message(
-                    CreateInteractionResponseMessage::new()
-                        .content(format!("Run posted in <#{raid_channel_id}>."))
-                        .ephemeral(true),
-                ),
-            )
+            .create_response(ctx, ephemeral_msg("This headcount is no longer active."))
             .await?;
+        return Ok(());
+    }
+    tx.commit().await?;
 
-        if let Err(e) = serenity::ChannelId::new(hc.channel_id as u64)
-            .edit_message(
-                &ctx.http,
-                MessageId::new(hc.message_id as u64),
-                EditMessage::new().components(vec![]),
-            )
-            .await
-        {
-            tracing::warn!(
-                error = ?e,
-                hc_id,
-                channel_id = hc.channel_id,
-                message_id = hc.message_id,
-                "failed to strip buttons from converted headcount message",
-            );
-        }
+    // Persist location/party as follow-up UPDATEs outside the tx (no
+    // contention; Discord HTTP is already imminent).
+    if let Some(loc) = location {
+        db::run::set_location(&data.db, run.id, Some(loc)).await?;
+        run.location = Some(loc.to_string());
+    }
+    if let Some(p) = party {
+        db::run::set_party(&data.db, run.id, Some(p)).await?;
+        run.party = Some(p.to_string());
+    }
 
-        services::raid::finalize_run_post_create(
+    modal
+        .create_response(
             ctx,
-            &data.db,
-            &mut run,
-            &template,
-            raid_channel_id,
+            CreateInteractionResponse::Message(
+                CreateInteractionResponseMessage::new()
+                    .content(format!("Run posted in <#{raid_channel_id}>."))
+                    .ephemeral(true),
+            ),
         )
         .await?;
 
+    if let Err(e) = serenity::ChannelId::new(hc.channel_id as u64)
+        .edit_message(
+            &ctx.http,
+            MessageId::new(hc.message_id as u64),
+            EditMessage::new().components(vec![]),
+        )
+        .await
+    {
+        tracing::warn!(
+            error = ?e,
+            hc_id,
+            channel_id = hc.channel_id,
+            message_id = hc.message_id,
+            "failed to strip buttons from converted headcount message",
+        );
+    }
+
+    services::raid::finalize_run_post_create(ctx, &data.db, &mut run, &template, raid_channel_id)
+        .await?;
+
+    // Listing refresh only matters when the tier is currently SO.
+    if tier.enable_self_organization {
         if let Err(e) = services::self_organize_listing::refresh_listing(ctx, &data.db, &tier).await
         {
             tracing::warn!(
@@ -538,55 +536,6 @@ async fn handle_confirm_start(
                 "failed to refresh self-organize listing after HC convert",
             );
         }
-    } else {
-        // Legacy non-self-organize path: existing semantics preserved.
-        if !db::headcount::delete(&data.db, hc_id).await? {
-            modal
-                .create_response(ctx, ephemeral_msg("This headcount is no longer active."))
-                .await?;
-            return Ok(());
-        }
-
-        modal
-            .create_response(
-                ctx,
-                CreateInteractionResponse::Message(
-                    CreateInteractionResponseMessage::new()
-                        .content(format!("Run posted in <#{raid_channel_id}>."))
-                        .ephemeral(true),
-                ),
-            )
-            .await?;
-
-        if let Err(e) = serenity::ChannelId::new(hc.channel_id as u64)
-            .edit_message(
-                &ctx.http,
-                MessageId::new(hc.message_id as u64),
-                EditMessage::new().components(vec![]),
-            )
-            .await
-        {
-            tracing::warn!(
-                error = ?e,
-                hc_id,
-                channel_id = hc.channel_id,
-                message_id = hc.message_id,
-                "failed to strip buttons from converted headcount message",
-            );
-        }
-
-        services::raid::start_run(
-            ctx,
-            &data.db,
-            hc.guild_id,
-            &tier,
-            &template,
-            raid_channel_id,
-            hc.leader_user_id,
-            location,
-            party,
-        )
-        .await?;
     }
 
     Ok(())

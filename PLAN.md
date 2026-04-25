@@ -2411,6 +2411,56 @@ boot — restarting the bot heals stuck HCs without intervention.
 Verification: `cargo fmt --check`, `cargo build`, `cargo clippy
 --all-targets -- -D warnings`, `cargo test` (15 passed) all green.
 
+### 2026-04-25 — Convert-path FK violation fix
+
+User clicked Start Run on a self-organize headcount and got
+`update or delete on table "headcounts" violates foreign key constraint
+"self_organize_slot_claims_headcount_id_fkey"`.
+
+Root cause: `handlers::headcount::handle_confirm_start`'s self-organize
+branch called `headcount::delete_tx` BEFORE `claim_swap_to_run`. The
+slot_claim FK to headcounts is `ON DELETE NO ACTION` (not
+`DEFERRABLE INITIALLY DEFERRED`), so the constraint check fires at
+the end of the DELETE statement — at which point the claim still
+references the HC. The other lifecycle handlers (`handle_cancel`,
+`handle_end`) had the order right: claim release first, row delete
+second. Convert was the only one that got it wrong.
+
+The legacy branch (tier currently non-SO) had the mirror bug: a plain
+`db::headcount::delete` with no claim cleanup. Reachable when a tier
+was SO at HC creation but disabled before convert — same FK violation.
+
+Landed:
+- `handlers/headcount.rs::handle_confirm_start` — unified the
+  self-organize and legacy branches into one flow:
+  1. Open tx
+  2. `db::run::create_tx` — create the run row
+  3. If tier currently SO: `claim_swap_to_run(hc.id, run.id)` — moves
+     the FK from headcount_id → run_id, preserving the slot lock.
+     If tier currently non-SO: `claim_release_by_headcount(hc.id)` —
+     no-ops if no claim exists, but cleans up stale claims from a
+     previously-SO tier.
+  4. `db::headcount::delete_tx` — now safe, no FK references the HC.
+  5. Commit, then proceed with the existing post-commit work
+     (location/party UPDATEs, modal ack, button strip,
+     `finalize_run_post_create`, listing refresh).
+- Listing refresh stays gated on `tier.enable_self_organization` so a
+  tier that's no longer SO doesn't waste a Discord call.
+- `services::raid::start_run` deleted (its only caller was the legacy
+  branch above; the convert path uses `finalize_run_post_create`
+  directly).
+- `db::run::create` (non-tx) deleted (only `create_tx` is used now).
+- The dead `/run` mention in the post-Quick-Setup summary copy stays
+  for now — there's no `/run` command in the codebase, but the line
+  is cosmetic and removing it is out of scope for this fix.
+
+Verification: `cargo fmt --check`, `cargo build`, `cargo clippy
+--all-targets -- -D warnings`, `cargo test` (15 passed) all green.
+
+Operator follow-up: any HC stuck in the broken state from the prior
+boot will convert cleanly on retry — the FK violation aborts the tx
+without leaving partial state, so no DB cleanup needed.
+
 ### Credentials still needed from the user
 
 Collected into `.env` when we're ready to boot:
