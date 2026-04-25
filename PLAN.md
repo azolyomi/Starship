@@ -1620,6 +1620,97 @@ Phase 7b (containerised deploy) and Phase 8 (`/config` polish + edge
 cases) remain on the main build order. Production-grade audit Phases D
 + E remain deferred from the audit roadmap.
 
+### 2026-04-24 — Phase 7b complete (containerised deploy)
+
+VPS deploy story — bare-metal `setup.sh` stays for dev; containers are the
+production path.
+
+Landed:
+- **`Dockerfile`** — multi-stage build. Stage 1 (`rust:1.95.0-slim-bookworm`)
+  warms the dep cache by building a stub crate against the real
+  `Cargo.toml` + `Cargo.lock`, then rebuilds once `src/`, `migrations/`,
+  and `data/` are in place. Stage 2 (`debian:bookworm-slim`) adds only
+  `ca-certificates` (HTTPS to Discord + RealmEye) and `tini` (clean PID 1
+  + signal forwarding so `docker compose down` reaches tokio's shutdown
+  path). Binary lands at `/usr/local/bin/starship`; workdir is `/app`
+  with `migrations/` + `data/` copied alongside. Runs as a non-root
+  `starship` user — bot writes zero to disk at runtime (all state in
+  Postgres), so dropping root is free. No native libs: every TLS path is
+  rustls, and songbird/opus were removed in Phase 6.
+- **`.dockerignore`** — keeps the build context lean: excludes `/target`
+  (the one footgun that would balloon `docker build` uploads on slow VPS
+  links), `.env`, `.git`, docs, editor cruft, and the deploy-side assets
+  (`docker-compose.yml`, `Dockerfile`, `deploy.sh`, `deploy/`) that don't
+  belong inside the image.
+- **`docker-compose.yml`** — two services:
+  - `postgres` (`postgres:16-alpine`) on a named `pgdata` volume, reads
+    `POSTGRES_USER` / `POSTGRES_DB` / `POSTGRES_PASSWORD` from `.env` via
+    `env_file:`. Healthcheck uses `pg_isready`, 5s interval, 10 retries.
+    Not published to the host by default (bot reaches it over the compose
+    network); a commented-out `ports:` block lets operators expose it to
+    `127.0.0.1:5432` for ad-hoc `psql`.
+  - `bot` builds from the Dockerfile, `depends_on` postgres with
+    `condition: service_healthy`, `restart: unless-stopped`. The
+    `DATABASE_URL` is built inside compose via `environment:`
+    interpolation from the `POSTGRES_*` vars — so the same `.env` works
+    on dev (bare-metal `setup.sh` writes `DATABASE_URL=…@localhost…`) and
+    prod (compose synthesises `…@postgres…`) without either side
+    overwriting the other. `stop_grace_period: 20s` gives tokio room to
+    flush.
+- **`deploy.sh`** — thin VPS wrapper. Validates `.env` exists, sources it,
+  fails fast if `DISCORD_TOKEN` / `DISCORD_APPLICATION_ID` /
+  `POSTGRES_PASSWORD` are unset (prevents silently spinning up a postgres
+  with an empty password). Then `git pull --ff-only` → `docker compose up
+  -d --build` → prints `docker compose ps`. `--no-pull` skips the pull;
+  `--logs` tails `docker compose logs -f bot` afterwards. Real lifecycle
+  is owned by compose's `restart: unless-stopped` — this script just
+  makes the deploy loop one command.
+- **`deploy/starship.service`** — systemd unit that runs
+  `docker compose up -d --build` at boot and `docker compose down` on
+  halt. `Type=oneshot` + `RemainAfterExit=yes` per the compose-owns-
+  supervision design (no per-process watchdog). `Requires=docker.service`
+  + `After=docker.service network-online.target`. `WorkingDirectory=
+  /opt/starship` is the documented deploy path; install instructions
+  live in the unit file header.
+- **`.env.example`** — reworked Database section. `DATABASE_URL`
+  commentary now explicitly covers the dev (localhost) vs. Docker
+  (ignored by compose) split. New "Postgres (Docker deploy only)"
+  section documents `POSTGRES_USER` / `POSTGRES_DB` (defaults match
+  setup.sh so dumps move cleanly between dev and prod) and
+  `POSTGRES_PASSWORD` (required for Docker; includes the same
+  `openssl rand -base64 33 | tr -d '/+=\n' | cut -c1-40` generator
+  setup.sh uses internally, plus a "don't reuse the dev password" note).
+- **`cargo build` / `cargo test`** — unchanged, green (no Rust touched
+  this phase; gates run pre-commit).
+
+Not verified in-session: `docker build` and `docker compose up` —
+neither docker nor the compose plugin are installed on this dev box
+(by design, dev is bare-metal). Both need to run once on the VPS or
+any machine with Docker before first deploy. The image has no native
+deps so a clean build should just work, but if the stub-crate cache
+layer misbehaves (e.g. cargo deciding to rebuild everything anyway),
+switching to `cargo-chef` is the standard escape hatch.
+
+Operator runbook (first deploy):
+1. `git clone` to `/opt/starship` on the VPS (or update the `deploy/
+   starship.service` `WorkingDirectory=` to match).
+2. `cp .env.example .env` and fill in `DISCORD_TOKEN`,
+   `DISCORD_APPLICATION_ID`, `POSTGRES_PASSWORD` (generate with the
+   command in the env-example comment), `REALMEYE_USER_AGENT`.
+3. `./deploy.sh` — builds the image, starts postgres + bot.
+4. Watch `docker compose logs -f bot` for "seeded dungeon templates
+   dungeons=… overrides=…" → orphan sweep → "Ready!" (or equivalent
+   final serenity log).
+5. Optional: `sudo cp deploy/starship.service /etc/systemd/system/` then
+   `sudo systemctl enable --now starship` so the stack comes up at boot
+   without manual intervention.
+
+Phase 8 (`/config` polish + edge cases) and audit Phases D
+(snowflake newtypes / DB-arg param structs) + E (doc coverage + CI
+image) remain on the roadmap. CI now has a concrete target for Phase
+E: build the Dockerfile in a GitHub Actions job and run the four
+gates (`fmt --check`, `build`, `clippy -D warnings`, `test`).
+
 ### Credentials still needed from the user
 
 Collected into `.env` when we're ready to boot:
@@ -1630,6 +1721,10 @@ Collected into `.env` when we're ready to boot:
 - `DISCORD_TEST_GUILD_ID` *(optional but strongly recommended for dev)* —
   right-click the test server in Discord with Developer Mode on → Copy
   Server ID.
+- `POSTGRES_PASSWORD` *(Docker deploy only)* — generate with
+  `openssl rand -base64 33 | tr -d '/+=\n' | cut -c1-40`. Required by
+  `docker-compose.yml`; ignored by bare-metal `setup.sh`.
 
-`DATABASE_URL` is populated automatically by `setup.sh`; do not set it
-by hand.
+`DATABASE_URL` is populated automatically by `setup.sh` on bare-metal and
+synthesised by `docker-compose.yml` on Docker; do not set it by hand in
+either case.

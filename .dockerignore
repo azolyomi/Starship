@@ -1,0 +1,52 @@
+# Keep the build context small: the `COPY` lines in Dockerfile enumerate
+# everything we actually need, but a tight .dockerignore still cuts
+# `docker build` upload time on slow VPS links.
+
+# Rust build artifacts — pulling a 1GB target dir into the context is
+# the single biggest footgun here.
+/target
+**/*.rs.bk
+**/*.orig
+
+# Secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.crt
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Docs / planning (only the running bot matters in the image)
+*.md
+LICENSE
+.claude
+
+# Editor / OS
+.vscode
+.idea
+*.swp
+*.swo
+.DS_Store
+
+# Local DB dumps (never want these in an image)
+*.sql
+*.sql.gz
+*.dump
+!migrations/*.sql
+
+# Scraper caches
+/scraper_cache
+/emoji_cache
+
+# Compose / deploy-side assets — not needed inside the image
+docker-compose.yml
+Dockerfile
+.dockerignore
+deploy.sh
+deploy/
+setup.sh

@@ -1,0 +1,52 @@
+# Starship bot systemd unit.
+#
+# Purpose: start `docker compose up -d` at boot and shut it down on halt.
+# The bot's own restart policy is owned by compose (restart:
+# unless-stopped); systemd's job is just boot-time bootstrap, not
+# per-process supervision.
+#
+# Install (on the VPS, as root):
+#   sudo cp deploy/starship.service /etc/systemd/system/starship.service
+#   # edit the Environment= line below if the repo lives somewhere other
+#   # than /opt/starship, then:
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now starship.service
+#
+# Verify:
+#   systemctl status starship.service
+#   docker compose -f /opt/starship/docker-compose.yml ps
+#   journalctl -u starship.service
+
+[Unit]
+Description=Starship Discord bot (docker compose)
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+
+# Where the repo is checked out. Override if your deploy path differs.
+WorkingDirectory=/opt/starship
+
+# `--build` so a `git pull` followed by `systemctl restart starship`
+# actually rebuilds the image. If you prefer manual rebuilds via
+# deploy.sh and want systemd-triggered restarts to be instant, drop the
+# `--build` flag.
+ExecStart=/usr/bin/docker compose up -d --build
+ExecStop=/usr/bin/docker compose down
+
+# Stream compose's output to journald so `journalctl -u starship` shows
+# the deploy timeline. Day-to-day bot logs live in `docker compose logs`.
+StandardOutput=journal
+StandardError=journal
+
+# systemd restarts the unit on failure (compose itself doesn't fail often
+# — most problems happen inside the container and compose's own
+# restart: unless-stopped handles them).
+Restart=on-failure
+RestartSec=10s
+
+[Install]
+WantedBy=multi-user.target

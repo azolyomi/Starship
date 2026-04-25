@@ -1,0 +1,59 @@
+# Production compose file for the VPS.
+#
+# Usage (on the VPS):
+#   ./deploy.sh                          # git pull && compose up -d --build
+#   docker compose logs -f bot           # tail logs
+#   docker compose run --rm bot sync-wiki
+#   docker compose down                  # stop everything
+#
+# The bot reads its config from .env (via env_file:). .env must exist and
+# must contain at minimum:
+#   DISCORD_TOKEN=...
+#   DISCORD_APPLICATION_ID=...
+#   POSTGRES_PASSWORD=...      (generate: openssl rand -base64 33 | tr -d '/+=\n' | cut -c1-40)
+#   REALMEYE_USER_AGENT=...
+#
+# DATABASE_URL is *not* read from .env here — compose builds it from the
+# POSTGRES_* vars below so the dev/VPS hosts (localhost vs. service name)
+# don't collide in the same .env file.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-starship}
+      POSTGRES_DB: ${POSTGRES_DB:-starship}
+      # POSTGRES_PASSWORD comes from .env via env_file above — required.
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-starship} -d ${POSTGRES_DB:-starship}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    # Not published to the host by default — the bot reaches it over the
+    # compose network. Uncomment to expose for psql from the VPS shell.
+    # ports:
+    #   - "127.0.0.1:5432:5432"
+
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-starship}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-starship}
+    # `stop_grace_period` gives tokio a chance to finish its current HTTP
+    # request + flush tracing on shutdown before docker SIGKILLs.
+    stop_grace_period: 20s
+    # No ports published: the bot is an outbound-only Discord gateway client.
+
+volumes:
+  pgdata:
