@@ -64,8 +64,12 @@ fn build_loot_fields_from(
 ) -> Vec<(String, String, bool)> {
     let mut by_tier: HashMap<&str, Vec<&BotEmoji>> = HashMap::new();
     for logical in showcase_emoji {
-        let Some(e) = emoji_map.get(logical) else { continue };
-        let Some(tier) = e.bag_tier.as_deref() else { continue };
+        let Some(e) = emoji_map.get(logical) else {
+            continue;
+        };
+        let Some(tier) = e.bag_tier.as_deref() else {
+            continue;
+        };
         by_tier.entry(tier).or_default().push(e);
     }
 
@@ -79,7 +83,9 @@ fn build_loot_fields_from(
                 continue;
             }
         }
-        let Some(drops) = by_tier.get(tier.name.as_str()) else { continue };
+        let Some(drops) = by_tier.get(tier.name.as_str()) else {
+            continue;
+        };
         if drops.is_empty() {
             continue;
         }

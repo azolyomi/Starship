@@ -143,8 +143,7 @@ async fn run_bot(config: config::Config) -> Result<()> {
                     .await?;
                     info!(%guild_id, "registered commands in test guild");
                 } else {
-                    poise::builtins::register_globally(ctx, &framework.options().commands)
-                        .await?;
+                    poise::builtins::register_globally(ctx, &framework.options().commands).await?;
                     info!("registered commands globally");
                 }
                 Ok(BotData { db: pool, config })
@@ -174,26 +173,23 @@ async fn run_bot(config: config::Config) -> Result<()> {
 /// Only fires on the pre-R4 schema — detected by the lingering
 /// `headcount_reactions` table. After R4 is applied, this is a no-op.
 async fn r4_migration_preflight(pool: &PgPool) -> Result<()> {
-    let pre_r4_name: Option<String> = sqlx::query_scalar(
-        "SELECT to_regclass('public.headcount_reactions')::TEXT",
-    )
-    .fetch_one(pool)
-    .await?;
+    let pre_r4_name: Option<String> =
+        sqlx::query_scalar("SELECT to_regclass('public.headcount_reactions')::TEXT")
+            .fetch_one(pool)
+            .await?;
 
     if pre_r4_name.is_none() {
         return Ok(());
     }
 
-    let active_hc: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*)::BIGINT FROM headcounts WHERE status = 'active'",
-    )
-    .fetch_one(pool)
-    .await?;
-    let active_runs: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*)::BIGINT FROM runs WHERE status = 'active'",
-    )
-    .fetch_one(pool)
-    .await?;
+    let active_hc: i64 =
+        sqlx::query_scalar("SELECT COUNT(*)::BIGINT FROM headcounts WHERE status = 'active'")
+            .fetch_one(pool)
+            .await?;
+    let active_runs: i64 =
+        sqlx::query_scalar("SELECT COUNT(*)::BIGINT FROM runs WHERE status = 'active'")
+            .fetch_one(pool)
+            .await?;
 
     if active_hc + active_runs == 0 {
         return Ok(());

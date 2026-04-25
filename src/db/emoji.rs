@@ -75,7 +75,10 @@ pub async fn get_by_logical_name(pool: &PgPool, name: &str) -> Result<Option<Bot
 
 pub async fn get_all_as_map(pool: &PgPool) -> Result<HashMap<String, BotEmoji>> {
     let all = get_all(pool).await?;
-    Ok(all.into_iter().map(|e| (e.logical_name.clone(), e)).collect())
+    Ok(all
+        .into_iter()
+        .map(|e| (e.logical_name.clone(), e))
+        .collect())
 }
 
 pub async fn get_all(pool: &PgPool) -> Result<Vec<BotEmoji>> {
@@ -112,7 +115,11 @@ pub struct ApplicationEmojiClient {
 
 impl ApplicationEmojiClient {
     pub fn new(client: Client, token: impl Into<String>, app_id: u64) -> Self {
-        Self { client, token: token.into(), app_id }
+        Self {
+            client,
+            token: token.into(),
+            app_id,
+        }
     }
 
     fn base_url(&self) -> String {

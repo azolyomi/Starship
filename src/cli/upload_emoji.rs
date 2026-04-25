@@ -31,8 +31,7 @@ pub async fn run(
     let pool = db::create_pool(&config.database_url).await?;
 
     // Sanity-check the file exists + is a PNG before hitting Discord.
-    let bytes = std::fs::read(&file)
-        .with_context(|| format!("reading {}", file.display()))?;
+    let bytes = std::fs::read(&file).with_context(|| format!("reading {}", file.display()))?;
     if !bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
         anyhow::bail!("{}: not a PNG (magic bytes don't match)", file.display());
     }
@@ -60,8 +59,7 @@ pub async fn run(
         Some(&(id, animated)) => {
             info!(
                 name_on_discord,
-                id,
-                "emoji already registered with Discord — reusing id"
+                id, "emoji already registered with Discord — reusing id"
             );
             (id, animated)
         }

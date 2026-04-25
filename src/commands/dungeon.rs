@@ -36,7 +36,11 @@ pub async fn list(
 
     let mut fields: Vec<(String, String, bool)> = Vec::new();
     for t in &templates {
-        let scope = if t.guild_id.is_some() { "custom" } else { "global" };
+        let scope = if t.guild_id.is_some() {
+            "custom"
+        } else {
+            "global"
+        };
         let vc = if t.requires_vc { " • VC raid" } else { "" };
         fields.push((
             format!("{} ({})", t.display_name, scope),

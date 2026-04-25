@@ -17,8 +17,7 @@ use poise::CreateReply;
 use serenity::{
     ButtonStyle, ComponentInteractionCollector, ComponentInteractionDataKind, CreateActionRow,
     CreateButton, CreateEmbed, CreateInteractionResponse, CreateInteractionResponseMessage,
-    CreateSelectMenu, CreateSelectMenuKind, CreateSelectMenuOption, EditRole, Permissions,
-    RoleId,
+    CreateSelectMenu, CreateSelectMenuKind, CreateSelectMenuOption, EditRole, Permissions, RoleId,
 };
 
 use crate::db::models::DungeonTemplate;
@@ -246,13 +245,11 @@ fn render(
         .collect();
 
     let max_values = page_slice.len().max(1) as u8;
-    let select = CreateSelectMenu::new(
-        "pingroles:select",
-        CreateSelectMenuKind::String { options },
-    )
-    .placeholder("Select dungeons to subscribe to")
-    .min_values(0)
-    .max_values(max_values);
+    let select =
+        CreateSelectMenu::new("pingroles:select", CreateSelectMenuKind::String { options })
+            .placeholder("Select dungeons to subscribe to")
+            .min_values(0)
+            .max_values(max_values);
 
     let buttons = CreateActionRow::Buttons(vec![
         CreateButton::new("pingroles:prev")
@@ -342,8 +339,7 @@ async fn apply_subscription_diff(
     }
 
     let added_ok = to_add.len() - failures.iter().filter(|f| f.starts_with("add ")).count();
-    let removed_ok =
-        to_remove.len() - failures.iter().filter(|f| f.starts_with("remove ")).count();
+    let removed_ok = to_remove.len() - failures.iter().filter(|f| f.starts_with("remove ")).count();
 
     if failures.is_empty() {
         if added_ok == 0 && removed_ok == 0 {
@@ -411,8 +407,7 @@ pub async fn set_(
     #[description = "Dungeon to bind"]
     #[autocomplete = "autocomplete_dungeon"]
     dungeon: String,
-    #[description = "Role pinged when a headcount/run starts"]
-    role: serenity::Role,
+    #[description = "Role pinged when a headcount/run starts"] role: serenity::Role,
 ) -> Result<(), BotError> {
     perm_svc::require(ctx, Action::ConfigureGuild, None, None).await?;
 

@@ -32,12 +32,11 @@ pub fn resolve_bag_emoji(tier: &BagTier, emoji_map: &HashMap<String, BotEmoji>) 
 /// if the guild row is missing. The column itself has a NOT NULL DEFAULT,
 /// so the fallback only kicks in for guilds that haven't been `upsert`'d yet.
 pub async fn get_threshold(pool: &PgPool, guild_id: i64) -> Result<String> {
-    let row: Option<(String,)> = sqlx::query_as(
-        "SELECT loot_tier_threshold FROM guilds WHERE guild_id = $1",
-    )
-    .bind(guild_id)
-    .fetch_optional(pool)
-    .await?;
+    let row: Option<(String,)> =
+        sqlx::query_as("SELECT loot_tier_threshold FROM guilds WHERE guild_id = $1")
+            .bind(guild_id)
+            .fetch_optional(pool)
+            .await?;
     Ok(row.map(|(t,)| t).unwrap_or_else(|| "white".to_string()))
 }
 

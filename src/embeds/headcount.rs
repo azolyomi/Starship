@@ -91,11 +91,7 @@ pub fn build(
     // Headcounts show every classified drop — the signup decision happens
     // here, so raiders want the full loot picture regardless of the guild's
     // run-view threshold.
-    let fields = build_loot_fields_all(
-        &template.showcase_emoji,
-        emoji_map,
-        bag_tiers,
-    );
+    let fields = build_loot_fields_all(&template.showcase_emoji, emoji_map, bag_tiers);
 
     let mut embed = CreateEmbed::default()
         .title(title)

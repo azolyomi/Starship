@@ -48,7 +48,16 @@ async fn autocomplete_dungeon<'a>(
 #[poise::command(
     slash_command,
     guild_only,
-    subcommands("create", "delete", "list", "edit", "add_role", "remove_role", "add_dungeon", "remove_dungeon"),
+    subcommands(
+        "create",
+        "delete",
+        "list",
+        "edit",
+        "add_role",
+        "remove_role",
+        "add_dungeon",
+        "remove_dungeon"
+    ),
     subcommand_required
 )]
 pub async fn tier(_ctx: BotContext<'_>) -> Result<(), BotError> {
@@ -150,8 +159,9 @@ pub async fn edit(
     name: String,
     #[description = "New name"] new_name: Option<String>,
     #[description = "New description"] description: Option<String>,
-    #[description = "Runs channel (headcounts + runs post here)"]
-    runs_channel: Option<serenity::GuildChannel>,
+    #[description = "Runs channel (headcounts + runs post here)"] runs_channel: Option<
+        serenity::GuildChannel,
+    >,
 ) -> Result<(), BotError> {
     perm_svc::require(ctx, Action::ManageTiers, None, None).await?;
 
@@ -218,8 +228,11 @@ pub async fn add_role(
 
     let added = db::tier::add_role(pool, t.id, role.id.get() as i64).await?;
     if added {
-        ctx.say(format!("Added <@&{}> as an access role for **{}**.", role.id, t.name))
-            .await?;
+        ctx.say(format!(
+            "Added <@&{}> as an access role for **{}**.",
+            role.id, t.name
+        ))
+        .await?;
     } else {
         ctx.say("That role is already assigned to this tier.")
             .await?;
@@ -295,8 +308,11 @@ pub async fn add_dungeon(
 
     let added = db::tier::add_dungeon(pool, t.id, d.id).await?;
     if added {
-        ctx.say(format!("Added **{}** to tier **{}**.", d.display_name, t.name))
-            .await?;
+        ctx.say(format!(
+            "Added **{}** to tier **{}**.",
+            d.display_name, t.name
+        ))
+        .await?;
     } else {
         ctx.say("That dungeon is already in this tier.").await?;
     }

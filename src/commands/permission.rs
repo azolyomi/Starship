@@ -176,7 +176,8 @@ pub async fn list(ctx: BotContext<'_>) -> Result<(), BotError> {
     let rows = db::permission::list_for_guild(&ctx.data().db, guild_id).await?;
 
     if rows.is_empty() {
-        ctx.say("No permissions configured for this server.").await?;
+        ctx.say("No permissions configured for this server.")
+            .await?;
         return Ok(());
     }
 

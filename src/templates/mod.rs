@@ -297,9 +297,7 @@ fn merge(dump: &WikiDump, overrides: &Overrides) -> Result<Vec<Effective>> {
     for (name, ovr) in &overrides.0 {
         if let Some(target) = &ovr.extends {
             if !dump_by_name.contains_key(target.as_str()) {
-                bail!(
-                    "override `{name}` extends `{target}`, which is not in the wiki dump"
-                );
+                bail!("override `{name}` extends `{target}`, which is not in the wiki dump");
             }
         }
     }
@@ -401,10 +399,9 @@ fn load_json<T: for<'de> Deserialize<'de> + Default>(rel_path: &str) -> Result<T
     if !path.exists() {
         return Ok(T::default());
     }
-    let bytes = std::fs::read(&path)
-        .with_context(|| format!("reading {}", path.display()))?;
-    let v = serde_json::from_slice(&bytes)
-        .with_context(|| format!("parsing {}", path.display()))?;
+    let bytes = std::fs::read(&path).with_context(|| format!("reading {}", path.display()))?;
+    let v =
+        serde_json::from_slice(&bytes).with_context(|| format!("parsing {}", path.display()))?;
     Ok(v)
 }
 
@@ -417,8 +414,7 @@ fn save_json<T: Serialize>(rel_path: &str, value: &T) -> Result<()> {
     let path = PathBuf::from(rel_path);
     let mut body = serde_json::to_string_pretty(value).context("serializing JSON")?;
     body.push('\n');
-    std::fs::write(&path, body)
-        .with_context(|| format!("writing {}", path.display()))?;
+    std::fs::write(&path, body).with_context(|| format!("writing {}", path.display()))?;
     Ok(())
 }
 
@@ -478,7 +474,7 @@ mod tests {
         // Inherited from the_void.
         assert_eq!(fullskip.emoji.as_deref(), Some("portal_void"));
         assert_eq!(fullskip.reactions.len(), 2); // interest + key
-        // Source still present unchanged.
+                                                 // Source still present unchanged.
         let source = effective
             .iter()
             .find(|e| e.name == "the_void")

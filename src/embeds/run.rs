@@ -62,12 +62,7 @@ pub fn build(
         description.push_str(&format!("\n\n**React with:** {}", parts.join(" · ")));
     }
 
-    let fields = build_loot_fields(
-        &template.showcase_emoji,
-        emoji_map,
-        bag_tiers,
-        threshold,
-    );
+    let fields = build_loot_fields(&template.showcase_emoji, emoji_map, bag_tiers, threshold);
 
     let mut embed = CreateEmbed::default()
         .title(full_title)

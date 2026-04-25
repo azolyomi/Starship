@@ -2,8 +2,8 @@ use poise::CreateReply;
 
 use crate::{
     db,
-    services::{permission as perm_svc, raid},
     services::permission::Action,
+    services::{permission as perm_svc, raid},
     BotContext, BotError,
 };
 
@@ -57,38 +57,40 @@ pub async fn headcount(
     #[description = "Tier (required if multiple tiers exist)"]
     #[autocomplete = "autocomplete_tier"]
     tier: Option<String>,
-    #[description = "Prefill location (carries over when the run starts)"]
-    location: Option<String>,
-    #[description = "Prefill party composition (carries over when the run starts)"]
-    party: Option<String>,
+    #[description = "Prefill location (carries over when the run starts)"] location: Option<String>,
+    #[description = "Prefill party composition (carries over when the run starts)"] party: Option<
+        String,
+    >,
 ) -> Result<(), BotError> {
     let guild_id = ctx.guild_id().unwrap().get() as i64;
     let pool = &ctx.data().db;
 
     // Resolve dungeon template.
     let Some(template) = db::dungeon::get_by_name(pool, guild_id, &dungeon).await? else {
-        ctx.send(ephemeral(format!("Unknown dungeon `{dungeon}`. Try the autocomplete list.")))
-            .await?;
+        ctx.send(ephemeral(format!(
+            "Unknown dungeon `{dungeon}`. Try the autocomplete list."
+        )))
+        .await?;
         return Ok(());
     };
 
     // Resolve tier.
     let tiers = db::tier::list(pool, guild_id).await?;
     let resolved_tier = match tier {
-        Some(ref name) => {
-            match tiers.iter().find(|t| t.name.eq_ignore_ascii_case(name)) {
-                Some(t) => t.clone(),
-                None => {
-                    ctx.send(ephemeral(format!("Unknown tier `{name}`."))).await?;
-                    return Ok(());
-                }
+        Some(ref name) => match tiers.iter().find(|t| t.name.eq_ignore_ascii_case(name)) {
+            Some(t) => t.clone(),
+            None => {
+                ctx.send(ephemeral(format!("Unknown tier `{name}`.")))
+                    .await?;
+                return Ok(());
             }
-        }
+        },
         None => {
             if tiers.len() == 1 {
                 tiers.into_iter().next().unwrap()
             } else if tiers.is_empty() {
-                ctx.send(ephemeral("No tiers configured — run `/setup` first.")).await?;
+                ctx.send(ephemeral("No tiers configured — run `/setup` first."))
+                    .await?;
                 return Ok(());
             } else {
                 let names: Vec<_> = tiers.iter().map(|t| t.name.as_str()).collect();
@@ -103,8 +105,13 @@ pub async fn headcount(
     };
 
     // Permission check (after we know the tier + template).
-    perm_svc::require(ctx, Action::StartHeadcount, Some(resolved_tier.id), Some(template.id))
-        .await?;
+    perm_svc::require(
+        ctx,
+        Action::StartHeadcount,
+        Some(resolved_tier.id),
+        Some(template.id),
+    )
+    .await?;
 
     // Check that a runs channel is configured for this tier.
     let Some(channel_id) = resolved_tier.runs_channel_id else {

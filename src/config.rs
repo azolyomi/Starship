@@ -42,10 +42,9 @@ impl Config {
             .map(|s| s.parse::<u64>())
             .transpose()
             .context("DISCORD_TEST_GUILD_ID must be a valid u64 if set")?;
-        let database_url =
-            std::env::var("DATABASE_URL").context("DATABASE_URL must be set")?;
-        let realmeye_user_agent = std::env::var("REALMEYE_USER_AGENT")
-            .unwrap_or_else(|_| "starship-bot/0.1".to_string());
+        let database_url = std::env::var("DATABASE_URL").context("DATABASE_URL must be set")?;
+        let realmeye_user_agent =
+            std::env::var("REALMEYE_USER_AGENT").unwrap_or_else(|_| "starship-bot/0.1".to_string());
 
         Ok(Config {
             discord_token,

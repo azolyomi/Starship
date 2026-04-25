@@ -89,11 +89,7 @@ const EXCLUDED_SECTIONS: &[&str] = &[
 /// drops-of-interest section on a dungeon page. The wiki isn't consistent —
 /// some dungeons use "Drops of Interest" while others use "Notable Drops" or
 /// plain "Drops".
-const DROP_SECTION_HEADINGS: &[&str] = &[
-    "drops of interest",
-    "notable drops",
-    "drops",
-];
+const DROP_SECTION_HEADINGS: &[&str] = &["drops of interest", "notable drops", "drops"];
 
 /// Ordered list of bag tier names (matches the bag_tiers lookup table). Used
 /// to classify items from their "Loot Bag" row on RealmEye. When an item
@@ -357,7 +353,11 @@ pub async fn run(dry_run: bool, purge: bool) -> Result<()> {
                     if !item_page_cache.contains_key(&item.img_url) {
                         let info = scrape_item_page(&client, path).await.unwrap_or_else(|e| {
                             warn!("item page fetch {path} failed: {e:#}");
-                            ItemBagInfo { tier: None, bag_image_url: None, shiny_image_url: None }
+                            ItemBagInfo {
+                                tier: None,
+                                bag_image_url: None,
+                                shiny_image_url: None,
+                            }
                         });
                         item_page_cache.insert(item.img_url.clone(), info);
                     }
@@ -903,10 +903,7 @@ fn extract_drops_section(html: &str) -> Option<String> {
 
 /// Like `find_heading_text_offset` but also returns the heading level
 /// (1..=4) so callers can scope the section end to equal-or-higher headings.
-fn find_heading_with_level(
-    haystack_lower: &str,
-    needles_lower: &[&str],
-) -> Option<(usize, u32)> {
+fn find_heading_with_level(haystack_lower: &str, needles_lower: &[&str]) -> Option<(usize, u32)> {
     for lvl in 1u32..=4 {
         let tag = format!("<h{lvl}");
         let close_tag = format!("</h{lvl}>");
@@ -1039,10 +1036,7 @@ async fn download_and_resize(client: &Client, url: &str) -> Result<Vec<u8>> {
 
     let mut buf = Vec::new();
     resized
-        .write_to(
-            &mut std::io::Cursor::new(&mut buf),
-            image::ImageFormat::Png,
-        )
+        .write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png)
         .context("re-encoding image as PNG")?;
 
     Ok(buf)
@@ -1074,7 +1068,9 @@ fn slug_from_display(name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_drops_section, keep_dungeon_sections, parse_drop_items, slug_from_display};
+    use super::{
+        extract_drops_section, keep_dungeon_sections, parse_drop_items, slug_from_display,
+    };
 
     #[test]
     fn drops_section_preserves_subsection_tables() {
@@ -1091,8 +1087,14 @@ mod tests {
             <p>log</p>\
         ";
         let extracted = extract_drops_section(html).expect("drops found");
-        assert!(extracted.contains("NORMAL"), "normal drops missing: {extracted}");
-        assert!(extracted.contains("BOSS"), "boss drops missing: {extracted}");
+        assert!(
+            extracted.contains("NORMAL"),
+            "normal drops missing: {extracted}"
+        );
+        assert!(
+            extracted.contains("BOSS"),
+            "boss drops missing: {extracted}"
+        );
         assert!(!extracted.contains("log"), "history leaked: {extracted}");
     }
 
@@ -1104,7 +1106,10 @@ mod tests {
 
     #[test]
     fn slug_strips_curly_apostrophe() {
-        assert_eq!(slug_from_display("Oryx\u{2019}s Sanctuary"), "oryxs_sanctuary");
+        assert_eq!(
+            slug_from_display("Oryx\u{2019}s Sanctuary"),
+            "oryxs_sanctuary"
+        );
     }
 
     #[test]
@@ -1193,7 +1198,8 @@ mod tests {
         // lives — the EXCLUDED_SLUGS denylist drops Castle/Chamber/Wine
         // Cellar individually while preserving O3.
         let curly = '\u{2019}';
-        let html = format!("\
+        let html = format!(
+            "\
             <h2 id=\"contents\">Contents</h2>\
             <p>TOC</p>\
             <h2 id=\"realm-dungeons\">Realm Dungeons</h2>\
@@ -1210,13 +1216,16 @@ mod tests {
             <table class=\"table-striped\"><tr><td>OTHER_ROW_DROP</td></tr></table>\
             <h2 id=\"history\">History</h2>\
             <p>log</p>\
-        ");
+        "
+        );
         let kept = keep_dungeon_sections(&html);
         assert!(kept.contains("REALM_ROW"), "missing REALM: {kept}");
         assert!(kept.contains("ADVANCED_ROW"), "missing ADVANCED: {kept}");
         assert!(kept.contains("HEROIC_ROW"), "missing HEROIC: {kept}");
-        assert!(kept.contains("CASTLE_SECTION_KEEP"),
-            "castle section should be kept (O3 lives there); got: {kept}");
+        assert!(
+            kept.contains("CASTLE_SECTION_KEEP"),
+            "castle section should be kept (O3 lives there); got: {kept}"
+        );
         assert!(!kept.contains("EVENT_ROW_DROP"), "event leaked: {kept}");
         assert!(!kept.contains("OTHER_ROW_DROP"), "other leaked: {kept}");
     }
@@ -1227,7 +1236,13 @@ mod tests {
 fn discord_name(logical: &str) -> String {
     let safe: String = logical
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     // Discord names must be 2-32 chars and start with alphanumeric.
     let trimmed = safe.trim_start_matches('_');
@@ -1253,10 +1268,7 @@ fn absolute_url(src: &str) -> String {
 // touching anything. Never auto-invoked; gated behind --purge flag.
 // ---------------------------------------------------------------------------
 
-async fn purge_all(
-    emoji_api: &ApplicationEmojiClient,
-    pool: Option<&sqlx::PgPool>,
-) -> Result<()> {
+async fn purge_all(emoji_api: &ApplicationEmojiClient, pool: Option<&sqlx::PgPool>) -> Result<()> {
     use std::io::Write;
 
     let existing = emoji_api.list().await.unwrap_or_else(|e| {

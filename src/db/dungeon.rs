@@ -156,13 +156,11 @@ pub async fn update_guild_template(
 
 /// Delete a guild-specific template; returns false if not found or is global.
 pub async fn delete_guild_template(pool: &PgPool, guild_id: i64, name: &str) -> Result<bool> {
-    let rows = sqlx::query(
-        "DELETE FROM dungeon_templates WHERE name = $1 AND guild_id = $2",
-    )
-    .bind(name)
-    .bind(guild_id)
-    .execute(pool)
-    .await?;
+    let rows = sqlx::query("DELETE FROM dungeon_templates WHERE name = $1 AND guild_id = $2")
+        .bind(name)
+        .bind(guild_id)
+        .execute(pool)
+        .await?;
     Ok(rows.rows_affected() > 0)
 }
 
@@ -219,11 +217,10 @@ pub async fn upsert_global_template(
 
 /// Names of every global dungeon template (`guild_id IS NULL`).
 pub async fn list_global_names(pool: &PgPool) -> Result<Vec<String>> {
-    let rows: Vec<(String,)> = sqlx::query_as(
-        "SELECT name FROM dungeon_templates WHERE guild_id IS NULL",
-    )
-    .fetch_all(pool)
-    .await?;
+    let rows: Vec<(String,)> =
+        sqlx::query_as("SELECT name FROM dungeon_templates WHERE guild_id IS NULL")
+            .fetch_all(pool)
+            .await?;
     Ok(rows.into_iter().map(|(n,)| n).collect())
 }
 
@@ -232,12 +229,10 @@ pub async fn list_global_names(pool: &PgPool) -> Result<Vec<String>> {
 /// that can block this now — and that means the dungeon is *actively in
 /// use*, so the seeder should back off and retry on the next boot.
 pub async fn delete_global_by_name(pool: &PgPool, name: &str) -> Result<bool> {
-    let rows = sqlx::query(
-        "DELETE FROM dungeon_templates WHERE guild_id IS NULL AND name = $1",
-    )
-    .bind(name)
-    .execute(pool)
-    .await?;
+    let rows = sqlx::query("DELETE FROM dungeon_templates WHERE guild_id IS NULL AND name = $1")
+        .bind(name)
+        .execute(pool)
+        .await?;
     Ok(rows.rows_affected() > 0)
 }
 

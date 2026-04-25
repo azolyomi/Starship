@@ -108,9 +108,7 @@ async fn require_organizer_component(
     if !ok {
         mci.create_response(
             ctx,
-            ephemeral_msg(
-                "Only the raid leader or users with **ManageRuns** can do that.",
-            ),
+            ephemeral_msg("Only the raid leader or users with **ManageRuns** can do that."),
         )
         .await?;
     }
@@ -224,8 +222,7 @@ async fn handle_start(
             .required(false)
             .max_length(1000),
     ));
-    let modal = CreateModal::new(format!("hc:{hc_id}:confirmstart"), "Start run")
-        .components(rows);
+    let modal = CreateModal::new(format!("hc:{hc_id}:confirmstart"), "Start run").components(rows);
     mci.create_response(ctx, CreateInteractionResponse::Modal(modal))
         .await?;
     Ok(())
@@ -317,9 +314,7 @@ async fn handle_confirm_start(
         modal
             .create_response(
                 ctx,
-                ephemeral_msg(
-                    "Only the raid leader or users with **ManageRuns** can do that.",
-                ),
+                ephemeral_msg("Only the raid leader or users with **ManageRuns** can do that."),
             )
             .await?;
         return Ok(());

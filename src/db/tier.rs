@@ -136,11 +136,7 @@ pub async fn add_dungeon(pool: &PgPool, tier_id: i32, dungeon_template_id: i32) 
     Ok(result.rows_affected() > 0)
 }
 
-pub async fn remove_dungeon(
-    pool: &PgPool,
-    tier_id: i32,
-    dungeon_template_id: i32,
-) -> Result<bool> {
+pub async fn remove_dungeon(pool: &PgPool, tier_id: i32, dungeon_template_id: i32) -> Result<bool> {
     let result = sqlx::query!(
         "DELETE FROM tier_dungeons WHERE tier_id = $1 AND dungeon_template_id = $2",
         tier_id,

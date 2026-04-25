@@ -121,12 +121,7 @@ async fn rebuild_and_edit_message(
     let threshold = db::loot::get_threshold(pool, run.guild_id).await?;
 
     let (embed, components) = embeds::run::build(
-        run,
-        &template,
-        &reactions,
-        &emoji_map,
-        &bag_tiers,
-        &threshold,
+        run, &template, &reactions, &emoji_map, &bag_tiers, &threshold,
     );
 
     serenity::ChannelId::new(run.channel_id as u64)
@@ -161,9 +156,7 @@ async fn require_organizer(
     if !ok {
         mci.create_response(
             ctx,
-            ephemeral_msg(
-                "Only the raid leader or users with **ManageRuns** can do that.",
-            ),
+            ephemeral_msg("Only the raid leader or users with **ManageRuns** can do that."),
         )
         .await?;
     }
@@ -220,15 +213,17 @@ async fn handle_loc_open(
     }
 
     let current = run.location.clone().unwrap_or_default();
-    let modal = CreateModal::new(format!("run:{run_id}:loc"), "Set run location")
-        .components(vec![CreateActionRow::InputText(
+    let modal = CreateModal::new(format!("run:{run_id}:loc"), "Set run location").components(vec![
+        CreateActionRow::InputText(
             CreateInputText::new(InputTextStyle::Short, "Location", "location")
                 .placeholder("e.g. USW3 realm, nexus 5 o'clock")
                 .value(current)
                 .required(false)
                 .max_length(200),
-        )]);
-    mci.create_response(ctx, CreateInteractionResponse::Modal(modal)).await?;
+        ),
+    ]);
+    mci.create_response(ctx, CreateInteractionResponse::Modal(modal))
+        .await?;
     Ok(())
 }
 
@@ -254,7 +249,8 @@ async fn handle_party_open(
                 .required(false)
                 .max_length(1000),
         )]);
-    mci.create_response(ctx, CreateInteractionResponse::Modal(modal)).await?;
+    mci.create_response(ctx, CreateInteractionResponse::Modal(modal))
+        .await?;
     Ok(())
 }
 
@@ -281,7 +277,10 @@ async fn modal_caller_is_organizer(
 ) -> Result<bool, BotError> {
     let caller_id = modal.user.id.get() as i64;
     let (perms, roles) = match modal.member.as_ref() {
-        Some(m) => (m.permissions, m.roles.iter().map(|r| r.get() as i64).collect()),
+        Some(m) => (
+            m.permissions,
+            m.roles.iter().map(|r| r.get() as i64).collect(),
+        ),
         None => (None, Vec::new()),
     };
     Ok(services::permission::can_organize(
@@ -304,16 +303,16 @@ async fn handle_loc_submit(
     run_id: i32,
 ) -> Result<(), BotError> {
     let Some(run) = db::run::get(&data.db, run_id).await? else {
-        modal.create_response(ctx, ephemeral_msg("This run has ended.")).await?;
+        modal
+            .create_response(ctx, ephemeral_msg("This run has ended."))
+            .await?;
         return Ok(());
     };
     if !modal_caller_is_organizer(&data.db, modal, &run).await? {
         modal
             .create_response(
                 ctx,
-                ephemeral_msg(
-                    "Only the raid leader or users with **ManageRuns** can do that.",
-                ),
+                ephemeral_msg("Only the raid leader or users with **ManageRuns** can do that."),
             )
             .await?;
         return Ok(());
@@ -321,7 +320,11 @@ async fn handle_loc_submit(
 
     let raw = extract_input(modal, "location").unwrap_or_default();
     let trimmed = raw.trim();
-    let new_loc: Option<&str> = if trimmed.is_empty() { None } else { Some(trimmed) };
+    let new_loc: Option<&str> = if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    };
     db::run::set_location(&data.db, run_id, new_loc).await?;
 
     modal
@@ -353,16 +356,16 @@ async fn handle_party_submit(
     run_id: i32,
 ) -> Result<(), BotError> {
     let Some(run) = db::run::get(&data.db, run_id).await? else {
-        modal.create_response(ctx, ephemeral_msg("This run has ended.")).await?;
+        modal
+            .create_response(ctx, ephemeral_msg("This run has ended."))
+            .await?;
         return Ok(());
     };
     if !modal_caller_is_organizer(&data.db, modal, &run).await? {
         modal
             .create_response(
                 ctx,
-                ephemeral_msg(
-                    "Only the raid leader or users with **ManageRuns** can do that.",
-                ),
+                ephemeral_msg("Only the raid leader or users with **ManageRuns** can do that."),
             )
             .await?;
         return Ok(());
@@ -370,7 +373,11 @@ async fn handle_party_submit(
 
     let raw = extract_input(modal, "party").unwrap_or_default();
     let trimmed = raw.trim();
-    let new_party: Option<&str> = if trimmed.is_empty() { None } else { Some(trimmed) };
+    let new_party: Option<&str> = if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    };
     db::run::set_party(&data.db, run_id, new_party).await?;
 
     modal
@@ -414,7 +421,9 @@ async fn handle_transfer_open(
 
     let menu = CreateSelectMenu::new(
         format!("run:{run_id}:xfer"),
-        CreateSelectMenuKind::User { default_users: None },
+        CreateSelectMenuKind::User {
+            default_users: None,
+        },
     )
     .placeholder("Pick the new leader")
     .min_values(1)
@@ -447,12 +456,10 @@ async fn handle_transfer_submit(
     }
 
     let new_leader: i64 = match &mci.data.kind {
-        serenity::ComponentInteractionDataKind::UserSelect { values } => {
-            match values.first() {
-                Some(u) => u.get() as i64,
-                None => return Ok(()),
-            }
-        }
+        serenity::ComponentInteractionDataKind::UserSelect { values } => match values.first() {
+            Some(u) => u.get() as i64,
+            None => return Ok(()),
+        },
         _ => return Ok(()),
     };
 
@@ -504,7 +511,8 @@ async fn handle_end(
     // Claim End atomically: two concurrent clicks both run, only one gets
     // `true` and fires the Discord-side teardown + audit log.
     if !db::run::delete(&data.db, run_id).await? {
-        mci.create_response(ctx, ephemeral_msg("This run has ended.")).await?;
+        mci.create_response(ctx, ephemeral_msg("This run has ended."))
+            .await?;
         return Ok(());
     }
 
@@ -512,11 +520,7 @@ async fn handle_end(
     // we get here the run is already gone from the DB; a dangling channel
     // is a manual-cleanup problem, not a flow-failure problem.
     if let Some(vc_id) = run.voice_channel_id {
-        services::voice::delete_temp_vc(
-            &ctx.http,
-            serenity::ChannelId::new(vc_id as u64),
-        )
-        .await;
+        services::voice::delete_temp_vc(&ctx.http, serenity::ChannelId::new(vc_id as u64)).await;
     }
 
     // Past this point the run is already gone from the DB — every remaining

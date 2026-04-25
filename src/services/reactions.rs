@@ -59,10 +59,7 @@ async fn try_react(
 ) -> Result<()> {
     let mut attempt = 0;
     loop {
-        match http
-            .create_reaction(channel_id, message_id, rt)
-            .await
-        {
+        match http.create_reaction(channel_id, message_id, rt).await {
             Ok(()) => return Ok(()),
             Err(e) => {
                 attempt += 1;
@@ -120,10 +117,7 @@ pub async fn ping_organizer_on_failure(
         list.join(" "),
     );
     if let Err(e) = channel_id
-        .send_message(
-            http,
-            serenity::CreateMessage::new().content(content),
-        )
+        .send_message(http, serenity::CreateMessage::new().content(content))
         .await
     {
         warn!(

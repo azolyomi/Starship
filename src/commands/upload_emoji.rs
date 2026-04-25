@@ -21,16 +21,12 @@ use crate::{BotContext, BotError};
 #[poise::command(slash_command, rename = "upload-emoji")]
 pub async fn upload_emoji(
     ctx: BotContext<'_>,
-    #[description = "Logical name used in code (e.g. wine_cellar_incantation)"]
-    name: String,
-    #[description = "PNG file (≤256KB, ideally 128×128)"]
-    image: serenity::Attachment,
+    #[description = "Logical name used in code (e.g. wine_cellar_incantation)"] name: String,
+    #[description = "PNG file (≤256KB, ideally 128×128)"] image: serenity::Attachment,
     #[description = "Override Discord-side name (≤32 chars, alphanumeric+underscore)"]
     discord_name: Option<String>,
-    #[description = "Category label: ui, key, drop, drop_shiny"]
-    category: Option<String>,
-    #[description = "Bag tier (white, cyan, etc.) — only for drop emojis"]
-    bag_tier: Option<String>,
+    #[description = "Category label: ui, key, drop, drop_shiny"] category: Option<String>,
+    #[description = "Bag tier (white, cyan, etc.) — only for drop emojis"] bag_tier: Option<String>,
 ) -> Result<(), BotError> {
     if ctx.author().id.get() != GLOBAL_SUPERADMIN_USER_ID {
         ctx.send(
@@ -46,10 +42,14 @@ pub async fn upload_emoji(
 
     // Basic shape checks before spending a Discord round-trip.
     if image.size > 256 * 1024 {
-        reply_err(ctx, format!(
-            "Attachment is {}KB — Discord's app-emoji limit is 256KB.",
-            image.size / 1024
-        )).await?;
+        reply_err(
+            ctx,
+            format!(
+                "Attachment is {}KB — Discord's app-emoji limit is 256KB.",
+                image.size / 1024
+            ),
+        )
+        .await?;
         return Ok(());
     }
     let bytes = image.download().await?;
@@ -64,11 +64,15 @@ pub async fn upload_emoji(
         return Ok(());
     }
     if name_on_discord.len() > 32 {
-        reply_err(ctx, format!(
-            "Discord-side name `{name_on_discord}` is {} chars; the limit is 32. \
+        reply_err(
+            ctx,
+            format!(
+                "Discord-side name `{name_on_discord}` is {} chars; the limit is 32. \
              Pass a shorter value with the `discord_name` parameter.",
-            name_on_discord.len()
-        )).await?;
+                name_on_discord.len()
+            ),
+        )
+        .await?;
         return Ok(());
     }
 

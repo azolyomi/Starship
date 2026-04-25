@@ -4,11 +4,10 @@ use anyhow::Result;
 use poise::serenity_prelude as serenity;
 use poise::{CreateReply, ReplyHandle};
 use serenity::{
-    ButtonStyle, ChannelId, ChannelType, ComponentInteraction,
-    ComponentInteractionCollector, ComponentInteractionDataKind, CreateActionRow,
-    CreateButton, CreateChannel, CreateEmbed, CreateEmbedFooter,
-    EditInteractionResponse, EditRole, CreateInteractionResponse,
-    CreateInteractionResponseMessage, CreateSelectMenu, CreateSelectMenuKind, MessageId,
+    ButtonStyle, ChannelId, ChannelType, ComponentInteraction, ComponentInteractionCollector,
+    ComponentInteractionDataKind, CreateActionRow, CreateButton, CreateChannel, CreateEmbed,
+    CreateEmbedFooter, CreateInteractionResponse, CreateInteractionResponseMessage,
+    CreateSelectMenu, CreateSelectMenuKind, EditInteractionResponse, EditRole, MessageId,
     Permissions, RoleId, UserId,
 };
 
@@ -192,10 +191,7 @@ fn intro_view() -> (CreateEmbed, Vec<CreateActionRow>) {
 /// raid-management permissions, assigns the invoking user as superadmin, and
 /// marks setup complete. Idempotent on re-entry — re-uses existing channels /
 /// roles when they already match the expected names.
-async fn quick_setup(
-    ctx: BotContext<'_>,
-    trigger: &ComponentInteraction,
-) -> Result<(), BotError> {
+async fn quick_setup(ctx: BotContext<'_>, trigger: &ComponentInteraction) -> Result<(), BotError> {
     // Acknowledge silently so we can take >3s on HTTP calls without the
     // button showing "interaction failed".
     trigger
@@ -266,14 +262,7 @@ async fn do_quick_setup(ctx: BotContext<'_>) -> Result<()> {
         }
         None => {
             let created = db::tier::create(pool, guild_id, "Main", None).await?;
-            db::tier::update(
-                pool,
-                created.id,
-                None,
-                None,
-                Some(runs_id.get() as i64),
-            )
-            .await?;
+            db::tier::update(pool, created.id, None, None, Some(runs_id.get() as i64)).await?;
             // Attach every global dungeon so `/headcount` works out of the box.
             for d in db::dungeon::list_for_guild(pool, guild_id).await? {
                 db::tier::add_dungeon(pool, created.id, d.id).await?;
@@ -298,8 +287,7 @@ async fn do_quick_setup(ctx: BotContext<'_>) -> Result<()> {
         "ManageRuns",
         "CreateVcRaid",
     ] {
-        db::permission::grant(pool, guild_id, role_id.get() as i64, action, None, None)
-            .await?;
+        db::permission::grant(pool, guild_id, role_id.get() as i64, action, None, None).await?;
     }
 
     db::guild::mark_setup_complete(pool, guild_id, true).await?;
@@ -373,9 +361,7 @@ async fn find_or_create_raid_leader_role(ctx: BotContext<'_>) -> Result<RoleId> 
 // Dashboard view
 // ---------------------------------------------------------------------------
 
-async fn dashboard_view(
-    ctx: BotContext<'_>,
-) -> Result<(CreateEmbed, Vec<CreateActionRow>)> {
+async fn dashboard_view(ctx: BotContext<'_>) -> Result<(CreateEmbed, Vec<CreateActionRow>)> {
     let guild_id = ctx.guild_id().unwrap().get() as i64;
     let guild = db::guild::get(&ctx.data().db, guild_id)
         .await?
@@ -401,7 +387,10 @@ async fn dashboard_view(
                 .map(|c| format!("<#{c}>"))
                 .unwrap_or_else(|| "_no runs channel_".to_string());
             let extra = if tiers.len() > 1 {
-                format!("\n_+ {} more tier(s) — manage with `/tier`._", tiers.len() - 1)
+                format!(
+                    "\n_+ {} more tier(s) — manage with `/tier`._",
+                    tiers.len() - 1
+                )
             } else {
                 String::new()
             };
@@ -603,10 +592,7 @@ async fn section_first_tier(
                 respond_with_view(ctx, &mci, embed, components).await?;
             }
             "setup:tier:create_channels" => {
-                let tier_name = existing
-                    .as_ref()
-                    .map(|t| t.name.as_str())
-                    .unwrap_or("Main");
+                let tier_name = existing.as_ref().map(|t| t.name.as_str()).unwrap_or("Main");
                 match create_default_channels(ctx, tier_name).await {
                     Ok(runs_id) => {
                         draft.runs_channel = Some(runs_id);
@@ -640,26 +626,13 @@ async fn section_first_tier(
 
                 let tier_id = match &existing {
                     Some(t) => {
-                        db::tier::update(
-                            pool,
-                            t.id,
-                            None,
-                            None,
-                            Some(runs.get() as i64),
-                        )
-                        .await?;
+                        db::tier::update(pool, t.id, None, None, Some(runs.get() as i64)).await?;
                         t.id
                     }
                     None => {
                         let created = db::tier::create(pool, guild_id, "Main", None).await?;
-                        db::tier::update(
-                            pool,
-                            created.id,
-                            None,
-                            None,
-                            Some(runs.get() as i64),
-                        )
-                        .await?;
+                        db::tier::update(pool, created.id, None, None, Some(runs.get() as i64))
+                            .await?;
                         // Magical default: attach every globally-available
                         // dungeon so `/headcount` works out of the box.
                         for d in &global_dungeons {
@@ -779,7 +752,11 @@ fn tier_view(
     .min_values(0)
     .max_values(10);
 
-    let save_label = if is_create { "Create tier" } else { "Save changes" };
+    let save_label = if is_create {
+        "Create tier"
+    } else {
+        "Save changes"
+    };
     let mut buttons = vec![CreateButton::new("setup:tier:save")
         .label(save_label)
         .style(ButtonStyle::Success)
@@ -857,9 +834,7 @@ async fn section_superadmin(
     }
 }
 
-async fn superadmin_view(
-    ctx: BotContext<'_>,
-) -> Result<(CreateEmbed, Vec<CreateActionRow>)> {
+async fn superadmin_view(ctx: BotContext<'_>) -> Result<(CreateEmbed, Vec<CreateActionRow>)> {
     let guild_id = ctx.guild_id().unwrap().get() as i64;
     let guild = db::guild::get(&ctx.data().db, guild_id).await?.unwrap();
 
@@ -1016,10 +991,7 @@ async fn channel_section_view(
 // Helpers
 // ---------------------------------------------------------------------------
 
-async fn await_next(
-    ctx: BotContext<'_>,
-    msg_id: MessageId,
-) -> Option<ComponentInteraction> {
+async fn await_next(ctx: BotContext<'_>, msg_id: MessageId) -> Option<ComponentInteraction> {
     ComponentInteractionCollector::new(&ctx.serenity_context().shard)
         .message_id(msg_id)
         .author_id(ctx.author().id)
@@ -1077,10 +1049,7 @@ async fn back_to_dashboard(
 /// Idempotent — re-running picks up the existing channel rather than
 /// duplicating. R3 collapsed the old headcount/raid split to a single
 /// channel: both headcounts and runs post here.
-async fn create_default_channels(
-    ctx: BotContext<'_>,
-    tier_name: &str,
-) -> Result<ChannelId> {
+async fn create_default_channels(ctx: BotContext<'_>, tier_name: &str) -> Result<ChannelId> {
     let guild_id = ctx.guild_id().unwrap();
     let http = ctx.http();
 
@@ -1090,9 +1059,10 @@ async fn create_default_channels(
 
     let existing = guild_id.channels(http).await?;
 
-    let category_id = match existing.values().find(|c| {
-        c.kind == ChannelType::Category && c.name.eq_ignore_ascii_case(category_name)
-    }) {
+    let category_id = match existing
+        .values()
+        .find(|c| c.kind == ChannelType::Category && c.name.eq_ignore_ascii_case(category_name))
+    {
         Some(c) => c.id,
         None => {
             guild_id

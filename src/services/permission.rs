@@ -291,9 +291,7 @@ pub async fn can_organize_from_interaction(
     .await
 }
 
-fn member_meta(
-    mci: &serenity::ComponentInteraction,
-) -> (Option<serenity::Permissions>, Vec<i64>) {
+fn member_meta(mci: &serenity::ComponentInteraction) -> (Option<serenity::Permissions>, Vec<i64>) {
     let Some(member) = mci.member.as_ref() else {
         return (None, Vec::new());
     };
