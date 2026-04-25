@@ -360,6 +360,14 @@ pub async fn run(dry_run: bool, purge: bool) -> Result<()> {
         // pushed into `dump_dungeon.drops` so the seeder's showcase_emoji
         // derivation picks them up alongside their parent drops.
         for item in &details.drop_items {
+            // Golden bags drop blueprints almost exclusively; we don't
+            // track Golden as a tier, so blueprints would just bloat the
+            // emoji set without ever rendering. Filter by name — cheap,
+            // and bag classification would otherwise need a per-item HTTP
+            // fetch we then throw away.
+            if item.logical_name.contains("blueprint") {
+                continue;
+            }
             dump_dungeon.drops.push(WikiEmoji {
                 logical_name: item.logical_name.clone(),
                 img_url: item.img_url.clone(),
