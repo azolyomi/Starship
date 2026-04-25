@@ -80,31 +80,13 @@ pub fn build(
         format!("{template_emoji} {title}")
     };
 
-    let base_desc = template
-        .message_description
-        .as_deref()
-        .unwrap_or("React below to sign up!");
-
-    // Required-items summary inline in the description so users see what
-    // they need without extra fields. Each item shows its emoji + name.
-    let required_line = if reactions.is_empty() {
-        String::new()
-    } else {
-        let parts: Vec<String> = reactions
-            .iter()
-            .map(|r| {
-                let es = emoji_str(&r.emoji, emoji_map);
-                if es.is_empty() {
-                    r.display_name.clone()
-                } else {
-                    format!("{es} {}", r.display_name)
-                }
-            })
-            .collect();
-        format!("\n\n**React with:** {}", parts.join(" · "))
-    };
-
-    let description = format!("{base_desc}\n\nLeader: <@{leader_id}>{required_line}");
+    let mut description = format!("Created by <@{leader_id}>");
+    if let Some(extra) = template.message_description.as_deref() {
+        description.push_str(&format!("\n\n{extra}"));
+    }
+    if !reactions.is_empty() {
+        description.push_str("\n\nPlease react to what you will bring to the run.");
+    }
 
     let fields = build_loot_fields(&template.showcase_emoji, emoji_map, bag_tiers, threshold);
 

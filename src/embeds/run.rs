@@ -35,7 +35,7 @@ pub fn build(
         format!("{template_emoji} {title}")
     };
 
-    let mut description = format!("**Leader:** <@{}>", run.leader_user_id);
+    let mut description = format!("Created by <@{}>", run.leader_user_id);
     if let Some(loc) = &run.location {
         description.push_str(&format!("\n**Location:** `{loc}`"));
     }
@@ -46,20 +46,8 @@ pub fn build(
         description.push_str(&format!("\n**Voice:** <#{vc_id}>"));
     }
 
-    // Inline "what to bring" hint so users know which reactions to click.
     if !reactions.is_empty() {
-        let parts: Vec<String> = reactions
-            .iter()
-            .map(|r| {
-                let es = emoji_str(&r.emoji, emoji_map);
-                if es.is_empty() {
-                    r.display_name.clone()
-                } else {
-                    format!("{es} {}", r.display_name)
-                }
-            })
-            .collect();
-        description.push_str(&format!("\n\n**React with:** {}", parts.join(" · ")));
+        description.push_str("\n\nPlease react to what you will bring to the run.");
     }
 
     let fields = build_loot_fields(&template.showcase_emoji, emoji_map, bag_tiers, threshold);
@@ -106,7 +94,7 @@ pub fn build_ended(
         format!("{template_emoji} {title} — ended")
     };
 
-    let mut description = format!("**Leader:** <@{}>", run.leader_user_id);
+    let mut description = format!("Created by <@{}>", run.leader_user_id);
     if let Some(loc) = &run.location {
         description.push_str(&format!("\n**Location:** `{loc}`"));
     }
