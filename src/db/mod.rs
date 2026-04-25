@@ -7,6 +7,7 @@ pub mod models;
 pub mod permission;
 pub mod run;
 pub mod tier;
+pub mod verification;
 
 use anyhow::Result;
 use sqlx::PgPool;

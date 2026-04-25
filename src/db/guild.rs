@@ -7,7 +7,9 @@ pub async fn get(pool: &PgPool, guild_id: i64) -> Result<Option<Guild>> {
     let guild = sqlx::query_as!(
         Guild,
         "SELECT guild_id, log_channel_id, superadmin_user_id,
-                setup_complete, loot_tier_threshold, created_at, updated_at
+                setup_complete, loot_tier_threshold,
+                verified_role_id, verify_channel_id, verify_message_id,
+                created_at, updated_at
          FROM guilds WHERE guild_id = $1",
         guild_id
     )
@@ -23,7 +25,9 @@ pub async fn upsert(pool: &PgPool, guild_id: i64) -> Result<Guild> {
          VALUES ($1)
          ON CONFLICT (guild_id) DO UPDATE SET updated_at = NOW()
          RETURNING guild_id, log_channel_id, superadmin_user_id,
-                   setup_complete, loot_tier_threshold, created_at, updated_at",
+                   setup_complete, loot_tier_threshold,
+                   verified_role_id, verify_channel_id, verify_message_id,
+                   created_at, updated_at",
         guild_id
     )
     .fetch_one(pool)
@@ -58,6 +62,47 @@ pub async fn set_log_channel(pool: &PgPool, guild_id: i64, channel_id: Option<i6
         "UPDATE guilds SET log_channel_id = $2 WHERE guild_id = $1",
         guild_id,
         channel_id
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn set_verified_role(pool: &PgPool, guild_id: i64, role_id: Option<i64>) -> Result<()> {
+    sqlx::query!(
+        "UPDATE guilds SET verified_role_id = $2 WHERE guild_id = $1",
+        guild_id,
+        role_id
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn set_verify_channel(
+    pool: &PgPool,
+    guild_id: i64,
+    channel_id: Option<i64>,
+) -> Result<()> {
+    sqlx::query!(
+        "UPDATE guilds SET verify_channel_id = $2 WHERE guild_id = $1",
+        guild_id,
+        channel_id
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn set_verify_message(
+    pool: &PgPool,
+    guild_id: i64,
+    message_id: Option<i64>,
+) -> Result<()> {
+    sqlx::query!(
+        "UPDATE guilds SET verify_message_id = $2 WHERE guild_id = $1",
+        guild_id,
+        message_id
     )
     .execute(pool)
     .await?;

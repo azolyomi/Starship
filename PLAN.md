@@ -643,13 +643,23 @@ the full design.
 33. Embed styling (showcase emoji, colors, thumbnails)
 34. Edge cases (leader leaves server, channel deleted, etc.)
 
-## Verification Extensibility (future)
+## Verification
 
-Architecture already supports this:
-- Add `verified_users` table: discord_user_id -> realmeye_ign, verified_at
-- Verification flow: user sets a code in their RealmEye description, bot fetches `realmeye.com/player/<ign>`, checks code
-- Permission service gets an optional `requires_verification` flag per action/tier
-- No structural changes needed
+User flow: click Verify (or `/verify`) → modal asks for IGN → bot
+issues a 6-digit code as an ephemeral message → user pastes code in
+their RealmEye description → user clicks "I added it" → bot scrapes
+`realmeye.com/player/<ign>`, finds the code, assigns Verified role +
+sets nickname. Admin override: `/mv @user <ign>` skips the RealmEye
+check. Verification is per-server; rebind is silent overwrite; UNIQUE
+(guild_id, ign) blocks two Discord users from claiming the same name.
+
+Detailed plan: `~/.claude/plans/now-we-need-to-whimsical-meteor.md`
+(retained until landed). Chunked build:
+1. Schema + DB layer (migration, Guild columns, `db::verification`).
+2. RealmEye client + verification service (pure logic).
+3. `/setup` wizard sections + persistent button posting.
+4. Handlers + slash commands (`/verify`, `/mv`).
+5. Orphan sweep + log-channel events.
 
 ## Testing / Verification
 
@@ -1796,6 +1806,41 @@ needs a live Discord 404 to exercise.
   is deleted between `channel_exists` returning true and the
   `send_message` call. Falls back to the existing bubble-error path —
   user sees "Internal error" and the orphan sweep cleans up later.
+
+### 2026-04-25 — Verification chunk 1 complete (schema + DB layer)
+
+Foundation for the verification feature. Detailed plan at
+`~/.claude/plans/now-we-need-to-whimsical-meteor.md`.
+
+Landed:
+- `migrations/20260425000001_verification.sql` — three new nullable
+  columns on `guilds` (`verified_role_id`, `verify_channel_id`,
+  `verify_message_id`); `verifications` table for pending attempts
+  (PK on guild+user so rerunning /verify silently overwrites);
+  `verified_users` table for completed bindings (PK guild+user, UNIQUE
+  guild+ign so an IGN can be held by at most one Discord account per
+  server).
+- `src/db/models.rs` — three new `Option<i64>` fields on `Guild`; new
+  `PendingVerification` and `VerifiedUser` row structs.
+- `src/db/guild.rs` — extended SELECT/INSERT to include the three new
+  columns; added `set_verified_role`, `set_verify_channel`,
+  `set_verify_message` helpers.
+- `src/db/verification.rs` (new) — `upsert_pending`, `get_pending`,
+  `delete_pending`, `delete_expired` for the pending table; `complete`
+  performs the atomic delete-pending + UPSERT-verified in one
+  transaction and returns a typed `UpsertResult`
+  (`Created` / `Refreshed` / `Rebound` / `IgnTaken { holder }`); a
+  pre-check on `(guild_id, realmeye_ign)` returns the conflicting
+  holder's user ID before attempting the UPSERT, so the unique
+  constraint is the safety net rather than the primary detection path.
+
+**Gates:** `cargo build` green. Nine "is never used" warnings on the
+new module surface — all forward references that get consumed in
+chunk 2 (`services::verification` + handlers).
+
+Next chunk (2): `services::realmeye` (HTTP + HTML parse) and
+`services::verification` (issue_code, complete, manual_verify,
+apply_verified_state).
 
 ### Credentials still needed from the user
 

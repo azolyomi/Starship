@@ -18,6 +18,15 @@ pub struct Guild {
     pub superadmin_user_id: Option<i64>,
     pub setup_complete: bool,
     pub loot_tier_threshold: String,
+    /// Discord role granted on successful verification. `None` until
+    /// `/setup`'s verification section is configured.
+    pub verified_role_id: Option<i64>,
+    /// Channel hosting the persistent Verify button message. `None` until
+    /// configured.
+    pub verify_channel_id: Option<i64>,
+    /// Message ID of the persistent Verify button. `None` if never posted
+    /// or if the startup sweep cleared it after a 404.
+    pub verify_message_id: Option<i64>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -108,6 +117,33 @@ pub struct Headcount {
     pub location: Option<String>,
     pub party: Option<String>,
     pub created_at: DateTime<Utc>,
+}
+
+/// A pending verification attempt. Lives only between the user submitting
+/// their IGN and the user clicking "I added it" (or `expires_at` elapsing).
+/// PK on (guild_id, discord_user_id) — re-running /verify silently
+/// overwrites an in-flight attempt for the same user.
+#[derive(Debug, sqlx::FromRow)]
+pub struct PendingVerification {
+    pub guild_id: i64,
+    pub discord_user_id: i64,
+    pub claimed_ign: String,
+    pub code: String,
+    pub expires_at: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// A completed verification: a Discord user is bound to a RealmEye IGN
+/// within one guild. Rebind = overwrite by PK. UNIQUE (guild_id,
+/// realmeye_ign) blocks two Discord users from claiming the same IGN.
+#[derive(Debug, sqlx::FromRow)]
+pub struct VerifiedUser {
+    pub guild_id: i64,
+    pub discord_user_id: i64,
+    pub realmeye_ign: String,
+    pub verified_at: DateTime<Utc>,
+    /// `None` for self-verifies; admin's user_id when verified via /mv.
+    pub verified_by: Option<i64>,
 }
 
 /// A live run. Rows exist only while the run is active — End deletes.
