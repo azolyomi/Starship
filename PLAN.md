@@ -2218,6 +2218,80 @@ Deferred (called out for future polish):
   `~/.claude/plans/i-m-experimenting-with-the-mutable-quokka.md`
   is the next chunk's natural baseline.
 
+### 2026-04-25 — Self-organize ergonomics polish
+
+Closes the chunk-3 deferred items (multi-tier wizard scope + disable
+cleanup) and adds a sticky-repair affordance so the operator never has
+to restart the bot to recover deleted stickies.
+
+Landed:
+- `src/services/self_organize_listing.rs` — new
+  `teardown_messages(serenity_ctx, pool, tier)`: best-effort delete of
+  both sticky messages from Discord, then null both `*_message_id`
+  columns. 404s are silently ignored (the desired end state); other
+  delete errors log and continue. Always clears the DB IDs even if the
+  Discord deletes failed, so re-enable always reposts fresh.
+- `src/commands/setup.rs::section_self_organize` rewritten as a
+  two-view sub-flow:
+  - `SoView::Picker` — shown on entry when 2+ tiers exist. Lists every
+    tier with its enabled/disabled mark and current sticky channel; a
+    StringSelect drops into the per-tier configurator. Single-tier
+    guilds skip this view entirely.
+  - `SoView::Config` — the existing 5-row configurator, extended with a
+    "Switch tier" button (visible only with 2+ tiers) and a "Repost
+    stickies" button (visible only when SO is enabled for the tier).
+    Embed title now carries the tier name; body shows both the sticky
+    channel and the tier's `runs_channel_id` so operators don't confuse
+    the two.
+- `setup:so:toggle` now calls `teardown_messages` before flipping the
+  flag to false. The order matters: a click in the small window between
+  "stickies deleted" and "flag flipped" still routes to a sticky owned
+  by an enabled tier and gets a real "no longer enabled" message
+  (rather than a missing-message 404 surfaced as "interaction failed").
+- `setup:so:repost` (new) — gated on enabled + channel set; tears down
+  and reinstalls both stickies. Recovery path for operators who deleted
+  the stickies manually (Discord channel cleanup, accidental purge).
+- `setup:so:channel` change-handler now tears down stale stickies in
+  the *old* channel before clearing the IDs and writing the new
+  channel. Previously the IDs were nulled but the messages were
+  abandoned in the old channel.
+- Dashboard SO label is `Self-organize ✅` if **any** tier has SO
+  enabled, not just the first.
+- Tiers list re-loaded each iteration of the section loop so a
+  `/tier create` or `/tier delete` from another tab during the wizard
+  reflects immediately. A deleted current tier ends the section
+  cleanly with a clear message.
+- `install_stickies_best_effort(serenity_ctx, pool, tier_id)` helper
+  collapses the tier→ensure_button→reload→ensure_listing dance shared
+  by enable + repost.
+
+Verification:
+- `cargo fmt --check` — clean.
+- `cargo build` — 0 warnings.
+- `cargo clippy --all-targets -- -D warnings` — clean.
+- `cargo test` — 15 passed (no new tests; this is all UI glue and the
+  smoke test belongs against a live guild).
+
+Operator impact: a multi-tier guild that previously could only
+configure SO on tier #1 can now configure every tier; disabling no
+longer leaves dead "Start a run" buttons in the channel; manually
+deleted stickies are recoverable in two clicks instead of a bot
+restart.
+
+Still deferred (called out so they aren't forgotten):
+- Quick-setup auto-provision: still no SO pre-create from the intro
+  Quick Setup. Acceptable — most servers want to opt into SO
+  explicitly per tier.
+- Smoke test against a live guild: still requires `DISCORD_TOKEN`,
+  not run from this dev env.
+- Per-user race on the partial unique index `idx_so_one_per_user`:
+  if two clicks fire within milliseconds across different (tier,
+  dungeon) slots, the gate's `claim_count_for_user` check can let
+  both through and the second hits a Postgres unique violation that
+  bubbles as "Internal error". Rare in practice; bullet-proof fix is
+  to catch the unique violation in `claim_for_headcount` and map it
+  to a typed `UserCapExceeded` outcome.
+
 ### Credentials still needed from the user
 
 Collected into `.env` when we're ready to boot:

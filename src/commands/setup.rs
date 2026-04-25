@@ -12,7 +12,8 @@ use serenity::{
 };
 
 use crate::db::models::Tier;
-use crate::{db, guild_id_i64, require_guild_id, services::permission, BotContext, BotError};
+use crate::services::{permission, self_organize_listing};
+use crate::{db, guild_id_i64, require_guild_id, BotContext, BotError};
 
 /// How long to wait for a click before the wizard expires.
 const WIZARD_TIMEOUT: Duration = Duration::from_secs(600);
@@ -659,10 +660,7 @@ async fn dashboard_view(ctx: BotContext<'_>) -> Result<(CreateEmbed, Vec<CreateA
         ButtonStyle::Primary
     };
 
-    let so_label = if first_tier
-        .map(|t| t.enable_self_organization)
-        .unwrap_or(false)
-    {
+    let so_label = if tiers.iter().any(|t| t.enable_self_organization) {
         "Self-organize ✅"
     } else {
         "Self-organize"
@@ -1471,6 +1469,15 @@ const SO_MIN_REACTORS_PRESETS: &[(i32, &str)] = &[
     (8, "8"),
 ];
 
+/// Which sub-view of the self-organize section is currently rendered.
+/// Multi-tier guilds enter the section on `Picker`; single-tier guilds
+/// skip straight to `Config`.
+#[derive(Clone, Copy)]
+enum SoView {
+    Picker,
+    Config,
+}
+
 async fn section_self_organize(
     ctx: BotContext<'_>,
     trigger: &ComponentInteraction,
@@ -1478,11 +1485,15 @@ async fn section_self_organize(
     let guild_id = guild_id_i64(ctx);
     let pool = &ctx.data().db;
 
-    // Self-organize is keyed off the first tier — same scope as
-    // `section_first_tier`. Subsequent tiers are tuned via `/tier` (or a
-    // future config command); the wizard intentionally limits itself to
-    // the most common case.
-    let Some(tier) = db::tier::list(pool, guild_id).await?.into_iter().next() else {
+    let tiers = db::tier::list(pool, guild_id).await?;
+    // Pre-select an enabled tier when one exists so re-entering the section
+    // lands on the in-use config rather than a freshly-picked default.
+    let Some(initial_tier) = tiers
+        .iter()
+        .find(|t| t.enable_self_organization)
+        .or_else(|| tiers.first())
+        .cloned()
+    else {
         respond_plain(
             ctx,
             trigger,
@@ -1492,25 +1503,79 @@ async fn section_self_organize(
         return Ok(());
     };
 
-    let (embed, components) = self_organize_view(&tier);
+    let mut current_tier_id = initial_tier.id;
+    let mut view = if tiers.len() == 1 {
+        SoView::Config
+    } else {
+        SoView::Picker
+    };
+
+    let (embed, components) = render_so_view(&tiers, &initial_tier, view);
     respond_with_view(ctx, trigger, embed, components).await?;
 
     let msg_id = trigger.message.id;
+    let serenity_ctx = ctx.serenity_context();
     loop {
         let Some(mci) = await_next(ctx, msg_id).await else {
             return Ok(());
         };
+
+        // Re-load tiers each iteration so a /tier create or /tier delete in
+        // another tab during the wizard flow is reflected immediately.
+        let tiers = db::tier::list(pool, guild_id).await?;
+        let Some(tier) = tiers.iter().find(|t| t.id == current_tier_id).cloned() else {
+            respond_plain(
+                ctx,
+                &mci,
+                "The selected tier was deleted. Run `/setup` again to start over.",
+            )
+            .await?;
+            return Ok(());
+        };
+
         match mci.data.custom_id.as_str() {
             "setup:so:back" => {
                 back_to_dashboard(ctx, &mci).await?;
                 return Ok(());
             }
+            "setup:so:switch" => {
+                view = SoView::Picker;
+                let (embed, components) = render_so_view(&tiers, &tier, view);
+                respond_with_view(ctx, &mci, embed, components).await?;
+            }
+            "setup:so:tierpick" => {
+                if let Some(new_id) = parse_select_i32(&mci.data.kind) {
+                    current_tier_id = new_id;
+                }
+                view = SoView::Config;
+                let new_tier = current_tier(pool, current_tier_id)
+                    .await?
+                    .unwrap_or(tier.clone());
+                let (embed, components) = render_so_view(&tiers, &new_tier, view);
+                respond_with_view(ctx, &mci, embed, components).await?;
+            }
             "setup:so:channel" => {
                 if let ComponentInteractionDataKind::ChannelSelect { values } = &mci.data.kind {
                     let new_channel: Option<i64> = values.first().map(|c| c.get() as i64);
-                    let prior_channel = current_tier(pool, tier.id)
-                        .await?
-                        .and_then(|t| t.self_organize_channel_id);
+                    let prior_channel = tier.self_organize_channel_id;
+                    // Channel changed: tear down the stickies in the old
+                    // channel before clearing IDs. teardown_messages handles
+                    // the delete + null-out atomically per row.
+                    if new_channel != prior_channel
+                        && (tier.self_organize_button_message_id.is_some()
+                            || tier.self_organize_listing_message_id.is_some())
+                    {
+                        if let Err(e) =
+                            self_organize_listing::teardown_messages(serenity_ctx, pool, &tier)
+                                .await
+                        {
+                            tracing::warn!(
+                                error = ?e,
+                                tier_id = tier.id,
+                                "failed to clean up stickies on channel change",
+                            );
+                        }
+                    }
                     db::tier::update_self_organize(
                         pool,
                         tier.id,
@@ -1521,17 +1586,9 @@ async fn section_self_organize(
                         None,
                     )
                     .await?;
-                    // Channel changed: invalidate stored message IDs so the
-                    // sticky-repair path reposts in the new channel rather
-                    // than leaving the message in the old one and pointing
-                    // at a dead ID.
-                    if new_channel != prior_channel {
-                        db::tier::set_self_organize_button_message(pool, tier.id, None).await?;
-                        db::tier::set_self_organize_listing_message(pool, tier.id, None).await?;
-                    }
                 }
                 let refreshed = current_tier(pool, tier.id).await?.unwrap_or(tier.clone());
-                let (embed, components) = self_organize_view(&refreshed);
+                let (embed, components) = render_so_view(&tiers, &refreshed, view);
                 respond_with_view(ctx, &mci, embed, components).await?;
             }
             "setup:so:idle" => {
@@ -1541,7 +1598,7 @@ async fn section_self_organize(
                         .await?;
                 }
                 let refreshed = current_tier(pool, tier.id).await?.unwrap_or(tier.clone());
-                let (embed, components) = self_organize_view(&refreshed);
+                let (embed, components) = render_so_view(&tiers, &refreshed, view);
                 respond_with_view(ctx, &mci, embed, components).await?;
             }
             "setup:so:cooldown" => {
@@ -1551,7 +1608,7 @@ async fn section_self_organize(
                         .await?;
                 }
                 let refreshed = current_tier(pool, tier.id).await?.unwrap_or(tier.clone());
-                let (embed, components) = self_organize_view(&refreshed);
+                let (embed, components) = render_so_view(&tiers, &refreshed, view);
                 respond_with_view(ctx, &mci, embed, components).await?;
             }
             "setup:so:min" => {
@@ -1561,7 +1618,7 @@ async fn section_self_organize(
                         .await?;
                 }
                 let refreshed = current_tier(pool, tier.id).await?.unwrap_or(tier.clone());
-                let (embed, components) = self_organize_view(&refreshed);
+                let (embed, components) = render_so_view(&tiers, &refreshed, view);
                 respond_with_view(ctx, &mci, embed, components).await?;
             }
             "setup:so:toggle" => {
@@ -1581,6 +1638,21 @@ async fn section_self_organize(
                     continue;
                 }
 
+                if !want_enable {
+                    // Tear down stickies before flipping the flag so a
+                    // racing click in the small window between flag-flip and
+                    // delete still hits a sticky owned by an enabled tier.
+                    if let Err(e) =
+                        self_organize_listing::teardown_messages(serenity_ctx, pool, &live).await
+                    {
+                        tracing::warn!(
+                            error = ?e,
+                            tier_id = tier.id,
+                            "failed to tear down stickies on disable",
+                        );
+                    }
+                }
+
                 db::tier::update_self_organize(
                     pool,
                     tier.id,
@@ -1593,45 +1665,94 @@ async fn section_self_organize(
                 .await?;
 
                 if want_enable {
-                    let refreshed = current_tier(pool, tier.id).await?.unwrap_or(live.clone());
-                    let serenity_ctx = ctx.serenity_context();
-                    if let Err(e) = crate::services::self_organize_listing::ensure_button_message(
-                        serenity_ctx,
-                        pool,
-                        &refreshed,
-                    )
-                    .await
-                    {
-                        tracing::warn!(
-                            error = ?e,
-                            tier_id = tier.id,
-                            "failed to install self-organize button message",
-                        );
-                    }
-                    let after_button = current_tier(pool, tier.id).await?.unwrap_or(refreshed);
-                    if let Err(e) = crate::services::self_organize_listing::ensure_listing_message(
-                        serenity_ctx,
-                        pool,
-                        &after_button,
-                    )
-                    .await
-                    {
-                        tracing::warn!(
-                            error = ?e,
-                            tier_id = tier.id,
-                            "failed to install self-organize listing message",
-                        );
-                    }
+                    install_stickies_best_effort(serenity_ctx, pool, tier.id).await;
                 }
 
                 let refreshed = current_tier(pool, tier.id).await?.unwrap_or(tier.clone());
-                let (embed, components) = self_organize_view(&refreshed);
+                let (embed, components) = render_so_view(&tiers, &refreshed, view);
+                respond_with_view(ctx, &mci, embed, components).await?;
+            }
+            "setup:so:repost" => {
+                let live = current_tier(pool, tier.id).await?.unwrap_or(tier.clone());
+                if !live.enable_self_organization {
+                    mci.create_response(
+                        ctx.http(),
+                        CreateInteractionResponse::Message(
+                            CreateInteractionResponseMessage::new()
+                                .content("Self-organize is disabled — enable it to post stickies.")
+                                .ephemeral(true),
+                        ),
+                    )
+                    .await?;
+                    continue;
+                }
+                if live.self_organize_channel_id.is_none() {
+                    mci.create_response(
+                        ctx.http(),
+                        CreateInteractionResponse::Message(
+                            CreateInteractionResponseMessage::new()
+                                .content("Pick a channel first.")
+                                .ephemeral(true),
+                        ),
+                    )
+                    .await?;
+                    continue;
+                }
+                // Tear down + reinstall: covers the case where the operator
+                // manually deleted one or both stickies and wants fresh ones
+                // without restarting the bot.
+                if let Err(e) =
+                    self_organize_listing::teardown_messages(serenity_ctx, pool, &live).await
+                {
+                    tracing::warn!(
+                        error = ?e,
+                        tier_id = tier.id,
+                        "failed to clean up stickies before repost",
+                    );
+                }
+                install_stickies_best_effort(serenity_ctx, pool, tier.id).await;
+
+                let refreshed = current_tier(pool, tier.id).await?.unwrap_or(tier.clone());
+                let (embed, components) = render_so_view(&tiers, &refreshed, view);
                 respond_with_view(ctx, &mci, embed, components).await?;
             }
             _ => {
                 mci.defer(ctx.http()).await?;
             }
         }
+    }
+}
+
+/// Install both sticky messages, best-effort. Runs ensure_button then
+/// re-loads the tier so ensure_listing sees the freshly-stored
+/// button_message_id (and similarly across the listing call). Failures
+/// are logged but never bubbled — the wizard view will still re-render.
+async fn install_stickies_best_effort(
+    serenity_ctx: &serenity::Context,
+    pool: &sqlx::PgPool,
+    tier_id: i32,
+) {
+    let Some(tier) = current_tier(pool, tier_id).await.ok().flatten() else {
+        return;
+    };
+    if let Err(e) = self_organize_listing::ensure_button_message(serenity_ctx, pool, &tier).await {
+        tracing::warn!(
+            error = ?e,
+            tier_id,
+            "failed to install self-organize button message",
+        );
+    }
+    let Some(after_button) = current_tier(pool, tier_id).await.ok().flatten() else {
+        return;
+    };
+    if let Err(e) =
+        self_organize_listing::ensure_listing_message(serenity_ctx, pool, &after_button).await
+    {
+        tracing::warn!(
+            error = ?e,
+            tier_id,
+            "failed to install self-organize listing message",
+        );
     }
 }
 
@@ -1663,12 +1784,84 @@ fn so_preset_options(
         .collect()
 }
 
-fn self_organize_view(tier: &Tier) -> (CreateEmbed, Vec<CreateActionRow>) {
+fn render_so_view(
+    tiers: &[Tier],
+    current: &Tier,
+    view: SoView,
+) -> (CreateEmbed, Vec<CreateActionRow>) {
+    match view {
+        SoView::Picker => so_picker_view(tiers, current),
+        SoView::Config => so_config_view(tiers, current),
+    }
+}
+
+fn so_picker_view(tiers: &[Tier], current: &Tier) -> (CreateEmbed, Vec<CreateActionRow>) {
+    let mut summary = String::with_capacity(64 * tiers.len());
+    for t in tiers {
+        let mark = if t.enable_self_organization {
+            "✅"
+        } else {
+            "⬜"
+        };
+        let chan = t
+            .self_organize_channel_id
+            .map(|c| format!(" <#{c}>"))
+            .unwrap_or_default();
+        summary.push_str(&format!("{mark} **{}**{chan}\n", t.name));
+    }
+
+    let body = format!(
+        "Self-organize is configured per tier. Pick the tier you want to \
+         configure below.\n\n{summary}",
+    );
+
+    let embed = CreateEmbed::new()
+        .title("\u{1F680} Self-organize \u{2014} pick a tier")
+        .description(body)
+        .color(0x5865F2);
+
+    let options: Vec<serenity::CreateSelectMenuOption> = tiers
+        .iter()
+        .map(|t| {
+            let label = if t.enable_self_organization {
+                format!("{} (enabled)", t.name)
+            } else {
+                t.name.clone()
+            };
+            let mut opt = serenity::CreateSelectMenuOption::new(label, t.id.to_string());
+            if t.id == current.id {
+                opt = opt.default_selection(true);
+            }
+            opt
+        })
+        .collect();
+
+    let picker = CreateSelectMenu::new(
+        "setup:so:tierpick",
+        CreateSelectMenuKind::String { options },
+    )
+    .placeholder("Tier to configure")
+    .min_values(1)
+    .max_values(1);
+
+    let actions = CreateActionRow::Buttons(vec![CreateButton::new("setup:so:back")
+        .label("\u{2190} Back")
+        .style(ButtonStyle::Secondary)]);
+
+    (embed, vec![CreateActionRow::SelectMenu(picker), actions])
+}
+
+fn so_config_view(tiers: &[Tier], tier: &Tier) -> (CreateEmbed, Vec<CreateActionRow>) {
     let enabled = tier.enable_self_organization;
     let channel_line = tier
         .self_organize_channel_id
         .map(|c| format!("<#{c}>"))
         .unwrap_or_else(|| "_not set_".to_string());
+
+    let runs_line = tier
+        .runs_channel_id
+        .map(|c| format!("<#{c}>"))
+        .unwrap_or_else(|| "_not set — set in `Edit first tier` or `/tier edit`_".to_string());
 
     let body = format!(
         "Per-tier opt-in: any user can start a headcount via a sticky **Start a run** \
@@ -1681,14 +1874,17 @@ fn self_organize_view(tier: &Tier) -> (CreateEmbed, Vec<CreateActionRow>) {
          • Cancel cooldown after a leader self-cancels\n\
          • Minimum reactors required to convert HC \u{2192} Run\n\
          \n\
+         **Tier:** {tier_name}\n\
          **Status:** {status}\n\
-         **Channel:** {channel_line}\n\
+         **Sticky channel:** {channel_line}\n\
+         **Headcounts post to:** {runs_line}\n\
          **Idle window:** {idle} minutes\n\
          **Cancel cooldown:** {cd} seconds\n\
          **Min reactors:** {min}\n\
          \n\
-         _Tip: lock the channel down to read-only for everyone but the bot \
-         to keep the sticky messages near the top._",
+         _Tip: lock the sticky channel down to read-only for everyone but \
+         the bot to keep the sticky messages near the top._",
+        tier_name = tier.name,
         status = if enabled {
             "✅ enabled"
         } else {
@@ -1700,7 +1896,7 @@ fn self_organize_view(tier: &Tier) -> (CreateEmbed, Vec<CreateActionRow>) {
     );
 
     let embed = CreateEmbed::new()
-        .title("\u{1F680} Self-organize")
+        .title(format!("\u{1F680} Self-organize \u{2014} {}", tier.name))
         .description(body)
         .color(0x5865F2);
 
@@ -1713,7 +1909,7 @@ fn self_organize_view(tier: &Tier) -> (CreateEmbed, Vec<CreateActionRow>) {
                 .map(|c| vec![ChannelId::new(c as u64)]),
         },
     )
-    .placeholder("Self-organize channel (sticky button + listing live here)")
+    .placeholder("Sticky channel (button + listing live here)")
     .min_values(0)
     .max_values(1);
 
@@ -1757,14 +1953,28 @@ fn self_organize_view(tier: &Tier) -> (CreateEmbed, Vec<CreateActionRow>) {
         ButtonStyle::Success
     };
 
-    let actions = CreateActionRow::Buttons(vec![
-        CreateButton::new("setup:so:toggle")
-            .label(toggle_label)
-            .style(toggle_style),
+    let mut buttons = vec![CreateButton::new("setup:so:toggle")
+        .label(toggle_label)
+        .style(toggle_style)];
+    if enabled {
+        buttons.push(
+            CreateButton::new("setup:so:repost")
+                .label("Repost stickies")
+                .style(ButtonStyle::Secondary),
+        );
+    }
+    if tiers.len() > 1 {
+        buttons.push(
+            CreateButton::new("setup:so:switch")
+                .label("Switch tier")
+                .style(ButtonStyle::Secondary),
+        );
+    }
+    buttons.push(
         CreateButton::new("setup:so:back")
             .label("\u{2190} Back")
             .style(ButtonStyle::Secondary),
-    ]);
+    );
 
     (
         embed,
@@ -1773,7 +1983,7 @@ fn self_organize_view(tier: &Tier) -> (CreateEmbed, Vec<CreateActionRow>) {
             CreateActionRow::SelectMenu(idle_select),
             CreateActionRow::SelectMenu(cooldown_select),
             CreateActionRow::SelectMenu(min_select),
-            actions,
+            CreateActionRow::Buttons(buttons),
         ],
     )
 }

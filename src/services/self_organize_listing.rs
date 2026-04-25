@@ -151,6 +151,46 @@ pub async fn ensure_listing_message(
     Ok(())
 }
 
+/// Best-effort delete of both sticky messages in Discord and clear
+/// their stored IDs in the DB. Called when a tier is toggled out of
+/// self-organize so the channel doesn't keep a dead button around.
+///
+/// Failures (404, 403, network) are logged and swallowed: the DB IDs
+/// are cleared regardless so a subsequent re-enable always reposts
+/// fresh messages rather than chasing a stale ID.
+pub async fn teardown_messages(
+    serenity_ctx: &serenity::Context,
+    pool: &PgPool,
+    tier: &Tier,
+) -> Result<()> {
+    if let Some(channel_id) = tier.self_organize_channel_id {
+        let channel = serenity::ChannelId::new(channel_id as u64);
+        for (label, msg_id_opt) in [
+            ("button", tier.self_organize_button_message_id),
+            ("listing", tier.self_organize_listing_message_id),
+        ] {
+            let Some(msg_id) = msg_id_opt else { continue };
+            if let Err(e) = channel
+                .delete_message(&serenity_ctx.http, serenity::MessageId::new(msg_id as u64))
+                .await
+            {
+                if !is_not_found(&e) {
+                    tracing::warn!(
+                        error = ?e,
+                        tier_id = tier.id,
+                        message_kind = label,
+                        message_id = msg_id,
+                        "failed to delete self-organize sticky message during teardown",
+                    );
+                }
+            }
+        }
+    }
+    db::tier::set_self_organize_button_message(pool, tier.id, None).await?;
+    db::tier::set_self_organize_listing_message(pool, tier.id, None).await?;
+    Ok(())
+}
+
 /// Refresh the listing in place. Called on every HC/Run lifecycle
 /// transition. If the message is missing, falls through to a repost
 /// via [`ensure_listing_message`].
