@@ -200,19 +200,12 @@ pub async fn start_run(
         }
     }
 
-    let reactions_list = db::dungeon::get_reactions(pool, template.id).await?;
     let emoji_map = db::emoji::get_all_as_map(pool).await?;
     let bag_tiers = db::loot::list_bag_tiers(pool).await?;
     let threshold = db::loot::get_threshold(pool, guild_id).await?;
 
-    let (embed, components) = embeds::run::build(
-        &run,
-        template,
-        &reactions_list,
-        &emoji_map,
-        &bag_tiers,
-        &threshold,
-    );
+    let (embed, components) =
+        embeds::run::build(&run, template, &emoji_map, &bag_tiers, &threshold);
 
     let role_id = db::dungeon::get_notification_role(pool, guild_id, &template.name).await?;
     let create = serenity::CreateMessage::new()

@@ -66,6 +66,22 @@ pub async fn list_for_guild(pool: &PgPool, guild_id: i64) -> Result<Vec<Permissi
     Ok(rows)
 }
 
+/// Roles that hold the `StartHeadcount` grant scoped exactly to this tier.
+/// Used by the setup wizard to render "current leader roles" — the wizard
+/// keeps the seven `LEADER_ACTIONS` in lockstep, so any one of them is a
+/// reliable proxy for "this role is a leader of this tier".
+pub async fn list_leader_roles_for_tier(pool: &PgPool, tier_id: i32) -> Result<Vec<i64>> {
+    let roles = sqlx::query_scalar!(
+        "SELECT DISTINCT role_id FROM permissions
+         WHERE tier_id = $1 AND action = 'StartHeadcount'
+         ORDER BY role_id",
+        tier_id
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(roles)
+}
+
 /// Returns true if any role in `role_ids` has `action` in this guild.
 /// A grant with NULL tier_id matches any tier; NULL dungeon_template_id matches any dungeon.
 pub async fn check(

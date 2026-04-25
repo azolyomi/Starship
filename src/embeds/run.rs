@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use poise::serenity_prelude as serenity;
 use serenity::{ButtonStyle, CreateActionRow, CreateButton, CreateEmbed, ReactionType, Timestamp};
 
-use crate::db::models::{BagTier, BotEmoji, DungeonReaction, DungeonTemplate, Run};
+use crate::db::models::{BagTier, BotEmoji, DungeonTemplate, Run};
 use crate::embeds::build_loot_fields;
 use crate::embeds::headcount::emoji_str;
 
@@ -14,14 +14,13 @@ use crate::embeds::headcount::emoji_str;
 pub fn build(
     run: &Run,
     template: &DungeonTemplate,
-    reactions: &[DungeonReaction],
     emoji_map: &HashMap<String, BotEmoji>,
     bag_tiers: &[BagTier],
     threshold: &str,
 ) -> (CreateEmbed, Vec<CreateActionRow>) {
     let color = template.color.unwrap_or(0x5865F2) as u32;
 
-    let default_title = format!("{} Run #{}", template.display_name, run.id);
+    let default_title = format!("{} Run", template.display_name);
     let title = template.message_title.as_deref().unwrap_or(&default_title);
 
     let template_emoji = template
@@ -44,10 +43,6 @@ pub fn build(
     }
     if let Some(vc_id) = run.voice_channel_id {
         description.push_str(&format!("\n**Voice:** <#{vc_id}>"));
-    }
-
-    if !reactions.is_empty() {
-        description.push_str("\n\nPlease react to what you will bring to the run.");
     }
 
     let fields = build_loot_fields(&template.showcase_emoji, emoji_map, bag_tiers, threshold);
@@ -80,7 +75,7 @@ pub fn build_ended(
     template: &DungeonTemplate,
     emoji_map: &HashMap<String, BotEmoji>,
 ) -> CreateEmbed {
-    let default_title = format!("{} Run #{}", template.display_name, run.id);
+    let default_title = format!("{} Run", template.display_name);
     let title = template.message_title.as_deref().unwrap_or(&default_title);
 
     let template_emoji = template

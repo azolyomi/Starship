@@ -278,15 +278,7 @@ async fn do_quick_setup(ctx: BotContext<'_>) -> Result<()> {
 
     // Raid Leader role + raid-management permission grants.
     let role_id = find_or_create_raid_leader_role(ctx).await?;
-    for action in [
-        "StartHeadcount",
-        "ConvertHeadcount",
-        "CancelHeadcount",
-        "StartRun",
-        "EndRun",
-        "ManageRuns",
-        "CreateVcRaid",
-    ] {
+    for action in permission::LEADER_ACTIONS {
         db::permission::grant(pool, guild_id, role_id.get() as i64, action, None, None).await?;
     }
 
@@ -505,7 +497,9 @@ fn verify_button_embed() -> CreateEmbed {
              or anyone else**, and we will never ask you for it.\n\
              \n\
              **Trouble?**\n\
-             • Make sure your RealmEye description is set to public.\n\
+             • Make sure your RealmEye **profile is set to public** \
+                (RealmEye → Settings → Privacy) — descriptions can't be made \
+                public on their own.\n\
              • Make sure you've logged into the game on this account at \
                 least once recently — RealmEye won't show characters \
                 that have never been seen.\n\
@@ -750,7 +744,7 @@ async fn summary_view(ctx: BotContext<'_>) -> Result<CreateEmbed> {
 #[derive(Debug, Clone)]
 struct TierDraft {
     runs_channel: Option<ChannelId>,
-    access_roles: Vec<RoleId>,
+    leader_roles: Vec<RoleId>,
 }
 
 async fn section_first_tier(
@@ -765,15 +759,15 @@ async fn section_first_tier(
 
     let mut draft = match &existing {
         Some(t) => {
-            let roles = db::tier::list_roles(pool, t.id).await?;
+            let roles = db::permission::list_leader_roles_for_tier(pool, t.id).await?;
             TierDraft {
                 runs_channel: t.runs_channel_id.map(|id| ChannelId::new(id as u64)),
-                access_roles: roles.into_iter().map(|r| RoleId::new(r as u64)).collect(),
+                leader_roles: roles.into_iter().map(|r| RoleId::new(r as u64)).collect(),
             }
         }
         None => TierDraft {
             runs_channel: None,
-            access_roles: Vec::new(),
+            leader_roles: Vec::new(),
         },
     };
 
@@ -803,7 +797,7 @@ async fn section_first_tier(
             }
             "setup:tier:roles" => {
                 if let ComponentInteractionDataKind::RoleSelect { values } = &mci.data.kind {
-                    draft.access_roles = values.clone();
+                    draft.leader_roles = values.clone();
                 }
                 let (embed, components) =
                     tier_view(existing.as_ref(), &draft, global_dungeons.len());
@@ -860,7 +854,7 @@ async fn section_first_tier(
                     }
                 };
 
-                sync_roles(pool, tier_id, &draft.access_roles).await?;
+                sync_leader_roles(pool, guild_id, tier_id, &draft.leader_roles).await?;
 
                 back_to_dashboard(ctx, &mci).await?;
                 return Ok(());
@@ -872,19 +866,32 @@ async fn section_first_tier(
     }
 }
 
-async fn sync_roles(pool: &sqlx::PgPool, tier_id: i32, desired: &[RoleId]) -> Result<()> {
-    let existing: std::collections::HashSet<i64> = db::tier::list_roles(pool, tier_id)
-        .await?
-        .into_iter()
-        .collect();
+/// Reconcile the set of "leader" roles for a tier: each desired role gets the
+/// full `LEADER_ACTIONS` set scoped to this tier; any roles previously granted
+/// at this scope but absent from `desired` get all those actions revoked.
+async fn sync_leader_roles(
+    pool: &sqlx::PgPool,
+    guild_id: i64,
+    tier_id: i32,
+    desired: &[RoleId],
+) -> Result<()> {
+    let existing: std::collections::HashSet<i64> =
+        db::permission::list_leader_roles_for_tier(pool, tier_id)
+            .await?
+            .into_iter()
+            .collect();
     let desired_set: std::collections::HashSet<i64> =
         desired.iter().map(|r| r.get() as i64).collect();
 
     for add in desired_set.difference(&existing) {
-        db::tier::add_role(pool, tier_id, *add).await?;
+        for action in permission::LEADER_ACTIONS {
+            db::permission::grant(pool, guild_id, *add, action, Some(tier_id), None).await?;
+        }
     }
     for remove in existing.difference(&desired_set) {
-        db::tier::remove_role(pool, tier_id, *remove).await?;
+        for action in permission::LEADER_ACTIONS {
+            db::permission::revoke(pool, guild_id, *remove, action, Some(tier_id), None).await?;
+        }
     }
     Ok(())
 }
@@ -901,11 +908,12 @@ fn tier_view(
         .runs_channel
         .map(|c| format!("<#{c}>"))
         .unwrap_or_else(|| "_required — pick one below_".to_string());
-    let roles_display = if draft.access_roles.is_empty() {
-        "_anyone in the server_".to_string()
+    let roles_display = if draft.leader_roles.is_empty() {
+        "_none — only Discord admins / the bot superadmin can lead raids in this tier_"
+            .to_string()
     } else {
         draft
-            .access_roles
+            .leader_roles
             .iter()
             .map(|r| format!("<@&{r}>"))
             .collect::<Vec<_>>()
@@ -935,7 +943,7 @@ fn tier_view(
          \n\
          **Runs channel** — where headcount + run messages post\n{runs_display}\n\
          \n\
-         **Access roles**\n{roles_display}\n\
+         **Leader roles** — who can `/headcount` and run raids in this tier\n{roles_display}\n\
          \n\
          {dungeon_line}{create_hint}"
     );
@@ -959,14 +967,14 @@ fn tier_view(
     let role_select = CreateSelectMenu::new(
         "setup:tier:roles",
         CreateSelectMenuKind::Role {
-            default_roles: if draft.access_roles.is_empty() {
+            default_roles: if draft.leader_roles.is_empty() {
                 None
             } else {
-                Some(draft.access_roles.clone())
+                Some(draft.leader_roles.clone())
             },
         },
     )
-    .placeholder("Access roles (optional — empty = everyone)")
+    .placeholder("Leader roles (who can run raids in this tier)")
     .min_values(0)
     .max_values(10);
 

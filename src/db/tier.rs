@@ -92,38 +92,6 @@ pub async fn delete(pool: &PgPool, id: i32) -> Result<bool> {
     Ok(result.rows_affected() > 0)
 }
 
-pub async fn add_role(pool: &PgPool, tier_id: i32, role_id: i64) -> Result<bool> {
-    let result = sqlx::query!(
-        "INSERT INTO tier_roles (tier_id, role_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-        tier_id,
-        role_id
-    )
-    .execute(pool)
-    .await?;
-    Ok(result.rows_affected() > 0)
-}
-
-pub async fn remove_role(pool: &PgPool, tier_id: i32, role_id: i64) -> Result<bool> {
-    let result = sqlx::query!(
-        "DELETE FROM tier_roles WHERE tier_id = $1 AND role_id = $2",
-        tier_id,
-        role_id
-    )
-    .execute(pool)
-    .await?;
-    Ok(result.rows_affected() > 0)
-}
-
-pub async fn list_roles(pool: &PgPool, tier_id: i32) -> Result<Vec<i64>> {
-    let roles = sqlx::query_scalar!(
-        "SELECT role_id FROM tier_roles WHERE tier_id = $1 ORDER BY role_id",
-        tier_id
-    )
-    .fetch_all(pool)
-    .await?;
-    Ok(roles)
-}
-
 pub async fn add_dungeon(pool: &PgPool, tier_id: i32, dungeon_template_id: i32) -> Result<bool> {
     let result = sqlx::query!(
         "INSERT INTO tier_dungeons (tier_id, dungeon_template_id)

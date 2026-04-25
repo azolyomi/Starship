@@ -245,8 +245,9 @@ async fn handle_check(
                 mci,
                 &format!(
                 "Couldn't find your code in <https://www.realmeye.com/player/{canonical_ign}>'s \
-                     description. Make sure you saved the description and that it's set to \
-                     **public**, then click **I added it** again."
+                     description. Make sure you saved the description and that your **profile \
+                     is set to public** (RealmEye → Settings → Privacy), then click \
+                     **I added it** again."
             ),
                 true,
             )
@@ -257,9 +258,9 @@ async fn handle_check(
                 ctx,
                 mci,
                 &format!(
-                    "Your RealmEye description for **{canonical_ign}** is private (or empty). \
-                     Set the description visibility to **public**, save, and click \
-                     **I added it** again."
+                    "Your RealmEye profile for **{canonical_ign}** is private (or your \
+                     description is empty). Set your **profile to public** (RealmEye → \
+                     Settings → Privacy), save your description, and click **I added it** again."
                 ),
                 true,
             )
@@ -360,7 +361,8 @@ fn code_embed(claimed_ign: &str, code: &str) -> CreateEmbed {
              1. Open <https://www.realmeye.com/player/{claimed_ign}> and log in.\n\
              2. Edit your description and paste this code:\n\
              ```\n{code}\n```\n\
-             3. Save the description (make sure it's set to **public**).\n\
+             3. Save the description. Make sure your **profile is set to public** \
+                (RealmEye → Settings → Privacy) — that controls description visibility too.\n\
              4. Click **I added it** below.\n\
              \n\
              You can remove the code from your description as soon as \

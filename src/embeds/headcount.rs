@@ -63,7 +63,7 @@ pub fn build(
 ) -> (CreateEmbed, Vec<CreateActionRow>) {
     let color = template.color.unwrap_or(0x5865F2) as u32;
 
-    let default_title = format!("{} Headcount #{headcount_id}", template.display_name);
+    let default_title = format!("{} Headcount", template.display_name);
     let title = template.message_title.as_deref().unwrap_or(&default_title);
 
     // Match the run embed's "<emoji> <title>" prefix when the template

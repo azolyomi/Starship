@@ -154,6 +154,20 @@ pub async fn require(
     Ok(())
 }
 
+/// Action set granted to "raid leader" roles — express setup grants these
+/// guild-wide to a Raid Leader role; the custom-setup wizard grants them
+/// scoped to a specific tier. Keep ordering stable: callers iterate this
+/// to issue grants/revokes.
+pub const LEADER_ACTIONS: &[&str] = &[
+    "StartHeadcount",
+    "ConvertHeadcount",
+    "CancelHeadcount",
+    "StartRun",
+    "EndRun",
+    "ManageRuns",
+    "CreateVcRaid",
+];
+
 /// All valid action names, for use in autocomplete and validation.
 pub const ALL_ACTIONS: &[&str] = &[
     "StartHeadcount",

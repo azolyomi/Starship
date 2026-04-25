@@ -56,8 +56,8 @@ async fn autocomplete_dungeon<'a>(
         "delete",
         "list",
         "edit",
-        "add_role",
-        "remove_role",
+        "add_leader",
+        "remove_leader",
         "add_dungeon",
         "remove_dungeon"
     ),
@@ -208,14 +208,16 @@ pub async fn edit(
     Ok(())
 }
 
-/// Assign a Discord role as an access role for a tier.
-#[poise::command(slash_command, guild_only, rename = "add-role")]
-pub async fn add_role(
+/// Grant a role permission to lead raids in this tier.
+// Writes the full `LEADER_ACTIONS` set (StartHeadcount, StartRun, EndRun, …)
+// scoped to this tier only — guild-wide grants are untouched.
+#[poise::command(slash_command, guild_only, rename = "add-leader")]
+pub async fn add_leader(
     ctx: BotContext<'_>,
     #[description = "Tier name"]
     #[autocomplete = "autocomplete_tier"]
     tier: String,
-    #[description = "Role to assign"] role: serenity::Role,
+    #[description = "Role to grant"] role: serenity::Role,
 ) -> Result<(), BotError> {
     perm_svc::require(ctx, Action::ManageTiers, None, None).await?;
 
@@ -230,29 +232,37 @@ pub async fn add_role(
         }
     };
 
-    let added = db::tier::add_role(pool, t.id, role.id.get() as i64).await?;
-    if added {
+    let role_id = role.id.get() as i64;
+    let mut any_inserted = false;
+    for action in perm_svc::LEADER_ACTIONS {
+        if db::permission::grant(pool, guild_id, role_id, action, Some(t.id), None).await? {
+            any_inserted = true;
+        }
+    }
+
+    if any_inserted {
         ctx.say(format!(
-            "Added <@&{}> as an access role for **{}**.",
+            "Added <@&{}> as a leader role for **{}**.",
             role.id, t.name
         ))
         .await?;
     } else {
-        ctx.say("That role is already assigned to this tier.")
-            .await?;
+        ctx.say("That role already leads this tier.").await?;
     }
 
     Ok(())
 }
 
-/// Remove a Discord role from a tier's access roles.
-#[poise::command(slash_command, guild_only, rename = "remove-role")]
-pub async fn remove_role(
+/// Revoke a role's permission to lead raids in this tier.
+// Removes the full `LEADER_ACTIONS` set scoped to this tier; guild-wide
+// grants (e.g. from the express-setup Raid Leader role) are untouched.
+#[poise::command(slash_command, guild_only, rename = "remove-leader")]
+pub async fn remove_leader(
     ctx: BotContext<'_>,
     #[description = "Tier name"]
     #[autocomplete = "autocomplete_tier"]
     tier: String,
-    #[description = "Role to remove"] role: serenity::Role,
+    #[description = "Role to revoke"] role: serenity::Role,
 ) -> Result<(), BotError> {
     perm_svc::require(ctx, Action::ManageTiers, None, None).await?;
 
@@ -267,12 +277,22 @@ pub async fn remove_role(
         }
     };
 
-    let removed = db::tier::remove_role(pool, t.id, role.id.get() as i64).await?;
-    if removed {
-        ctx.say(format!("Removed <@&{}> from **{}**.", role.id, t.name))
-            .await?;
+    let role_id = role.id.get() as i64;
+    let mut any_removed = false;
+    for action in perm_svc::LEADER_ACTIONS {
+        if db::permission::revoke(pool, guild_id, role_id, action, Some(t.id), None).await? {
+            any_removed = true;
+        }
+    }
+
+    if any_removed {
+        ctx.say(format!(
+            "Removed <@&{}> as a leader of **{}**.",
+            role.id, t.name
+        ))
+        .await?;
     } else {
-        ctx.say("That role was not assigned to this tier.").await?;
+        ctx.say("That role wasn't a leader of this tier.").await?;
     }
 
     Ok(())

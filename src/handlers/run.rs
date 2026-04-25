@@ -118,14 +118,12 @@ async fn rebuild_and_edit_message(
     let template = db::dungeon::get_by_id(pool, run.dungeon_template_id)
         .await?
         .ok_or_else(|| format!("template {} not found", run.dungeon_template_id))?;
-    let reactions = db::dungeon::get_reactions(pool, run.dungeon_template_id).await?;
     let emoji_map = db::emoji::get_all_as_map(pool).await?;
     let bag_tiers = db::loot::list_bag_tiers(pool).await?;
     let threshold = db::loot::get_threshold(pool, run.guild_id).await?;
 
-    let (embed, components) = embeds::run::build(
-        run, &template, &reactions, &emoji_map, &bag_tiers, &threshold,
-    );
+    let (embed, components) =
+        embeds::run::build(run, &template, &emoji_map, &bag_tiers, &threshold);
 
     if let Err(e) = serenity::ChannelId::new(run.channel_id as u64)
         .edit_message(
