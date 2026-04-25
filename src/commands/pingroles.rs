@@ -1,7 +1,11 @@
 //! `/pingroles` — dungeon-notification-role management.
 //!
-//! Three flows:
-//! * `/pingroles` (anyone) — paginated ephemeral opt-in picker that diffs
+//! Discord requires every slash invocation to land on a subcommand once a
+//! command has any registered, so the self-service picker lives under
+//! `/pingroles me` rather than the bare root.
+//!
+//! Four flows:
+//! * `/pingroles me` (anyone) — paginated ephemeral opt-in picker that diffs
 //!   the user's desired subscriptions against their actual role membership
 //!   and applies add/remove with retries.
 //! * `/pingroles set <dungeon> <role>` (admin) — bind an existing role.
@@ -57,11 +61,16 @@ fn ephemeral(msg: impl Into<String>) -> CreateReply {
 #[poise::command(
     slash_command,
     guild_only,
-    subcommands("set_", "unset", "create"),
-    subcommand_required = false
+    subcommands("me", "set_", "unset", "create"),
+    subcommand_required
 )]
-pub async fn pingroles(ctx: BotContext<'_>) -> Result<(), BotError> {
-    // No subcommand → launch the self-service picker.
+pub async fn pingroles(_ctx: BotContext<'_>) -> Result<(), BotError> {
+    Ok(())
+}
+
+/// Manage your own dungeon ping subscriptions (paginated picker).
+#[poise::command(slash_command, guild_only)]
+pub async fn me(ctx: BotContext<'_>) -> Result<(), BotError> {
     self_service_picker(ctx).await
 }
 
