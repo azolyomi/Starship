@@ -2352,6 +2352,65 @@ self-organize channel + sticky messages out of the box; the SO panel
 selects label themselves; the picker handles arbitrary tier sizes
 without truncation.
 
+### 2026-04-25 — Override emoji bug + organizer bypass
+
+Two issues from live testing:
+
+1. **Override reactions silently dropped.** Starting a Void run via the
+   self-organize button only attached `interest` + `vial_of_pure_darkness`
+   reactions, missing `lost_halls_key`. Root cause: `dungeon_overrides.json`
+   declared `emoji: "lost_halls_key"`, but `sync-wiki` uploads the Lost
+   Halls key sprite as `key_lost_halls`. `embeds::headcount::emoji_rt`
+   returns `None` when neither a unicode literal nor a `bot_emoji`
+   logical name matches, and the reaction-attach loop silently skips
+   `None`s. The reaction row landed in `dungeon_reactions` but never
+   rendered.
+2. **No organizer bypass on self-organize gates.** A user with the
+   Raid Leader role still got blocked by the per-user cap, post-cancel
+   cooldown, and HC->Run min-reactors floor — anti-troll guardrails
+   that don't make sense for trusted operators.
+
+Landed:
+- `data/dungeon_overrides.json` — `lost_halls_key` reaction's `emoji`
+  field renamed to `key_lost_halls` in both `the_void` and
+  `cultist_hideout`. The reaction's `name` (its DB key) stays
+  `lost_halls_key`; only the emoji-resolution name changed.
+  `upsert_reaction` updates the `emoji` column on conflict, so a bot
+  restart heals the stale DB row without manual SQL.
+- `src/templates/mod.rs::warn_unresolvable_reactions` (new) — runs
+  per-template after `seed_one`. Loads the `bot_emoji` catalogue once
+  at the top of `load_and_seed`, then warns at boot for every reaction
+  whose emoji is neither unicode nor a known logical name. The
+  warning names the dungeon, reaction name, and missing emoji name —
+  the next typo will be loud in the log instead of an invisible
+  reaction-skip mystery.
+- `src/services/permission.rs::is_organizer` (new) — same chain as
+  `can_organize` *minus* the leader check. Used by self-organize
+  gates that need "trusted operator" semantics: leader-bypass would
+  defeat the per-user cap because every caller IS the leader of the
+  raid they're trying to open. Plus
+  `is_organizer_from_modal` convenience wrapper for modal handlers.
+- `src/services/self_organize.rs::check_can_start` — gained an
+  `is_organizer: bool` parameter. Per-user cap and post-cancel
+  cooldown now skipped when true; slot lock and tier-disabled stay
+  enforced (structural).
+- `src/services/self_organize.rs::check_can_convert` — same: bypasses
+  the min-reactors floor when `is_organizer` is true.
+- Two call sites updated to compute `is_organizer` from the modal:
+  `handlers/self_organize.rs::handle_start` and
+  `handlers/headcount.rs::handle_confirm_start`. Both pass
+  `Some(tier.id)` so the organizer check is scoped to the relevant
+  tier (a user with `ManageRuns` granted only on tier #2 doesn't
+  bypass tier #1's gates).
+
+Operator follow-up: any HC posted *before* this change still has its
+reactions attached the old (broken) way. The orphan sweep's
+`reconcile_headcount_reactions` reattaches missing reactions on every
+boot — restarting the bot heals stuck HCs without intervention.
+
+Verification: `cargo fmt --check`, `cargo build`, `cargo clippy
+--all-targets -- -D warnings`, `cargo test` (15 passed) all green.
+
 ### Credentials still needed from the user
 
 Collected into `.env` when we're ready to boot:

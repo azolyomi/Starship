@@ -279,3 +279,71 @@ fn member_meta(mci: &serenity::ComponentInteraction) -> (Option<serenity::Permis
     let roles = member.roles.iter().map(|r| r.get() as i64).collect();
     (member.permissions, roles)
 }
+
+/// "Trusted operator" check — used by self-organize gates that should
+/// bypass anti-troll guardrails (per-user cap, post-cancel cooldown,
+/// min-reactors-not-met) for users who have organizer-level trust.
+///
+/// Returns true when any of these hold:
+///   1. caller is the global operator
+///   2. caller is the guild's configured superadmin
+///   3. caller has Discord "Manage Server" / "Administrator"
+///   4. caller has `ManageRuns` granted, scoped to this tier or broader
+///
+/// **Different from `can_organize`** — does NOT include the
+/// "caller is the raid leader" bypass. The leader check makes sense for
+/// per-raid lifecycle buttons (Start, Cancel, End) but would defeat the
+/// anti-troll cap for self-organize: every caller IS the leader of the
+/// raid they're trying to open, so leader-bypass would render the cap
+/// useless.
+pub async fn is_organizer(
+    pool: &PgPool,
+    guild_id: i64,
+    caller_id: i64,
+    caller_perms: Option<serenity::Permissions>,
+    caller_role_ids: &[i64],
+    tier_id: Option<i32>,
+) -> Result<bool> {
+    if caller_id == GLOBAL_SUPERADMIN_USER_ID as i64 {
+        return Ok(true);
+    }
+    if let Some(guild) = db::guild::get(pool, guild_id).await? {
+        if guild.superadmin_user_id == Some(caller_id) {
+            return Ok(true);
+        }
+    }
+    if caller_perms
+        .map(|p| p.manage_guild() || p.administrator())
+        .unwrap_or(false)
+    {
+        return Ok(true);
+    }
+    db::permission::check(
+        pool,
+        guild_id,
+        caller_role_ids,
+        Action::ManageRuns.as_str(),
+        tier_id,
+        None,
+    )
+    .await
+}
+
+/// Convenience wrapper around [`is_organizer`] for `ModalInteraction`
+/// callers (modal submissions don't carry a `ComponentInteraction` shape).
+pub async fn is_organizer_from_modal(
+    pool: &PgPool,
+    guild_id: i64,
+    modal: &serenity::ModalInteraction,
+    tier_id: Option<i32>,
+) -> Result<bool> {
+    let caller_id = modal.user.id.get() as i64;
+    let (perms, roles) = match modal.member.as_ref() {
+        Some(m) => (
+            m.permissions,
+            m.roles.iter().map(|r| r.get() as i64).collect(),
+        ),
+        None => (None, Vec::new()),
+    };
+    is_organizer(pool, guild_id, caller_id, perms, &roles, tier_id).await
+}

@@ -46,7 +46,7 @@
       {
         "name": "lost_halls_key",
         "display_name": "Lost Halls Key",
-        "emoji": "lost_halls_key",
+        "emoji": "key_lost_halls",
         "sort_order": 1
       },
       {
@@ -75,7 +75,7 @@
       {
         "name": "lost_halls_key",
         "display_name": "Lost Halls Key",
-        "emoji": "lost_halls_key",
+        "emoji": "key_lost_halls",
         "sort_order": 1
       }
     ]

@@ -84,12 +84,18 @@ impl SelfOrganizeBlock {
 /// per-user cap and cooldown checks run last because they're cheap and
 /// rarely fire — we'd rather tell the user "another raid is up" than
 /// "you've been bad" if both apply.
+///
+/// `is_organizer` (caller has `ManageRuns` / superadmin / Discord admin)
+/// bypasses the per-user cap and the post-cancel cooldown — both are
+/// anti-troll guardrails that don't apply to trusted operators. The slot
+/// lock and the tier-disabled check are structural and apply to everyone.
 pub async fn check_can_start(
     serenity_ctx: &serenity::Context,
     pool: &PgPool,
     tier: &Tier,
     template: &DungeonTemplate,
     caller_id: i64,
+    is_organizer: bool,
 ) -> Result<Option<SelfOrganizeBlock>> {
     if !tier.enable_self_organization {
         return Ok(Some(SelfOrganizeBlock::TierDisabled));
@@ -118,14 +124,18 @@ pub async fn check_can_start(
         return Ok(Some(SelfOrganizeBlock::SlotInUse(claim)));
     }
 
-    if db::self_organize::claim_count_for_user(pool, tier.guild_id, caller_id).await? > 0 {
+    if !is_organizer
+        && db::self_organize::claim_count_for_user(pool, tier.guild_id, caller_id).await? > 0
+    {
         return Ok(Some(SelfOrganizeBlock::UserAlreadyHasRaid));
     }
 
-    if let Some(until) =
-        db::self_organize::cooldown_active(pool, tier.guild_id, tier.id, caller_id).await?
-    {
-        return Ok(Some(SelfOrganizeBlock::OnCooldown { until }));
+    if !is_organizer {
+        if let Some(until) =
+            db::self_organize::cooldown_active(pool, tier.guild_id, tier.id, caller_id).await?
+        {
+            return Ok(Some(SelfOrganizeBlock::OnCooldown { until }));
+        }
     }
 
     Ok(None)
@@ -160,10 +170,18 @@ impl SelfOrganizeConvertBlock {
 /// signed up. The non-bot filter matters: the bot's own reactions on the
 /// message (added by [`crate::services::reactions::attach_reactions`])
 /// would otherwise count for one signup each.
+///
+/// `is_organizer` bypass: trusted operators can convert with fewer
+/// reactors than the configured floor — the floor is an anti-troll
+/// guardrail for self-service raids, not an organizer-side rule.
 pub fn check_can_convert(
     tier: &Tier,
     distinct_reactor_count: i64,
+    is_organizer: bool,
 ) -> Option<SelfOrganizeConvertBlock> {
+    if is_organizer {
+        return None;
+    }
     let required = tier.self_organize_min_reactors as i64;
     if distinct_reactor_count < required {
         return Some(SelfOrganizeConvertBlock::MinReactorsNotMet {

@@ -389,8 +389,17 @@ async fn handle_confirm_start(
     // Self-organize min-reactors gate. Only enforced for HCs that originated
     // from the self-organize button; staff `/headcount` in self-organize
     // tiers is already trust-gated by the StartHeadcount permission and
-    // doesn't need the anti-troll floor.
+    // doesn't need the anti-troll floor. Organizers (ManageRuns / superadmin
+    // / Discord admin) also bypass the floor — `check_can_convert` skips
+    // the count comparison for trusted operators.
     if hc.is_self_organized {
+        let is_org = services::permission::is_organizer_from_modal(
+            &data.db,
+            hc.guild_id,
+            modal,
+            Some(hc.tier_id),
+        )
+        .await?;
         let count = match services::reactions::count_distinct_non_bot_reactors(
             &ctx.http,
             serenity::ChannelId::new(hc.channel_id as u64),
@@ -408,7 +417,7 @@ async fn handle_confirm_start(
                 tier.self_organize_min_reactors as i64
             }
         };
-        if let Some(block) = services::self_organize::check_can_convert(&tier, count) {
+        if let Some(block) = services::self_organize::check_can_convert(&tier, count, is_org) {
             modal
                 .create_response(ctx, ephemeral_msg(block.user_message()))
                 .await?;

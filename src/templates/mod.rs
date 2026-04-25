@@ -260,8 +260,19 @@ pub async fn load_and_seed(pool: &PgPool) -> Result<()> {
     }
 
     let effective = merge(&dump, &overrides)?;
+
+    // Load the bot_emoji catalogue once so we can warn about any reaction
+    // whose `emoji` field is neither a unicode literal nor a known
+    // bot_emoji logical name. Without this check, a typo in the override
+    // file (e.g. `lost_halls_key` instead of `key_lost_halls`) lands the
+    // reaction row in the DB but `emoji_rt` returns None at attach time
+    // and the reaction silently never appears on the message.
+    let emoji_catalogue: HashSet<String> =
+        db::emoji::get_all_as_map(pool).await?.into_keys().collect();
+
     for eff in &effective {
         seed_one(pool, eff).await?;
+        warn_unresolvable_reactions(eff, &emoji_catalogue);
     }
 
     // Drop globals that the current effective set no longer mentions.
@@ -358,6 +369,35 @@ fn merge(dump: &WikiDump, overrides: &Overrides) -> Result<Vec<Effective>> {
     }
 
     Ok(by_name.into_values().collect())
+}
+
+/// Per-template diagnostic: warn for each reaction whose emoji name
+/// won't resolve at attach time. The seeder still writes the row — the
+/// template author may be planning to upload the emoji shortly via
+/// `starship upload-emoji` — but the warn line lets the operator catch
+/// bad names by tailing the boot log instead of by an in-channel
+/// "missing reaction" surprise.
+fn warn_unresolvable_reactions(eff: &Effective, catalogue: &HashSet<String>) {
+    for r in &eff.reactions {
+        if r.emoji.is_empty() {
+            continue;
+        }
+        // Mirrors `embeds::headcount::is_unicode_literal`: any non-ASCII
+        // string is treated as a unicode literal and renders without
+        // needing a bot_emoji row.
+        let is_unicode = !r.emoji.is_ascii();
+        if is_unicode || catalogue.contains(&r.emoji) {
+            continue;
+        }
+        warn!(
+            dungeon = %eff.name,
+            reaction = %r.name,
+            emoji_name = %r.emoji,
+            "reaction emoji not found in bot_emoji and not a unicode literal — \
+             reaction row will silently fail to attach. Either fix the \
+             override JSON or upload the emoji via `starship upload-emoji`.",
+        );
+    }
 }
 
 async fn seed_one(pool: &PgPool, eff: &Effective) -> Result<()> {

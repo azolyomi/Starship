@@ -474,11 +474,18 @@ async fn handle_start(
 
     let caller_id = modal.user.id.get() as i64;
 
+    // Organizer bypass: caller has ManageRuns / superadmin / Discord admin.
+    // Bypasses the per-user cap and post-cancel cooldown but not the slot
+    // lock or tier-disabled checks.
+    let is_org =
+        services::permission::is_organizer_from_modal(pool, tier.guild_id, modal, Some(tier.id))
+            .await?;
+
     // Anti-troll gate. Runs *outside* the tx because it does its own
     // best-effort sweep of stale claims (which itself opens a tx) and
     // Postgres doesn't allow nested tx without savepoints.
     if let Some(block) =
-        self_organize::check_can_start(ctx, pool, &tier, &template, caller_id).await?
+        self_organize::check_can_start(ctx, pool, &tier, &template, caller_id, is_org).await?
     {
         modal
             .create_followup(
