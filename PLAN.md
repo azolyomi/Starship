@@ -2292,6 +2292,66 @@ Still deferred (called out so they aren't forgotten):
   to catch the unique violation in `claim_for_headcount` and map it
   to a typed `UserCapExceeded` outcome.
 
+### 2026-04-25 — Self-organize ergonomics polish #2
+
+Three asks from real-world testing:
+1. Quick Setup should provision the self-organize channel + stickies
+   too (previously SO was opt-in via the dashboard).
+2. The four StringSelects in the SO panel show the *value* (e.g.
+   "5 minutes") once a default is selected, with no hint of which knob
+   they control.
+3. The dungeon picker truncates at 25 with a "ask an admin to slim the
+   tier" footer; for a default tier with 62 dungeons attached, that's
+   most of them.
+
+Landed:
+- `src/commands/setup.rs::create_default_channels` now returns
+  `(category_id, runs_id)` so the caller can place additional channels
+  under the same Raids category.
+- `find_or_create_self_organize_channel(ctx, category_id)` (new) —
+  find-or-create `🚀self-organize` (with plain `self-organize`
+  fallback). Idempotent; same shape as the log/verify channel
+  helpers.
+- `do_quick_setup` now calls `find_or_create_self_organize_channel`,
+  flips the Main tier to `enable_self_organization = TRUE` with that
+  channel and the migration-default knobs, and calls
+  `install_stickies_best_effort` after every other DB write commits.
+  Sticky failure is logged but doesn't fail the whole quick setup —
+  operator can repost from `/setup → Self-organize → Repost stickies`.
+- `intro_view` copy advertises the new SO channel under the Quick
+  Setup bullet list. `summary_view` adds an SO line ("Self-organize
+  is **enabled** — anyone can start a raid from <#…>") and reorders
+  the "Try it out" list so the sticky button is the first suggestion.
+- `so_preset_options` gained a `prefix: &str` parameter; every
+  StringSelect option now renders as "{prefix}: {label}" so the
+  closed dropdown reads as "Idle: 15 minutes" / "Cooldown: 5 minutes"
+  / "Min reactors: 2" instead of bare values that all look alike. The
+  per-preset "(default)" suffix was dropped from the constants —
+  it's misleading once the saved value is the de-facto default.
+- `src/handlers/self_organize.rs` — picker pagination:
+  - New `so:page:<tier_id>:<page>` custom_id; nav clicks re-render
+    the same ephemeral via `UpdateMessage`.
+  - `render_picker_page(pool, tier, page)` (new) returns a `PickerPage
+    { content, components }`. Returns `None` when the tier has no
+    dungeons so the entry-point handler picks the right wording.
+  - `handle_button` opens page 0 via `Message`; `handle_page` re-paints
+    via `UpdateMessage`. Prev/Next buttons are added only when
+    `total_pages > 1`, and disabled at the boundaries. Content shows
+    "Page N / M" so the user always knows where they are.
+  - `PICKER_MAX_OPTIONS` const renamed to `PICKER_PAGE_SIZE`; the
+    "ask an admin to slim the tier" truncation footer is gone.
+
+Verification:
+- `cargo fmt --check` — clean.
+- `cargo build` — 0 warnings.
+- `cargo clippy --all-targets -- -D warnings` — clean.
+- `cargo test` — 15 passed.
+
+Operator impact: Quick Setup now produces a fully working
+self-organize channel + sticky messages out of the box; the SO panel
+selects label themselves; the picker handles arbitrary tier sizes
+without truncation.
+
 ### Credentials still needed from the user
 
 Collected into `.env` when we're ready to boot:

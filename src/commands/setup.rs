@@ -162,6 +162,8 @@ fn intro_view() -> (CreateEmbed, Vec<CreateActionRow>) {
              **Quick setup** — one click, sensible defaults:\n\
              • Creates a **Raids** category with a single `main-runs` \
                channel (headcounts and runs both live there)\n\
+             • Creates `#🚀self-organize` with a sticky **Start a run** \
+               button so anyone can spin up a raid\n\
              • Creates `#🚀starship-log` for audit events\n\
              • Creates a **Raid Leader** role with raid-management \
                permissions\n\
@@ -245,12 +247,17 @@ async fn do_quick_setup(ctx: BotContext<'_>) -> Result<()> {
     let user_id = ctx.author().id.get() as i64;
 
     // Single runs channel under a Raids category (R3: no more split
-    // headcount / raid channels).
-    let runs_id = create_default_channels(ctx, "Main").await?;
+    // headcount / raid channels). Also returns the category so we can
+    // place the self-organize channel alongside.
+    let (raids_category_id, runs_id) = create_default_channels(ctx, "Main").await?;
 
     // Log channel — emoji-prefixed name, fallback to plain if Discord
     // rejects the leading rocket glyph.
     let log_id = find_or_create_log_channel(ctx).await?;
+
+    // Self-organize channel — sticky button + active raids listing live
+    // here. Lives under the Raids category alongside the runs channel.
+    let so_channel_id = find_or_create_self_organize_channel(ctx, raids_category_id).await?;
 
     // Main tier.
     let existing_main = db::tier::list(pool, guild_id)
@@ -272,8 +279,21 @@ async fn do_quick_setup(ctx: BotContext<'_>) -> Result<()> {
             created.id
         }
     };
-    // Leave tier access roles empty = anyone in the server can participate.
-    let _ = tier_id;
+
+    // Self-organize: enable the tier with the freshly-created channel and
+    // server defaults for idle / cooldown / min-reactors. Sticky messages
+    // get installed below — best-effort so a transient Discord blip
+    // doesn't fail the whole quick setup.
+    db::tier::update_self_organize(
+        pool,
+        tier_id,
+        Some(true),
+        Some(so_channel_id.get() as i64),
+        None,
+        None,
+        None,
+    )
+    .await?;
 
     db::guild::set_log_channel(pool, guild_id, Some(log_id.get() as i64)).await?;
     db::guild::set_superadmin(pool, guild_id, Some(user_id)).await?;
@@ -295,6 +315,13 @@ async fn do_quick_setup(ctx: BotContext<'_>) -> Result<()> {
     db::guild::set_verify_message(pool, guild_id, Some(verify_message_id.get() as i64)).await?;
 
     db::guild::mark_setup_complete(pool, guild_id, true).await?;
+
+    // Install the self-organize stickies after every other DB write has
+    // landed. install_stickies_best_effort logs and continues on failure
+    // — the operator can repost from /setup → Self-organize → Repost
+    // stickies if Discord refused the post.
+    install_stickies_best_effort(ctx.serenity_context(), pool, tier_id).await;
+
     Ok(())
 }
 
@@ -720,24 +747,40 @@ async fn summary_view(ctx: BotContext<'_>) -> Result<CreateEmbed> {
         .await?
         .len();
 
+    let so_block = if first.enable_self_organization {
+        match first.self_organize_channel_id {
+            Some(c) => format!(
+                "\nSelf-organize is **enabled** — anyone can start a raid \
+                 from <#{c}>.\n",
+            ),
+            None => String::new(),
+        }
+    } else {
+        String::new()
+    };
+
     let description = format!(
         "Starship is ready to raid.\n\
          \n\
-         **{}** is live in {}.\n\
+         **{name}** is live in {runs}.\n\
          {dungeon_count} dungeon(s) are attached to this tier.\n\
+         {so_block}\
          \n\
          **Try it out**\n\
-         • Run `/headcount <dungeon>` to start gathering raiders.\n\
-         • Run `/run <dungeon>` to skip the headcount and jump straight in.\n\
+         • Click **Start a run** in the self-organize channel (if enabled).\n\
+         • Or run `/headcount <dungeon>` to start gathering raiders.\n\
+         • Or run `/run <dungeon>` to skip the headcount and jump straight in.\n\
          • Run `/pingroles` to subscribe to dungeon notifications.\n\
          \n\
          **Manage later**\n\
+         • `/setup` → **Self-organize** — tune knobs, repost stickies, \
+           switch tiers\n\
          • `/tier` — add more tiers, change channels, assign access roles\n\
          • `/permission` — let specific roles run headcounts and runs\n\
          • `/dungeon` — customise or add dungeons\n\
          • `/pingroles set` — bind a dungeon to a notification role\n\
          • `/setup` — re-run this wizard any time",
-        first.name, runs
+        name = first.name,
     );
 
     Ok(CreateEmbed::new()
@@ -817,7 +860,7 @@ async fn section_first_tier(
             "setup:tier:create_channels" => {
                 let tier_name = existing.as_ref().map(|t| t.name.as_str()).unwrap_or("Main");
                 match create_default_channels(ctx, tier_name).await {
-                    Ok(runs_id) => {
+                    Ok((_, runs_id)) => {
                         draft.runs_channel = Some(runs_id);
                         let (embed, components) =
                             tier_view(existing.as_ref(), &draft, global_dungeons.len());
@@ -1444,24 +1487,28 @@ async fn handle_verify_auto(ctx: BotContext<'_>, mci: &ComponentInteraction) -> 
 // ---------------------------------------------------------------------------
 
 /// Idle / cooldown / min-reactor presets shown in the section's StringSelects.
-/// First column is the value persisted; second is the user-facing label.
+/// First column is the value persisted; second is the user-facing label
+/// suffix. The full label rendered to Discord is "{prefix}: {suffix}" so
+/// the closed dropdown still tells the user what it controls once a value
+/// is selected (Discord replaces the placeholder with the chosen option's
+/// label).
 const SO_IDLE_PRESETS: &[(i32, &str)] = &[
     (5, "5 minutes"),
     (10, "10 minutes"),
-    (15, "15 minutes (default)"),
+    (15, "15 minutes"),
     (30, "30 minutes"),
     (60, "60 minutes"),
 ];
 const SO_COOLDOWN_PRESETS: &[(i32, &str)] = &[
     (60, "1 minute"),
     (180, "3 minutes"),
-    (300, "5 minutes (default)"),
+    (300, "5 minutes"),
     (600, "10 minutes"),
     (1800, "30 minutes"),
 ];
 const SO_MIN_REACTORS_PRESETS: &[(i32, &str)] = &[
     (1, "1"),
-    (2, "2 (default)"),
+    (2, "2"),
     (3, "3"),
     (4, "4"),
     (5, "5"),
@@ -1771,11 +1818,13 @@ fn parse_select_i32(kind: &ComponentInteractionDataKind) -> Option<i32> {
 fn so_preset_options(
     presets: &[(i32, &str)],
     current: i32,
+    prefix: &str,
 ) -> Vec<serenity::CreateSelectMenuOption> {
     presets
         .iter()
         .map(|(value, label)| {
-            let mut opt = serenity::CreateSelectMenuOption::new(*label, value.to_string());
+            let full = format!("{prefix}: {label}");
+            let mut opt = serenity::CreateSelectMenuOption::new(full, value.to_string());
             if *value == current {
                 opt = opt.default_selection(true);
             }
@@ -1916,7 +1965,7 @@ fn so_config_view(tiers: &[Tier], tier: &Tier) -> (CreateEmbed, Vec<CreateAction
     let idle_select = CreateSelectMenu::new(
         "setup:so:idle",
         CreateSelectMenuKind::String {
-            options: so_preset_options(SO_IDLE_PRESETS, tier.self_organize_idle_minutes),
+            options: so_preset_options(SO_IDLE_PRESETS, tier.self_organize_idle_minutes, "Idle"),
         },
     )
     .placeholder("Idle window before HCs auto-cancel")
@@ -1929,6 +1978,7 @@ fn so_config_view(tiers: &[Tier], tier: &Tier) -> (CreateEmbed, Vec<CreateAction
             options: so_preset_options(
                 SO_COOLDOWN_PRESETS,
                 tier.self_organize_cancel_cooldown_seconds,
+                "Cooldown",
             ),
         },
     )
@@ -1939,7 +1989,11 @@ fn so_config_view(tiers: &[Tier], tier: &Tier) -> (CreateEmbed, Vec<CreateAction
     let min_select = CreateSelectMenu::new(
         "setup:so:min",
         CreateSelectMenuKind::String {
-            options: so_preset_options(SO_MIN_REACTORS_PRESETS, tier.self_organize_min_reactors),
+            options: so_preset_options(
+                SO_MIN_REACTORS_PRESETS,
+                tier.self_organize_min_reactors,
+                "Min reactors",
+            ),
         },
     )
     .placeholder("Minimum reactors to convert HC \u{2192} Run")
@@ -2095,11 +2149,16 @@ async fn back_to_dashboard(
     respond_with_view(ctx, interaction, embed, components).await
 }
 
-/// Find-or-create a "Raids" category + `{slug}-runs` text channel under it.
+/// Find-or-create a "Raids" category + `{slug}-runs` text channel under
+/// it. Returns `(category_id, runs_id)` so the caller can provision
+/// further channels (e.g. self-organize) under the same category.
 /// Idempotent — re-running picks up the existing channel rather than
 /// duplicating. R3 collapsed the old headcount/raid split to a single
 /// channel: both headcounts and runs post here.
-async fn create_default_channels(ctx: BotContext<'_>, tier_name: &str) -> Result<ChannelId> {
+async fn create_default_channels(
+    ctx: BotContext<'_>,
+    tier_name: &str,
+) -> Result<(ChannelId, ChannelId)> {
     let guild_id = require_guild_id(ctx);
     let http = ctx.http();
 
@@ -2149,7 +2208,55 @@ async fn create_default_channels(ctx: BotContext<'_>, tier_name: &str) -> Result
         }
     };
 
-    Ok(runs_id)
+    Ok((category_id, runs_id))
+}
+
+/// Find-or-create a `🚀self-organize` text channel under the Raids
+/// category. Falls back to a plain `self-organize` name if Discord
+/// rejects the leading rocket glyph (some guild settings choke on
+/// leading emoji). Idempotent.
+async fn find_or_create_self_organize_channel(
+    ctx: BotContext<'_>,
+    category_id: ChannelId,
+) -> Result<ChannelId> {
+    const FANCY: &str = "🚀self-organize";
+    const PLAIN: &str = "self-organize";
+
+    let guild_id = require_guild_id(ctx);
+    let http = ctx.http();
+    let existing = guild_id.channels(http).await?;
+
+    for name in [FANCY, PLAIN] {
+        if let Some(c) = existing.values().find(|c| {
+            c.kind == ChannelType::Text
+                && c.parent_id == Some(category_id)
+                && c.name.eq_ignore_ascii_case(name)
+        }) {
+            return Ok(c.id);
+        }
+    }
+
+    let create = CreateChannel::new(FANCY)
+        .kind(ChannelType::Text)
+        .category(category_id);
+    match guild_id.create_channel(http, create).await {
+        Ok(ch) => Ok(ch.id),
+        Err(e) => {
+            tracing::warn!(
+                error = ?e,
+                "self-organize channel with emoji prefix rejected, falling back",
+            );
+            Ok(guild_id
+                .create_channel(
+                    http,
+                    CreateChannel::new(PLAIN)
+                        .kind(ChannelType::Text)
+                        .category(category_id),
+                )
+                .await?
+                .id)
+        }
+    }
 }
 
 /// Discord channel names: lowercase, alphanumeric + hyphens, no runs of

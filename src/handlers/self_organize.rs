@@ -4,7 +4,11 @@
 //!
 //!   so:btn:<tier_id>                       sticky button on the tier's
 //!                                          self-organize channel — opens an
-//!                                          ephemeral dungeon picker.
+//!                                          ephemeral dungeon picker (page 0).
+//!   so:page:<tier_id>:<page>               Prev/Next click on the picker —
+//!                                          re-renders the ephemeral with
+//!                                          a different slice of the tier's
+//!                                          dungeons. Ephemeral-only.
 //!   so:dpick:<tier_id>                     StringSelect submission — opens
 //!                                          a location/party modal whose ID
 //!                                          encodes the chosen dungeon.
@@ -23,20 +27,20 @@
 
 use poise::serenity_prelude as serenity;
 use serenity::{
-    ActionRowComponent, CreateActionRow, CreateInputText, CreateInteractionResponse,
-    CreateInteractionResponseFollowup, CreateInteractionResponseMessage, CreateModal,
-    CreateSelectMenu, CreateSelectMenuKind, CreateSelectMenuOption, InputTextStyle,
+    ActionRowComponent, ButtonStyle, CreateActionRow, CreateButton, CreateInputText,
+    CreateInteractionResponse, CreateInteractionResponseFollowup, CreateInteractionResponseMessage,
+    CreateModal, CreateSelectMenu, CreateSelectMenuKind, CreateSelectMenuOption, InputTextStyle,
 };
+use sqlx::PgPool;
 
 use crate::db::models::Tier;
 use crate::services::raid::StartHeadcountOutcome;
 use crate::services::{self_organize, self_organize_listing};
 use crate::{db, services, BotData, BotError};
 
-/// Maximum dungeons surfaced in the StringSelect picker. Discord's hard
-/// cap is 25; tiers with more dungeons truncate (rare in practice — most
-/// tiers carry 4–10 dungeons).
-const PICKER_MAX_OPTIONS: usize = 25;
+/// One page of the dungeon picker. Discord's hard cap on StringSelect
+/// options is 25; pagination beyond that uses Prev/Next nav buttons.
+const PICKER_PAGE_SIZE: usize = 25;
 
 // ---------------------------------------------------------------------------
 // Top-level dispatchers
@@ -57,6 +61,11 @@ pub async fn handle_component(
     };
     match parts[1] {
         "btn" => handle_button(ctx, mci, data, tier_id).await,
+        "page" => {
+            // so:page:<tier_id>:<page>
+            let page: usize = parts.get(3).and_then(|p| p.parse().ok()).unwrap_or(0);
+            handle_page(ctx, mci, data, tier_id, page).await
+        }
         "dpick" => handle_dpick(ctx, mci, data, tier_id).await,
         _ => Ok(()),
     }
@@ -137,7 +146,7 @@ async fn load_tier_and_check_enabled(
 }
 
 // ---------------------------------------------------------------------------
-// Step 1: sticky button click → dungeon picker
+// Step 1: sticky button click → dungeon picker (page 0)
 // ---------------------------------------------------------------------------
 
 async fn handle_button(
@@ -150,36 +159,118 @@ async fn handle_button(
         return Ok(());
     };
 
-    // List the dungeons in this tier and resolve each to a template so the
-    // picker shows the human-readable display_name.
-    let template_ids = db::tier::list_dungeons(&data.db, tier_id).await?;
-    if template_ids.is_empty() {
-        mci.create_response(
-            ctx,
-            ephemeral_msg(
-                "This tier has no dungeons configured yet. Ask a server admin \
-                 to attach dungeons in `/tier add-dungeon`.",
-            ),
-        )
-        .await?;
+    let rendered = match render_picker_page(&data.db, &tier, 0).await? {
+        Some(r) => r,
+        None => {
+            mci.create_response(
+                ctx,
+                ephemeral_msg(
+                    "This tier has no dungeons configured yet. Ask a server admin \
+                     to attach dungeons in `/tier add-dungeon`.",
+                ),
+            )
+            .await?;
+            return Ok(());
+        }
+    };
+
+    mci.create_response(
+        ctx,
+        CreateInteractionResponse::Message(
+            CreateInteractionResponseMessage::new()
+                .content(rendered.content)
+                .components(rendered.components)
+                .ephemeral(true),
+        ),
+    )
+    .await?;
+    Ok(())
+}
+
+/// Prev/Next click on an open picker ephemeral. Re-renders the same
+/// ephemeral with a different slice of the tier's dungeons.
+async fn handle_page(
+    ctx: &serenity::Context,
+    mci: &serenity::ComponentInteraction,
+    data: &BotData,
+    tier_id: i32,
+    page: usize,
+) -> Result<(), BotError> {
+    let Some(tier) = load_tier_and_check_enabled(ctx, mci, data, tier_id).await? else {
         return Ok(());
+    };
+
+    let rendered = match render_picker_page(&data.db, &tier, page).await? {
+        Some(r) => r,
+        None => {
+            // Tier emptied between the original click and this nav click —
+            // dismiss the picker with a plain message.
+            mci.create_response(
+                ctx,
+                CreateInteractionResponse::UpdateMessage(
+                    CreateInteractionResponseMessage::new()
+                        .content(
+                            "This tier has no dungeons configured anymore. Ask a server admin \
+                             to attach dungeons in `/tier add-dungeon`.",
+                        )
+                        .components(vec![]),
+                ),
+            )
+            .await?;
+            return Ok(());
+        }
+    };
+
+    mci.create_response(
+        ctx,
+        CreateInteractionResponse::UpdateMessage(
+            CreateInteractionResponseMessage::new()
+                .content(rendered.content)
+                .components(rendered.components),
+        ),
+    )
+    .await?;
+    Ok(())
+}
+
+struct PickerPage {
+    content: String,
+    components: Vec<CreateActionRow>,
+}
+
+/// Build one page of the picker. Returns `None` when the tier has no
+/// dungeons attached; the caller picks the right user-facing wording for
+/// the entry point (first-click vs. nav-click).
+async fn render_picker_page(
+    pool: &PgPool,
+    tier: &Tier,
+    page: usize,
+) -> Result<Option<PickerPage>, BotError> {
+    let template_ids = db::tier::list_dungeons(pool, tier.id).await?;
+    if template_ids.is_empty() {
+        return Ok(None);
     }
 
-    let mut options: Vec<CreateSelectMenuOption> = Vec::with_capacity(template_ids.len());
-    for tid in template_ids.iter().take(PICKER_MAX_OPTIONS) {
-        // Resolve per-id; inexpensive, and the alternative would be a join
-        // helper that's only used once.
-        let Some(template) = db::dungeon::get_by_id(&data.db, *tid).await? else {
+    let total_pages = template_ids.len().div_ceil(PICKER_PAGE_SIZE).max(1);
+    let page = page.min(total_pages - 1);
+    let start = page * PICKER_PAGE_SIZE;
+    let end = (start + PICKER_PAGE_SIZE).min(template_ids.len());
+
+    let mut options: Vec<CreateSelectMenuOption> = Vec::with_capacity(end - start);
+    for tid in &template_ids[start..end] {
+        // Resolve per-id; tier sizes are bounded (one page = 25 max) so
+        // the per-row query is fine. The alternative is a custom join
+        // helper that's only used here.
+        let Some(template) = db::dungeon::get_by_id(pool, *tid).await? else {
             continue;
         };
         // Encode the template_id directly as the select value so we don't
-        // round-trip through the name-resolution (case-insensitive,
-        // collision-prone) when the user picks.
+        // round-trip through name-resolution when the user picks.
         let mut opt = CreateSelectMenuOption::new(template.display_name, template.id.to_string());
         if let Some(emoji) = template.emoji.as_deref() {
-            // Best-effort: only attach the emoji if it's a unicode literal —
-            // we don't have the bot_emoji map handy here and CreateSelectMenuOption's
-            // emoji field expects a ReactionType. Skipping is fine.
+            // Only attach unicode emoji literals — custom application
+            // emoji would need the bot_emoji map and a ReactionType build
+            // that's overkill for cosmetic flair.
             if !emoji.is_ascii() {
                 opt = opt.emoji(serenity::ReactionType::Unicode(emoji.to_string()));
             }
@@ -188,36 +279,42 @@ async fn handle_button(
     }
 
     let menu = CreateSelectMenu::new(
-        format!("so:dpick:{tier_id}"),
+        format!("so:dpick:{}", tier.id),
         CreateSelectMenuKind::String { options },
     )
     .placeholder("Pick a dungeon")
     .min_values(1)
     .max_values(1);
 
-    let truncated_note = if template_ids.len() > PICKER_MAX_OPTIONS {
-        format!(
-            "\n_Showing {PICKER_MAX_OPTIONS} of {} dungeons — ask an admin to slim the tier._",
-            template_ids.len()
-        )
+    let mut components = vec![CreateActionRow::SelectMenu(menu)];
+
+    if total_pages > 1 {
+        let prev = CreateButton::new(format!("so:page:{}:{}", tier.id, page.saturating_sub(1)))
+            .label("\u{2190} Prev")
+            .style(ButtonStyle::Secondary)
+            .disabled(page == 0);
+        let next = CreateButton::new(format!("so:page:{}:{}", tier.id, page + 1))
+            .label("Next \u{2192}")
+            .style(ButtonStyle::Secondary)
+            .disabled(page + 1 >= total_pages);
+        components.push(CreateActionRow::Buttons(vec![prev, next]));
+    }
+
+    let pagination_note = if total_pages > 1 {
+        format!(" \u{00B7} Page {} / {}", page + 1, total_pages)
     } else {
         String::new()
     };
 
-    mci.create_response(
-        ctx,
-        CreateInteractionResponse::Message(
-            CreateInteractionResponseMessage::new()
-                .content(format!(
-                    "Pick a dungeon to start a headcount in **{}**.{truncated_note}",
-                    tier.name,
-                ))
-                .components(vec![CreateActionRow::SelectMenu(menu)])
-                .ephemeral(true),
-        ),
-    )
-    .await?;
-    Ok(())
+    let content = format!(
+        "Pick a dungeon to start a headcount in **{}**.{pagination_note}",
+        tier.name,
+    );
+
+    Ok(Some(PickerPage {
+        content,
+        components,
+    }))
 }
 
 // ---------------------------------------------------------------------------
