@@ -2012,6 +2012,70 @@ stale-sweep + record_self_cancel) and
 listing rendering). Then chunk 3 wires up handlers and the setup
 wizard sub-step.
 
+### 2026-04-25 — Self-organize chunk 2 complete (services + raid refactor)
+
+Service layer for the self-organize feature, plus the `start_headcount`
+refactor that lets a non-`BotContext` caller (the new `so:btn` handler
+in chunk 3) reuse the existing HC-creation pipeline.
+
+Landed:
+- `src/services/raid.rs` — extracted `start_headcount_inner(serenity_ctx,
+  pool, guild_id, leader_id, tier, template, channel_id,
+  is_self_organized) -> Result<StartHeadcountOutcome>`. The inner opens
+  a transaction, calls `db::headcount::create_tx`, and (when
+  `tier.enable_self_organization`) `db::self_organize::claim_for_headcount`.
+  On `ClaimOutcome::Conflict` the tx rolls back and returns
+  `SlotInUse(holder)` so the caller can render a friendly message.
+  After commit, the existing Discord-side work (post embed,
+  set_message_id, attach reactions) runs unchanged. The public
+  `start_headcount(ctx, ...)` is now a thin wrapper that pulls
+  `guild_id`/`leader_id` off `BotContext` and renders the slash-command
+  reply on `SlotInUse`. The slash command's behavior in
+  non-self-organize tiers is unchanged (no claim is written, the
+  outcome is always `Started`).
+- `src/services/self_organize.rs` (new) — anti-troll gate.
+  `SelfOrganizeBlock` enum (`TierDisabled`, `SlotInUse(SlotClaim)`,
+  `UserAlreadyHasRaid`, `OnCooldown { until }`) with
+  `user_message()` for ephemeral interaction replies (uses Discord's
+  `<t:UNIX:R>` for live cooldown countdowns). `check_can_start` runs
+  the order: tier-enabled probe -> stale-slot sweep -> slot still in
+  use -> per-user cap -> cooldown. Stale sweep runs *before* the slot
+  re-check so a click for an abandoned slot can take it over in one
+  flow. `SelfOrganizeConvertBlock::MinReactorsNotMet` and
+  `check_can_convert` gate HC->Run conversion (caller passes the
+  distinct non-bot reactor count, computed from the live message).
+  `record_self_cancel` writes the cooldown row using the tier's
+  configured duration. `sweep_stale_hc_for_slot` best-effort edits the
+  HC message to a "Headcount auto-cancelled (idle)" embed via
+  `embeds::headcount::build_closed`, then tx-deletes the claim + HC
+  row in the right order (claim first, per the FK ordering rule).
+- `src/services/self_organize_listing.rs` (new) — sticky-message
+  lifecycle. `ensure_button_message` posts a single fixed message
+  with one "Start a run" primary button (`so:btn:<tier_id>` custom_id);
+  the message is never edited, only reposted on 404. `ensure_listing_message`
+  installs the active-raids embed in the same channel. `refresh_listing`
+  edits in place on every state transition; on 404 it clears the stored
+  message_id and falls through to a repost. Listing rows resolve
+  dungeon name + leader + HC/Run kind + age; rows whose linked HC is
+  older than `tier.self_organize_idle_minutes` are filtered out so
+  stale entries don't visually pin the slot. Rendered list capped at
+  25 rows with "+N more" overflow.
+- `src/services/mod.rs` — wired both new modules.
+- `src/services/channels.rs::is_not_found` reused by the listing's
+  message-probe paths.
+
+**Gates:** `cargo build` green; `cargo clippy` no errors. Dead-code
+warnings remain on the new surface (forward references for the chunk-3
+handler + setup wizard).
+
+Next chunk (3): `handlers/self_organize.rs` (`so:btn` /
+`so:dpick` / `so:start` interaction routing), integrations into
+`handlers/headcount.rs::handle_cancel`/`handle_confirm_start`,
+`handlers/run.rs::handle_end`/`handle_transfer_submit` (claim release
++ listing refresh), the setup-wizard sub-step in `commands/setup.rs`,
+and orphan-sweep extensions for dangling claims and sticky-message
+repair.
+
 ### Credentials still needed from the user
 
 Collected into `.env` when we're ready to boot:

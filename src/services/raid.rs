@@ -2,10 +2,20 @@ use anyhow::Result;
 use poise::serenity_prelude as serenity;
 use sqlx::PgPool;
 
-use crate::db::models::{DungeonTemplate, Run, Tier};
+use crate::db::models::{DungeonTemplate, Headcount, Run, SlotClaim, Tier};
+use crate::db::self_organize::ClaimOutcome;
 use crate::embeds::headcount::emoji_rt;
 use crate::services::{reactions, voice};
 use crate::{db, embeds, guild_id_i64, BotContext};
+
+/// Outcome of [`start_headcount_inner`]. The slot may already be held by
+/// another HC or run in self-organize-enabled tiers, in which case the
+/// caller renders a friendly "another raid is already up" message and
+/// the headcount is never created.
+pub enum StartHeadcountOutcome {
+    Started(Headcount),
+    SlotInUse(SlotClaim),
+}
 
 /// Prefix the headcount/run message with `@here` plus the dungeon's
 /// notification role (if any). Discord doesn't render `@here` from a bot
@@ -31,10 +41,10 @@ fn allow_here_and_role(notification_role_id: Option<i64>) -> serenity::CreateAll
     allowed
 }
 
-/// Post a headcount embed to the tier's runs channel, create the DB row,
-/// and attach native reactions for each required item. R4: no more
-/// per-user DB tracking — the reactions on the message itself are the
-/// signup UI.
+/// Slash-command entry point. Thin wrapper over [`start_headcount_inner`]
+/// that pulls `guild_id`/`leader_id` off `BotContext` and translates the
+/// result into the slash command's `Result<()>` shape, with a user-facing
+/// reply on `SlotInUse`.
 #[tracing::instrument(
     name = "start_headcount",
     skip_all,
@@ -44,7 +54,6 @@ fn allow_here_and_role(notification_role_id: Option<i64>) -> serenity::CreateAll
         tier = %tier.name,
         dungeon = %template.name,
         channel_id,
-        hc_id = tracing::field::Empty,
     ),
 )]
 pub async fn start_headcount(
@@ -58,11 +67,60 @@ pub async fn start_headcount(
     let guild_id = guild_id_i64(ctx);
     let leader_id = ctx.author().id.get() as i64;
 
+    match start_headcount_inner(
+        serenity_ctx,
+        pool,
+        guild_id,
+        leader_id,
+        tier,
+        template,
+        channel_id,
+        false,
+    )
+    .await?
+    {
+        StartHeadcountOutcome::Started(_) => Ok(()),
+        StartHeadcountOutcome::SlotInUse(holder) => {
+            // Only reachable in tiers with self-organize enabled, where
+            // the slot lock applies to staff /headcount too. The lock
+            // could be held by either a self-organized HC/run or another
+            // staff HC started concurrently in a different shard.
+            ctx.say(format!(
+                "Can't start a headcount: another raid for **{}** is already up (led by <@{}>).",
+                template.display_name, holder.leader_user_id,
+            ))
+            .await?;
+            Ok(())
+        }
+    }
+}
+
+/// Post a headcount embed to the tier's runs channel, create the DB row,
+/// and attach native reactions for each required item. R4: no more
+/// per-user DB tracking — the reactions on the message itself are the
+/// signup UI.
+///
+/// In tiers with `enable_self_organization` set, this also writes a
+/// row to `self_organize_slot_claims` in the same transaction as the HC
+/// insert — a concurrent click that lost the race observes
+/// [`StartHeadcountOutcome::SlotInUse`] without an HC ever existing.
+#[allow(clippy::too_many_arguments)]
+pub async fn start_headcount_inner(
+    serenity_ctx: &serenity::Context,
+    pool: &PgPool,
+    guild_id: i64,
+    leader_id: i64,
+    tier: &Tier,
+    template: &DungeonTemplate,
+    channel_id: i64,
+    is_self_organized: bool,
+) -> Result<StartHeadcountOutcome> {
     // location/party are not collected at headcount-create time — the leader
     // fills them in via the modal that opens on the Start Run button. Pass
     // None so the row's columns stay NULL until then.
-    let hc = db::headcount::create(
-        pool,
+    let mut tx = pool.begin().await?;
+    let hc = db::headcount::create_tx(
+        &mut tx,
         guild_id,
         tier.id,
         template.id,
@@ -70,11 +128,41 @@ pub async fn start_headcount(
         leader_id,
         None,
         None,
-        false,
+        is_self_organized,
     )
     .await?;
-    tracing::Span::current().record("hc_id", hc.id);
-    tracing::info!("headcount created");
+
+    // Slot-claim is only written when the tier opts into self-organize
+    // mode. Staff-led HCs in non-self-organize tiers don't participate
+    // in the slot lock at all (legacy behavior preserved).
+    if tier.enable_self_organization {
+        match db::self_organize::claim_for_headcount(
+            &mut tx,
+            guild_id,
+            tier.id,
+            template.id,
+            hc.id,
+            leader_id,
+            is_self_organized,
+        )
+        .await?
+        {
+            ClaimOutcome::Acquired(_) => {}
+            ClaimOutcome::Conflict(holder) => {
+                tx.rollback().await?;
+                tracing::info!(
+                    leader_id = holder.leader_user_id,
+                    holder_hc_id = ?holder.headcount_id,
+                    holder_run_id = ?holder.run_id,
+                    "self-organize slot already held; refusing start",
+                );
+                return Ok(StartHeadcountOutcome::SlotInUse(holder));
+            }
+        }
+    }
+
+    tx.commit().await?;
+    tracing::info!(hc_id = hc.id, "headcount created");
 
     let reactions_list = db::dungeon::get_reactions(pool, template.id).await?;
     let emoji_map = db::emoji::get_all_as_map(pool).await?;
@@ -117,7 +205,10 @@ pub async fn start_headcount(
     )
     .await;
 
-    Ok(())
+    Ok(StartHeadcountOutcome::Started(Headcount {
+        message_id: msg.id.get() as i64,
+        ..hc
+    }))
 }
 
 /// Post a run embed. Reactions from the source headcount already carry the

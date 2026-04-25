@@ -6,5 +6,7 @@ pub mod permission;
 pub mod raid;
 pub mod reactions;
 pub mod realmeye;
+pub mod self_organize;
+pub mod self_organize_listing;
 pub mod verification;
 pub mod voice;
