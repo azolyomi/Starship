@@ -46,16 +46,6 @@ pub fn build_loot_fields(
     build_loot_fields_from(showcase_emoji, emoji_map, bag_tiers, Some(threshold_order))
 }
 
-/// Like `build_loot_fields` but ignores any tier threshold — used for the
-/// headcount view where raiders want the full drop list before committing.
-pub fn build_loot_fields_all(
-    showcase_emoji: &[String],
-    emoji_map: &HashMap<String, BotEmoji>,
-    bag_tiers: &[BagTier],
-) -> Vec<(String, String, bool)> {
-    build_loot_fields_from(showcase_emoji, emoji_map, bag_tiers, None)
-}
-
 fn build_loot_fields_from(
     showcase_emoji: &[String],
     emoji_map: &HashMap<String, BotEmoji>,
@@ -91,9 +81,19 @@ fn build_loot_fields_from(
         }
         let rendered: Vec<String> = drops.iter().map(|e| render_bot_emoji(e)).collect();
         let bag_icon = resolve_bag_emoji(tier, emoji_map);
-        let field_name = format!("{bag_icon} {} Bags", tier_display_name(&tier.name));
+        let field_name = format!("{bag_icon} {}", tier_field_label(&tier.name));
         fields.push((field_name, rendered.join(" "), false));
     }
 
     fields
+}
+
+/// Field label for a bag tier. Most read as "<Color> Bags"; shinies don't
+/// drop from a bag at all (they're a sprite variant of any drop), so they
+/// get their own label.
+fn tier_field_label(name: &str) -> String {
+    match name {
+        "shiny" => "Shinies".to_string(),
+        _ => format!("{} Bags", tier_display_name(name)),
+    }
 }

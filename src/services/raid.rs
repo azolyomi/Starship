@@ -53,6 +53,7 @@ pub async fn start_headcount(
     let reactions_list = db::dungeon::get_reactions(pool, template.id).await?;
     let emoji_map = db::emoji::get_all_as_map(pool).await?;
     let bag_tiers = db::loot::list_bag_tiers(pool).await?;
+    let threshold = db::loot::get_threshold(pool, guild_id).await?;
 
     let (embed, components) = embeds::headcount::build(
         hc.id,
@@ -61,6 +62,7 @@ pub async fn start_headcount(
         &emoji_map,
         leader_id as u64,
         &bag_tiers,
+        &threshold,
     );
 
     let mut create = serenity::CreateMessage::new()
