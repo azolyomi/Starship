@@ -28,14 +28,15 @@ pub async fn start_headcount(
     tier: &Tier,
     template: &DungeonTemplate,
     channel_id: i64,
-    location: Option<&str>,
-    party: Option<&str>,
 ) -> Result<()> {
     let pool = &ctx.data().db;
     let serenity_ctx = ctx.serenity_context();
     let guild_id = guild_id_i64(ctx);
     let leader_id = ctx.author().id.get() as i64;
 
+    // location/party are not collected at headcount-create time — the leader
+    // fills them in via the modal that opens on the Start Run button. Pass
+    // None so the row's columns stay NULL until then.
     let hc = db::headcount::create(
         pool,
         guild_id,
@@ -43,8 +44,8 @@ pub async fn start_headcount(
         template.id,
         channel_id,
         leader_id,
-        location,
-        party,
+        None,
+        None,
     )
     .await?;
     tracing::Span::current().record("hc_id", hc.id);

@@ -63,10 +63,6 @@ pub async fn headcount(
     #[description = "Tier (required if multiple tiers exist)"]
     #[autocomplete = "autocomplete_tier"]
     tier: Option<String>,
-    #[description = "Prefill location (carries over when the run starts)"] location: Option<String>,
-    #[description = "Prefill party composition (carries over when the run starts)"] party: Option<
-        String,
-    >,
 ) -> Result<(), BotError> {
     // Defer immediately. `raid::start_headcount` posts a message and then
     // attaches one reaction per required item, each with up to 5 retries
@@ -153,10 +149,7 @@ pub async fn headcount(
         return Ok(());
     }
 
-    let location = location.as_deref().map(str::trim).filter(|s| !s.is_empty());
-    let party = party.as_deref().map(str::trim).filter(|s| !s.is_empty());
-
-    raid::start_headcount(ctx, &resolved_tier, &template, channel_id, location, party).await?;
+    raid::start_headcount(ctx, &resolved_tier, &template, channel_id).await?;
 
     ctx.send(ephemeral(format!("Headcount started in <#{channel_id}>!")))
         .await?;
