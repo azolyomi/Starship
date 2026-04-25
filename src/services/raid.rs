@@ -7,6 +7,30 @@ use crate::embeds::headcount::emoji_rt;
 use crate::services::{reactions, voice};
 use crate::{db, embeds, guild_id_i64, BotContext};
 
+/// Prefix the headcount/run message with `@here` plus the dungeon's
+/// notification role (if any). Discord doesn't render `@here` from a bot
+/// unless `allowed_mentions` opts in via [`allow_here_and_role`].
+fn ping_content(notification_role_id: Option<i64>) -> String {
+    match notification_role_id {
+        Some(rid) => format!("@here <@&{rid}>"),
+        None => "@here".to_string(),
+    }
+}
+
+/// Bot mentions are silent by default — Discord only fires pings for
+/// mention types listed in `allowed_mentions`. We always allow `@here`
+/// (no `@everyone` flag set, but `everyone(true)` covers both per
+/// Discord's API: it controls the `everyone` parse type which gates
+/// `@here` and `@everyone` together) plus the specific notification
+/// role if one is configured.
+fn allow_here_and_role(notification_role_id: Option<i64>) -> serenity::CreateAllowedMentions {
+    let mut allowed = serenity::CreateAllowedMentions::new().everyone(true);
+    if let Some(rid) = notification_role_id {
+        allowed = allowed.roles(vec![serenity::RoleId::new(rid as u64)]);
+    }
+    allowed
+}
+
 /// Post a headcount embed to the tier's runs channel, create the DB row,
 /// and attach native reactions for each required item. R4: no more
 /// per-user DB tracking — the reactions on the message itself are the
@@ -66,14 +90,12 @@ pub async fn start_headcount(
         &threshold,
     );
 
-    let mut create = serenity::CreateMessage::new()
+    let role_id = db::dungeon::get_notification_role(pool, guild_id, &template.name).await?;
+    let create = serenity::CreateMessage::new()
         .add_embed(embed)
-        .components(components);
-    if let Some(role_id) =
-        db::dungeon::get_notification_role(pool, guild_id, &template.name).await?
-    {
-        create = create.content(format!("<@&{role_id}>"));
-    }
+        .components(components)
+        .content(ping_content(role_id))
+        .allowed_mentions(allow_here_and_role(role_id));
 
     let channel = serenity::ChannelId::new(channel_id as u64);
     let msg = channel.send_message(serenity_ctx, create).await?;
@@ -192,14 +214,12 @@ pub async fn start_run(
         &threshold,
     );
 
-    let mut create = serenity::CreateMessage::new()
+    let role_id = db::dungeon::get_notification_role(pool, guild_id, &template.name).await?;
+    let create = serenity::CreateMessage::new()
         .add_embed(embed)
-        .components(components);
-    if let Some(role_id) =
-        db::dungeon::get_notification_role(pool, guild_id, &template.name).await?
-    {
-        create = create.content(format!("<@&{role_id}>"));
-    }
+        .components(components)
+        .content(ping_content(role_id))
+        .allowed_mentions(allow_here_and_role(role_id));
 
     let channel = serenity::ChannelId::new(raid_channel_id as u64);
     let msg = channel.send_message(serenity_ctx, create).await?;
