@@ -1,3 +1,4 @@
+pub mod audit_log;
 pub mod channels;
 pub mod guild;
 pub mod orphan_sweep;

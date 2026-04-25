@@ -1807,6 +1807,31 @@ needs a live Discord 404 to exercise.
   `send_message` call. Falls back to the existing bubble-error path —
   user sees "Internal error" and the orphan sweep cleans up later.
 
+### 2026-04-25 — Verification audit-log entries
+
+Follow-up to the end-to-end verification commit. Verification events
+now write a one-line summary to the guild's configured log channel
+(if any), matching the existing `handlers::run::handle_end` pattern.
+
+- `services::audit_log` (new) — single `post(http, pool, guild_id,
+  content)` helper. Reads `log_channel_id`, sends a plain-text
+  message, swallows + logs every error so callers can fire-and-forget
+  without per-callsite `if let Err`.
+- `handlers::verify::self_verify_audit_line` and
+  `manual_verify_audit_line` — pure formatters returning the
+  three-shape line ("Verified" / "Re-verified" / "Rebind") with a
+  `🔐` glyph. Manual variant prefixes "Manual-verified by <@admin>".
+  Returns `None` for the `IgnTaken` case so callers don't have to
+  branch.
+- Callsites: `handlers::verify::handle_check` after a successful
+  `Outcome::Verified`; `commands::verify::manual_verify` after a
+  successful `ManualOutcome::Verified`. Both fire after the user
+  response so a slow log-channel write never delays the verifier's
+  feedback.
+
+Gates: `cargo fmt`, `cargo build`, `cargo clippy --all-targets -- -D
+warnings`, `cargo test` (11/11) all green.
+
 ### 2026-04-25 — Verification end-to-end complete
 
 User flow live: click Verify (channel) or `/verify` → modal → ephemeral

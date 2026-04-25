@@ -16,7 +16,8 @@ use poise::serenity_prelude as serenity;
 use poise::CreateReply;
 use serenity::{CreateInteractionResponse, RoleId, UserId};
 
-use crate::handlers::verify::{build_ign_modal, render_manual_outcome};
+use crate::handlers::verify::{build_ign_modal, manual_verify_audit_line, render_manual_outcome};
+use crate::services::audit_log;
 use crate::services::verification::{
     self, ApplyOutcome, ManualOutcome, NicknameApplyResult, RoleApplyResult,
 };
@@ -164,6 +165,11 @@ pub async fn manual_verify(
             render_manual_outcome(&apply, trimmed, &outcome).await
         }
     };
+
+    if let Some(line) = manual_verify_audit_line(admin_id as u64, user.id.get(), trimmed, &outcome)
+    {
+        audit_log::post(ctx.http(), pool, guild_id_i, line).await;
+    }
 
     ctx.send(ephemeral(format!("**<@{}>**\n{summary}", user.id)))
         .await?;

@@ -29,6 +29,7 @@ use serenity::{
     InputTextStyle, RoleId,
 };
 
+use crate::services::audit_log;
 use crate::services::verification::{
     self, ApplyOutcome, ManualOutcome, NicknameApplyResult, Outcome, RoleApplyResult, VerifiedKind,
 };
@@ -211,6 +212,13 @@ async fn handle_check(
                     },
                 },
             };
+            audit_log::post(
+                &ctx.http,
+                &data.db,
+                guild_id.get() as i64,
+                self_verify_audit_line(mci.user.id.get(), &canonical_ign, &kind),
+            )
+            .await;
             edit_to_success(ctx, mci, &canonical_ign, &kind, &apply).await
         }
         Outcome::NoPending => {
@@ -616,4 +624,51 @@ pub async fn render_manual_outcome(
     }
 
     lines.join("\n")
+}
+
+// ---------------------------------------------------------------------------
+// Audit-log line formatters
+// ---------------------------------------------------------------------------
+
+/// Plain-text summary of a self-verify success, posted to the guild's
+/// configured log channel when present. Kept terse so a long log stays
+/// scannable; <@mention> + backtick'd IGN render cleanly inline.
+pub fn self_verify_audit_line(user_id: u64, canonical_ign: &str, kind: &VerifiedKind) -> String {
+    match kind {
+        VerifiedKind::Created => {
+            format!("🔐 Verified: <@{user_id}> as `{canonical_ign}`")
+        }
+        VerifiedKind::Refreshed => {
+            format!("🔐 Re-verified: <@{user_id}> refreshed as `{canonical_ign}`")
+        }
+        VerifiedKind::Rebound { from } => {
+            format!("🔐 Rebind: <@{user_id}> changed IGN from `{from}` to `{canonical_ign}`")
+        }
+    }
+}
+
+/// Plain-text summary of a manual `/mv` success. Same shape as
+/// [`self_verify_audit_line`] but names the admin who attested.
+pub fn manual_verify_audit_line(
+    admin_id: u64,
+    target_id: u64,
+    canonical_ign: &str,
+    kind: &ManualOutcome,
+) -> Option<String> {
+    let inner_kind = match kind {
+        ManualOutcome::Verified { kind } => kind,
+        ManualOutcome::IgnTaken { .. } => return None,
+    };
+    let body = match inner_kind {
+        VerifiedKind::Created => {
+            format!("<@{target_id}> as `{canonical_ign}`")
+        }
+        VerifiedKind::Refreshed => {
+            format!("<@{target_id}> refreshed as `{canonical_ign}`")
+        }
+        VerifiedKind::Rebound { from } => {
+            format!("<@{target_id}> rebound from `{from}` to `{canonical_ign}`")
+        }
+    };
+    Some(format!("🔐 Manual-verified by <@{admin_id}>: {body}"))
 }
