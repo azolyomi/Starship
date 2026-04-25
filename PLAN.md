@@ -1948,6 +1948,70 @@ Next chunk (2): `services::realmeye` (HTTP + HTML parse) and
 `services::verification` (issue_code, complete, manual_verify,
 apply_verified_state).
 
+### 2026-04-25 — Self-organize chunk 1 complete (DB foundation)
+
+Foundation for the self-organize raid feature. Detailed plan at
+`~/.claude/plans/i-m-experimenting-with-the-mutable-quokka.md`.
+
+Per-tier opt-in mode where any user can start a headcount via a sticky
+button (no leader role required), with anti-troll guardrails:
+per-(tier, dungeon) slot uniqueness, idle auto-cancel, guild-wide
+one-active-raid-per-user cap, post-cancel cooldown, and a
+minimum-reactor threshold for HC->Run conversion.
+
+Landed:
+- `migrations/20260425000003_self_organize.sql` — seven new tier
+  columns (`enable_self_organization`, `self_organize_channel_id`,
+  `self_organize_button_message_id`, `self_organize_listing_message_id`,
+  `self_organize_idle_minutes`, `self_organize_cancel_cooldown_seconds`,
+  `self_organize_min_reactors`); `is_self_organized` BOOLEAN on both
+  `headcounts` and `runs`; new `self_organize_slot_claims` table
+  (PK on `(guild, tier, dungeon)`, mutually exclusive nullable
+  `headcount_id` / `run_id` FKs with `ON DELETE NO ACTION` so releases
+  always go through transactional helpers; partial unique index on
+  `(guild, leader)` where `is_self_organized = TRUE` enforcing the
+  per-user cap); `self_organize_user_cooldowns` table (lazy-pruned).
+- `src/db/models.rs` — seven new fields on `Tier`; `is_self_organized`
+  on `Headcount` and `Run`; new `SlotClaim` row struct.
+- `src/db/tier.rs` — full column projection consolidated into a single
+  `TIER_COLS` const; switched from `query_as!` macro to runtime
+  `query_as::<_, Tier>` so the const composes; new
+  `update_self_organize` (partial-update via COALESCE) plus direct
+  setters `set_self_organize_button_message`,
+  `set_self_organize_listing_message` for the sticky-repair hot path.
+- `src/db/headcount.rs` — new `is_self_organized` parameter on
+  `create`; new transactional variants `create_tx` / `delete_tx`
+  bound to `&mut Transaction` so the slot-claim insert/release can
+  share a transaction with the HC insert/delete.
+- `src/db/run.rs` — same shape: `is_self_organized` parameter on
+  `create`, plus `create_tx` / `delete_tx`; column projection
+  consolidated into `RUN_COLS`.
+- `src/db/self_organize.rs` (new) — pure DB layer for the two new
+  tables. `claim_for_headcount` returns a typed `ClaimOutcome`
+  (`Acquired` / `Conflict { holder }`) using
+  `INSERT ... ON CONFLICT DO NOTHING`; the loser reads back the
+  holder so the caller can name them. `claim_swap_to_run` performs
+  the lock-preserving HC->Run transition as a single-row UPDATE
+  flipping which FK is non-null. `claim_release_by_headcount` /
+  `claim_release_by_run` always run before the corresponding HC/Run
+  delete (the `ON DELETE NO ACTION` FK enforces this ordering).
+  `claim_set_leader` for the transfer-leader flow. `claim_count_for_user`
+  filters to `is_self_organized = TRUE` so staff-led raids in
+  self-organize tiers don't count against the leader's quota.
+  `cooldown_set` / `cooldown_active` (lazy prunes expired rows on read).
+- Existing call sites in `src/services/raid.rs` pass
+  `is_self_organized: false` — staff `/headcount` flow unchanged.
+
+**Gates:** `cargo build` green; `cargo clippy` no errors.
+Dead-code warnings on the new module surface are all forward
+references for chunks 2-3 (services + handlers + setup wizard).
+
+Next chunk (2): `services::self_organize` (anti-troll gate +
+stale-sweep + record_self_cancel) and
+`services::self_organize_listing` (sticky button + active-raids
+listing rendering). Then chunk 3 wires up handlers and the setup
+wizard sub-step.
+
 ### Credentials still needed from the user
 
 Collected into `.env` when we're ready to boot:

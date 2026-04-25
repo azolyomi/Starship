@@ -1,8 +1,15 @@
 use anyhow::Result;
-use sqlx::PgPool;
+use sqlx::{PgPool, Postgres, Transaction};
 
 use crate::db::models::Run;
 
+// The `runs.*` projection used by every read here. Single source of
+// truth so adding a column doesn't require touching multiple queries.
+const RUN_COLS: &str = "id, guild_id, tier_id, dungeon_template_id, \
+    channel_id, message_id, leader_user_id, location, party, \
+    voice_channel_id, is_vc_raid, is_self_organized, created_at";
+
+#[allow(clippy::too_many_arguments)]
 pub async fn create(
     pool: &PgPool,
     guild_id: i64,
@@ -11,27 +18,56 @@ pub async fn create(
     channel_id: i64,
     leader_user_id: i64,
     is_vc_raid: bool,
+    is_self_organized: bool,
 ) -> Result<Run> {
-    let row = sqlx::query_as!(
-        Run,
-        r#"
-        INSERT INTO runs
+    let row = sqlx::query_as::<_, Run>(&format!(
+        "INSERT INTO runs
             (guild_id, tier_id, dungeon_template_id,
-             channel_id, message_id, leader_user_id, is_vc_raid)
-        VALUES ($1, $2, $3, $4, 0, $5, $6)
-        RETURNING id, guild_id, tier_id, dungeon_template_id,
-                  channel_id, message_id, leader_user_id,
-                  location, party, voice_channel_id, is_vc_raid,
-                  created_at
-        "#,
-        guild_id,
-        tier_id,
-        dungeon_template_id,
-        channel_id,
-        leader_user_id,
-        is_vc_raid,
-    )
+             channel_id, message_id, leader_user_id, is_vc_raid, is_self_organized)
+         VALUES ($1, $2, $3, $4, 0, $5, $6, $7)
+         RETURNING {RUN_COLS}"
+    ))
+    .bind(guild_id)
+    .bind(tier_id)
+    .bind(dungeon_template_id)
+    .bind(channel_id)
+    .bind(leader_user_id)
+    .bind(is_vc_raid)
+    .bind(is_self_organized)
     .fetch_one(pool)
+    .await?;
+    Ok(row)
+}
+
+/// Transactional variant of [`create`]: same insert, bound to an existing
+/// transaction so the HC->Run convert path can swap the slot-claim FK
+/// from `headcount_id` to `run_id` in the same tx that creates the run.
+#[allow(clippy::too_many_arguments)]
+pub async fn create_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    guild_id: i64,
+    tier_id: i32,
+    dungeon_template_id: i32,
+    channel_id: i64,
+    leader_user_id: i64,
+    is_vc_raid: bool,
+    is_self_organized: bool,
+) -> Result<Run> {
+    let row = sqlx::query_as::<_, Run>(&format!(
+        "INSERT INTO runs
+            (guild_id, tier_id, dungeon_template_id,
+             channel_id, message_id, leader_user_id, is_vc_raid, is_self_organized)
+         VALUES ($1, $2, $3, $4, 0, $5, $6, $7)
+         RETURNING {RUN_COLS}"
+    ))
+    .bind(guild_id)
+    .bind(tier_id)
+    .bind(dungeon_template_id)
+    .bind(channel_id)
+    .bind(leader_user_id)
+    .bind(is_vc_raid)
+    .bind(is_self_organized)
+    .fetch_one(&mut **tx)
     .await?;
     Ok(row)
 }
@@ -48,17 +84,10 @@ pub async fn set_message_id(pool: &PgPool, id: i32, message_id: i64) -> Result<(
 }
 
 pub async fn get(pool: &PgPool, id: i32) -> Result<Option<Run>> {
-    let row = sqlx::query_as!(
-        Run,
-        r#"
-        SELECT id, guild_id, tier_id, dungeon_template_id,
-               channel_id, message_id, leader_user_id,
-               location, party, voice_channel_id, is_vc_raid,
-               created_at
-        FROM runs WHERE id = $1
-        "#,
-        id
-    )
+    let row = sqlx::query_as::<_, Run>(&format!(
+        "SELECT {RUN_COLS} FROM runs WHERE id = $1"
+    ))
+    .bind(id)
     .fetch_optional(pool)
     .await?;
     Ok(row)
@@ -70,6 +99,15 @@ pub async fn get(pool: &PgPool, id: i32) -> Result<Option<Run>> {
 pub async fn delete(pool: &PgPool, id: i32) -> Result<bool> {
     let rows = sqlx::query!("DELETE FROM runs WHERE id = $1", id)
         .execute(pool)
+        .await?;
+    Ok(rows.rows_affected() > 0)
+}
+
+/// Transactional variant of [`delete`]. Pairs with the slot-claim release
+/// in the self-organize flow.
+pub async fn delete_tx(tx: &mut Transaction<'_, Postgres>, id: i32) -> Result<bool> {
+    let rows = sqlx::query!("DELETE FROM runs WHERE id = $1", id)
+        .execute(&mut **tx)
         .await?;
     Ok(rows.rows_affected() > 0)
 }
@@ -117,16 +155,9 @@ pub async fn set_voice_channel(
 /// Every live run across every guild. Used by the startup orphan sweep to
 /// reconcile DB rows against Discord state.
 pub async fn list_all(pool: &PgPool) -> Result<Vec<Run>> {
-    let rows = sqlx::query_as!(
-        Run,
-        r#"
-        SELECT id, guild_id, tier_id, dungeon_template_id,
-               channel_id, message_id, leader_user_id,
-               location, party, voice_channel_id, is_vc_raid,
-               created_at
-        FROM runs
-        "#
-    )
+    let rows = sqlx::query_as::<_, Run>(&format!(
+        "SELECT {RUN_COLS} FROM runs"
+    ))
     .fetch_all(pool)
     .await?;
     Ok(rows)

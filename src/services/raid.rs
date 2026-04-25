@@ -70,6 +70,7 @@ pub async fn start_headcount(
         leader_id,
         None,
         None,
+        false,
     )
     .await?;
     tracing::Span::current().record("hc_id", hc.id);
@@ -154,6 +155,7 @@ pub async fn start_run(
         raid_channel_id,
         leader_user_id,
         template.requires_vc,
+        false,
     )
     .await?;
     tracing::Span::current().record("run_id", run.id);
