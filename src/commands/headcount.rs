@@ -1,9 +1,11 @@
 use poise::CreateReply;
 
+use poise::serenity_prelude as serenity;
+
 use crate::{
     db, guild_id_i64,
     services::permission::Action,
-    services::{permission as perm_svc, raid},
+    services::{channels as channel_svc, permission as perm_svc, raid},
     BotContext, BotError,
 };
 
@@ -122,6 +124,23 @@ pub async fn headcount(
         .await?;
         return Ok(());
     };
+
+    // Pre-flight: confirm the runs channel still exists in Discord. Catching
+    // this here gives the user a friendly diagnostic instead of letting
+    // raid::start_headcount INSERT a row and then fail at send_message,
+    // leaving an orphan row for the sweep to clean up. Bot-side outages
+    // (rate-limit / 5xx) bubble normally — only a 404 takes this branch.
+    if !channel_svc::channel_exists(ctx.http(), serenity::ChannelId::new(channel_id as u64)).await?
+    {
+        ctx.send(ephemeral(format!(
+            "Tier **{}**'s runs channel <#{channel_id}> is gone — it was probably \
+             deleted in Discord. Run `/tier edit` or `/setup` to point the tier at \
+             a different channel.",
+            resolved_tier.name
+        )))
+        .await?;
+        return Ok(());
+    }
 
     let location = location.as_deref().map(str::trim).filter(|s| !s.is_empty());
     let party = party.as_deref().map(str::trim).filter(|s| !s.is_empty());

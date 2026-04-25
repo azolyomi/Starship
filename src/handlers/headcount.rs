@@ -319,6 +319,28 @@ async fn handle_confirm_start(
         .ok_or_else(|| format!("tier {} not found", hc.tier_id))?;
     let raid_channel_id = tier.runs_channel_id.unwrap_or(hc.channel_id);
 
+    // Pre-flight: refuse to convert if the destination runs channel is gone.
+    // We check before claiming the headcount so a deleted channel doesn't
+    // burn the headcount row — the organizer can still cancel cleanly.
+    if !services::channels::channel_exists(
+        &ctx.http,
+        serenity::ChannelId::new(raid_channel_id as u64),
+    )
+    .await?
+    {
+        modal
+            .create_response(
+                ctx,
+                ephemeral_msg(format!(
+                    "Can't post the run — channel <#{raid_channel_id}> is gone. \
+                     An admin needs to repoint the tier (`/tier edit` or `/setup`) \
+                     before this headcount can convert."
+                )),
+            )
+            .await?;
+        return Ok(());
+    }
+
     // Atomic claim: first confirm wins.
     if !db::headcount::delete(&data.db, hc_id).await? {
         modal

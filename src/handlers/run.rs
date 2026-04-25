@@ -105,7 +105,10 @@ async fn load_active(
 }
 
 /// Rebuild the public run message from the current DB state. Used after the
-/// location, party, or leader changes.
+/// location, party, or leader changes. The DB write is the canonical state
+/// — if the channel or message has since been deleted in Discord, the
+/// re-render is best-effort: warn and let the orphan sweep clean up the
+/// run row on the next bot restart.
 async fn rebuild_and_edit_message(
     ctx: &serenity::Context,
     data: &BotData,
@@ -124,13 +127,26 @@ async fn rebuild_and_edit_message(
         run, &template, &reactions, &emoji_map, &bag_tiers, &threshold,
     );
 
-    serenity::ChannelId::new(run.channel_id as u64)
+    if let Err(e) = serenity::ChannelId::new(run.channel_id as u64)
         .edit_message(
             &ctx.http,
             MessageId::new(run.message_id as u64),
             EditMessage::new().add_embed(embed).components(components),
         )
-        .await?;
+        .await
+    {
+        if services::channels::is_not_found(&e) {
+            tracing::warn!(
+                run_id = run.id,
+                channel_id = run.channel_id,
+                message_id = run.message_id,
+                "run message gone (404) — DB state still authoritative; \
+                 will be cleaned up by orphan sweep on next restart",
+            );
+            return Ok(());
+        }
+        return Err(e.into());
+    }
 
     Ok(())
 }

@@ -1,3 +1,4 @@
+pub mod channels;
 pub mod guild;
 pub mod orphan_sweep;
 pub mod permission;

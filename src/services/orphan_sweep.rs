@@ -38,18 +38,9 @@ use tracing::{info, warn};
 
 use crate::db;
 use crate::embeds::headcount::emoji_rt;
+use crate::services::channels::is_not_found;
 use crate::services::reactions::{self, reaction_types_match};
 use crate::services::voice;
-
-/// True iff `err` is a Discord 404. We narrowly target 404 so transient
-/// failures (rate limit, 5xx, network) don't trigger destructive deletes.
-fn is_not_found(err: &serenity::Error) -> bool {
-    matches!(
-        err,
-        serenity::Error::Http(serenity::HttpError::UnsuccessfulRequest(resp))
-            if resp.status_code.as_u16() == 404
-    )
-}
 
 #[tracing::instrument(name = "orphan_sweep", skip_all)]
 pub async fn run(ctx: &serenity::Context, pool: &PgPool) -> Result<()> {

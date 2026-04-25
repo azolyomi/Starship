@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use poise::serenity_prelude as serenity;
-use serenity::{ButtonStyle, CreateActionRow, CreateButton, CreateEmbed, ReactionType};
+use serenity::{ButtonStyle, CreateActionRow, CreateButton, CreateEmbed, ReactionType, Timestamp};
 
 use crate::db::models::{BagTier, BotEmoji, DungeonReaction, DungeonTemplate, Run};
 use crate::embeds::build_loot_fields;
@@ -21,7 +21,7 @@ pub fn build(
 ) -> (CreateEmbed, Vec<CreateActionRow>) {
     let color = template.color.unwrap_or(0x5865F2) as u32;
 
-    let default_title = format!("{} Run", template.display_name);
+    let default_title = format!("{} Run #{}", template.display_name, run.id);
     let title = template.message_title.as_deref().unwrap_or(&default_title);
 
     let template_emoji = template
@@ -68,7 +68,8 @@ pub fn build(
         .title(full_title)
         .description(&description)
         .color(color)
-        .fields(fields);
+        .fields(fields)
+        .timestamp(Timestamp::now());
 
     if let Some(url) = &template.thumbnail_url {
         embed = embed.thumbnail(url);
@@ -91,7 +92,7 @@ pub fn build_ended(
     template: &DungeonTemplate,
     emoji_map: &HashMap<String, BotEmoji>,
 ) -> CreateEmbed {
-    let default_title = format!("{} Run", template.display_name);
+    let default_title = format!("{} Run #{}", template.display_name, run.id);
     let title = template.message_title.as_deref().unwrap_or(&default_title);
 
     let template_emoji = template

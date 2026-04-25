@@ -1711,6 +1711,92 @@ image) remain on the roadmap. CI now has a concrete target for Phase
 E: build the Dockerfile in a GitHub Actions job and run the four
 gates (`fmt --check`, `build`, `clippy -D warnings`, `test`).
 
+### 2026-04-24 — Phase 8 complete (config polish + embed styling + edge cases)
+
+Three small chunks bundled into one chunk because none was big enough to
+justify its own commit. Items 32 / 33 / 34 from the original Phase 8
+build order.
+
+**Item 32 — `/config` siblings.** `src/commands/config.rs` grew from one
+subcommand (`threshold`) to six:
+- `/config show` (anyone) — ephemeral embed dumping current threshold,
+  log channel, superadmin, and per-tier runs channel summary. `upsert`
+  not `get` so a brand-new guild gets a "everything unset" view rather
+  than an empty result.
+- `/config log-channel <channel>` (ConfigureGuild) — accepts a
+  `serenity::GuildChannel` so poise validates channel-in-guild for free;
+  rejects voice/category/forum kinds with a friendly error.
+- `/config log-channel-clear` (ConfigureGuild).
+- `/config superadmin <user>` (ConfigureGuild) — refuses bots.
+- `/config superadmin-clear` (ConfigureGuild).
+Every write subcommand calls `db::guild::upsert` first so the row exists
+before the targeted UPDATE runs.
+
+**Item 33 — Embed styling consistency + freshness.**
+- `src/embeds/headcount.rs::build` now prefixes the title with the
+  template's logical-name emoji (matching the run embed; previously only
+  `build_closed` did this for headcounts).
+- Headcount default title gains the `#{headcount_id}` suffix so an
+  organizer can tell two simultaneous headcounts apart at a glance.
+- Run default title gains `#{run_id}` (matches the temp-VC name pattern
+  `{display_name} #{run_id}`).
+- Both active embed builders set `.timestamp(Timestamp::now())` so
+  Discord renders a relative-time ("just now / 5 mins ago") line in the
+  footer for free. `build_ended` / `build_closed` skip the timestamp
+  intentionally — terminal embeds don't need to claim freshness.
+
+**Item 34 — Edge cases.**
+- `src/services/channels.rs` (new) — two helpers:
+  - `pub fn is_not_found(err: &serenity::Error) -> bool` — narrowly
+    matches Discord 404. Lifted from `orphan_sweep`'s private copy;
+    `orphan_sweep` now imports it from here.
+  - `pub async fn channel_exists(http, channel_id) -> Result<bool>` —
+    `to_channel`-based pre-flight; 404 returns `Ok(false)`, other
+    errors bubble.
+- `src/commands/headcount.rs::headcount` — pre-flights
+  `channel_exists(runs_channel_id)` before delegating to
+  `raid::start_headcount`. Failure path: friendly ephemeral pointing at
+  `/tier edit` / `/setup`. Closes the bug where a deleted runs channel
+  produced a "raid::start_headcount inserted a row, then send_message
+  404'd" pair that the orphan sweep had to clean up.
+- `src/handlers/headcount.rs::handle_confirm_start` — same pre-flight on
+  the convert-to-run path, before claiming (deleting) the headcount.
+  Failure leaves the headcount alive so the organizer can still cancel
+  it cleanly.
+- `src/handlers/run.rs::rebuild_and_edit_message` — `edit_message`
+  failures are now matched: 404 warns and returns Ok (the DB write was
+  the canonical state and the orphan sweep will remove the row on next
+  restart); everything else still bubbles. This unblocks the
+  set-location / set-party / transfer-leader paths from blowing up if
+  the runs channel was deleted mid-run while a modal was open.
+
+**Edge cases NOT touched (already correct):**
+- Leader-leaves-server mid-run. Every Control Panel button checks
+  `can_organize` (leader OR ManageRuns OR superadmin OR Discord
+  Manage Server), so a departed leader doesn't lock the run — any
+  ManageRuns user can transfer or end it. The departed leader's
+  `<@id>` mention renders as Discord's "@unknown-user" but that's
+  cosmetic.
+- `handle_end`'s post-delete steps were already warn-and-continue from
+  Phase 7a, so a deleted channel during End just logs and the run
+  shuts down cleanly DB-side.
+
+**Gates:** `cargo fmt --check`, `cargo build`, `cargo clippy --all-targets
+-- -D warnings`, `cargo test` (11/11) all green. No new tests — every
+edit was either a small UI tweak (embed) or a defensive pre-flight that
+needs a live Discord 404 to exercise.
+
+**Residual edge cases (not fixed; tracked here for future):**
+- If the runs message itself is deleted mid-run (channel survives, only
+  the message is gone), the user has no Control Panel button to click,
+  so they can't end the run via UI. The orphan sweep cleans the row on
+  next restart. A `/run end <id>` admin command would close this gap
+  without needing a restart, but that's a Phase 9-ish polish item.
+- Pre-flight + post-failure has a small race window where the channel
+  is deleted between `channel_exists` returning true and the
+  `send_message` call. Falls back to the existing bubble-error path —
+  user sees "Internal error" and the orphan sweep cleans up later.
+
 ### Credentials still needed from the user
 
 Collected into `.env` when we're ready to boot:
