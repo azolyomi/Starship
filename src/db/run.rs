@@ -136,3 +136,18 @@ pub async fn list_all(pool: &PgPool) -> Result<Vec<Run>> {
         .await?;
     Ok(rows)
 }
+
+/// Runs whose `created_at` is older than `cutoff` — used by the periodic
+/// idle-timeout sweep to find raids that the leader forgot to end.
+pub async fn list_created_before(
+    pool: &PgPool,
+    cutoff: chrono::DateTime<chrono::Utc>,
+) -> Result<Vec<Run>> {
+    let rows = sqlx::query_as::<_, Run>(&format!(
+        "SELECT {RUN_COLS} FROM runs WHERE created_at < $1"
+    ))
+    .bind(cutoff)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}

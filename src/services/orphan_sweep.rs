@@ -44,8 +44,19 @@ use tracing::{info, warn};
 use crate::db;
 use crate::embeds::headcount::emoji_rt;
 use crate::services::channels::is_not_found;
+use crate::services::raid;
 use crate::services::reactions::{self, reaction_types_match};
 use crate::services::{self_organize_listing, voice};
+
+/// How long a run can sit without being explicitly ended before the
+/// periodic sweeper auto-ends it. Hardcoded for now — a per-tier knob
+/// can land later if guilds want different policies.
+pub const RUN_IDLE_HOURS: i64 = 24;
+
+/// How often [`spawn_idle_run_sweeper`] wakes up. Trades cleanup
+/// latency for query rate; 10 minutes means a run goes stale ≤ 10m
+/// after crossing the 24h mark.
+const SWEEP_INTERVAL: std::time::Duration = std::time::Duration::from_secs(600);
 
 #[tracing::instrument(name = "orphan_sweep", skip_all)]
 pub async fn run(ctx: &serenity::Context, pool: &PgPool) -> Result<()> {
@@ -457,4 +468,62 @@ async fn reconcile_headcount_reactions(
         )
         .await;
     }
+}
+
+/// Find every run created more than [`RUN_IDLE_HOURS`] ago and end it.
+/// Same teardown as a user-driven End click (claim release, row delete,
+/// VC delete, embed edit, audit log, listing refresh) — credited to
+/// `Starship (idle timeout)` rather than a user mention.
+///
+/// Returns the number of runs ended this pass.
+async fn sweep_idle_runs(ctx: &serenity::Context, pool: &PgPool) -> usize {
+    let cutoff = chrono::Utc::now() - chrono::Duration::hours(RUN_IDLE_HOURS);
+    let stale = match db::run::list_created_before(pool, cutoff).await {
+        Ok(rs) => rs,
+        Err(e) => {
+            warn!(error = ?e, "idle-run sweep: list query failed");
+            return 0;
+        }
+    };
+    let mut ended = 0usize;
+    for run in stale {
+        match raid::end_run(ctx, pool, &run, None).await {
+            Ok(true) => {
+                info!(
+                    run_id = run.id,
+                    guild_id = run.guild_id,
+                    age_hours = (chrono::Utc::now() - run.created_at).num_hours(),
+                    "auto-ended idle run",
+                );
+                ended += 1;
+            }
+            Ok(false) => {
+                // Already deleted by another path (concurrent End click,
+                // a different sweeper instance). Nothing to do.
+            }
+            Err(e) => warn!(error = ?e, run_id = run.id, "failed to auto-end idle run"),
+        }
+    }
+    ended
+}
+
+/// Spawn the periodic idle-run sweeper. Runs forever until the bot
+/// process exits — the task aborts cleanly when the runtime drops.
+///
+/// Skips the immediate first tick so the boot orphan_sweep gets to
+/// settle DB state before this loop starts polling.
+pub fn spawn_idle_run_sweeper(ctx: serenity::Context, pool: PgPool) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(SWEEP_INTERVAL);
+        // First tick fires immediately by default; skip it so we don't
+        // race the boot orphan sweep.
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            let ended = sweep_idle_runs(&ctx, &pool).await;
+            if ended > 0 {
+                info!(ended, "idle-run sweep pass complete");
+            }
+        }
+    });
 }

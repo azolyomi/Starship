@@ -547,75 +547,19 @@ async fn handle_end(
         return Ok(());
     }
 
-    // Claim End atomically: two concurrent clicks both run, only one gets
-    // `true` and fires the Discord-side teardown + audit log. Pair with a
-    // self-organize claim release in the same tx so the slot lock vanishes
-    // alongside the run row (release is a no-op for non-self-organize
-    // tiers, so this path is uniform).
-    let mut tx = data.db.begin().await?;
-    db::self_organize::claim_release_by_run(&mut tx, run_id).await?;
-    let row_existed = db::run::delete_tx(&mut tx, run_id).await?;
-    if !row_existed {
-        tx.rollback().await?;
-        mci.create_response(ctx, ephemeral_msg("This run has ended."))
-            .await?;
-        return Ok(());
-    }
-    tx.commit().await?;
-
-    // Tear down the temp VC if this run had one. Best-effort — by the time
-    // we get here the run is already gone from the DB; a dangling channel
-    // is a manual-cleanup problem, not a flow-failure problem.
-    if let Some(vc_id) = run.voice_channel_id {
-        services::voice::delete_temp_vc(&ctx.http, serenity::ChannelId::new(vc_id as u64)).await;
-    }
-
-    // Past this point the run is already gone from the DB — every remaining
-    // step is decoration. Don't let a failed Discord call here turn into a
-    // bubbled error that the user sees as "interaction failed" after the
-    // run has effectively ended.
-    let pool = &data.db;
-    let template = match db::dungeon::get_by_id(pool, run.dungeon_template_id).await {
-        Ok(Some(t)) => Some(t),
-        Ok(None) => {
-            tracing::warn!(
-                run_id = run.id,
-                template_id = run.dungeon_template_id,
-                "template not found while rendering ended embed; skipping",
-            );
-            None
-        }
-        Err(e) => {
-            tracing::warn!(error = ?e, run_id = run.id, "failed to load template for ended embed");
-            None
-        }
-    };
-
-    if let Some(template) = template.as_ref() {
-        let emoji_map = match db::emoji::get_all_as_map(pool).await {
-            Ok(m) => m,
-            Err(e) => {
-                tracing::warn!(error = ?e, run_id = run.id, "failed to load emoji map for ended embed");
-                Default::default()
-            }
-        };
-        let ended_embed = embeds::run::build_ended(&run, template, &emoji_map);
-        if let Err(e) = serenity::ChannelId::new(run.channel_id as u64)
-            .edit_message(
-                &ctx.http,
-                MessageId::new(run.message_id as u64),
-                EditMessage::new().add_embed(ended_embed).components(vec![]),
-            )
+    // Delegate the teardown (claim release, row delete, VC delete, embed
+    // edit, audit log, listing refresh) to the shared helper so this
+    // handler and the periodic idle-timeout sweeper stay in lockstep.
+    let ended = services::raid::end_run(ctx, &data.db, &run, Some(mci.user.id)).await?;
+    if !ended {
+        // Concurrent click already deleted the row. Tell the user.
+        if let Err(e) = mci
+            .create_response(ctx, ephemeral_msg("This run has ended."))
             .await
         {
-            tracing::warn!(
-                error = ?e,
-                run_id = run.id,
-                channel_id = run.channel_id,
-                message_id = run.message_id,
-                "failed to update run message to ended state",
-            );
+            tracing::warn!(error = ?e, run_id, "failed to ack already-ended run");
         }
+        return Ok(());
     }
 
     if let Err(e) = mci
@@ -631,49 +575,6 @@ async fn handle_end(
         .await
     {
         tracing::warn!(error = ?e, run_id = run.id, "failed to ack End to invoking user");
-    }
-
-    // Best-effort audit log entry.
-    if let Some(template) = template.as_ref() {
-        if let Ok(Some(guild)) = db::guild::get(pool, run.guild_id).await {
-            if let Some(log_id) = guild.log_channel_id {
-                if let Err(e) = serenity::ChannelId::new(log_id as u64)
-                    .send_message(
-                        &ctx.http,
-                        serenity::CreateMessage::new().content(format!(
-                            "Run #{id} ({name}) ended by <@{caller}>.",
-                            id = run.id,
-                            name = template.display_name,
-                            caller = mci.user.id.get(),
-                        )),
-                    )
-                    .await
-                {
-                    tracing::warn!(
-                        error = ?e,
-                        run_id = run.id,
-                        log_channel_id = log_id,
-                        "failed to write audit log entry for ended run",
-                    );
-                }
-            }
-        }
-    }
-
-    // Self-organize listing refresh — best-effort, the run is already gone
-    // from the DB so a stale listing entry will get filtered out by the
-    // build_row stale-HC check anyway.
-    if let Ok(Some(tier)) = db::tier::get_by_id(pool, run.tier_id).await {
-        if tier.enable_self_organization {
-            if let Err(e) = services::self_organize_listing::refresh_listing(ctx, pool, &tier).await
-            {
-                tracing::warn!(
-                    error = ?e,
-                    tier_id = tier.id,
-                    "failed to refresh self-organize listing after run end",
-                );
-            }
-        }
     }
 
     Ok(())

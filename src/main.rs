@@ -207,6 +207,10 @@ async fn run_bot(config: config::Config) -> Result<()> {
                 if let Err(e) = services::orphan_sweep::run(ctx, &pool).await {
                     error!(error = ?e, "orphan sweep failed; continuing startup");
                 }
+                // Periodic idle-run sweeper: ends runs the leader forgot
+                // about after RUN_IDLE_HOURS. Spawned once per process,
+                // runs forever until the runtime is dropped.
+                services::orphan_sweep::spawn_idle_run_sweeper(ctx.clone(), pool.clone());
                 let realmeye =
                     services::realmeye::RealmEyeClient::new(&config.realmeye_user_agent)?;
                 Ok(BotData {

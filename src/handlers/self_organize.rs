@@ -241,6 +241,11 @@ struct PickerPage {
 /// Build one page of the picker. Returns `None` when the tier has no
 /// dungeons attached; the caller picks the right user-facing wording for
 /// the entry point (first-click vs. nav-click).
+///
+/// Templates are sorted alphabetically by display_name across all pages
+/// so users can find a dungeon by predictable scroll position. Discord
+/// StringSelect has no native search — alphabetical is the next best
+/// thing.
 async fn render_picker_page(
     pool: &PgPool,
     tier: &Tier,
@@ -251,22 +256,31 @@ async fn render_picker_page(
         return Ok(None);
     }
 
-    let total_pages = template_ids.len().div_ceil(PICKER_PAGE_SIZE).max(1);
+    // Resolve every template up-front so we can sort by display_name
+    // before paginating. Templates that no longer exist are dropped.
+    // Tier sizes are bounded by guild dungeon count (~60 currently); the
+    // N+1 lookups here are cheap and keep the alternative join out of
+    // scope.
+    let mut templates: Vec<crate::db::models::DungeonTemplate> =
+        Vec::with_capacity(template_ids.len());
+    for tid in &template_ids {
+        if let Some(t) = db::dungeon::get_by_id(pool, *tid).await? {
+            templates.push(t);
+        }
+    }
+    templates.sort_by_key(|t| t.display_name.to_lowercase());
+
+    let total_pages = templates.len().div_ceil(PICKER_PAGE_SIZE).max(1);
     let page = page.min(total_pages - 1);
     let start = page * PICKER_PAGE_SIZE;
-    let end = (start + PICKER_PAGE_SIZE).min(template_ids.len());
+    let end = (start + PICKER_PAGE_SIZE).min(templates.len());
 
     let mut options: Vec<CreateSelectMenuOption> = Vec::with_capacity(end - start);
-    for tid in &template_ids[start..end] {
-        // Resolve per-id; tier sizes are bounded (one page = 25 max) so
-        // the per-row query is fine. The alternative is a custom join
-        // helper that's only used here.
-        let Some(template) = db::dungeon::get_by_id(pool, *tid).await? else {
-            continue;
-        };
+    for template in &templates[start..end] {
         // Encode the template_id directly as the select value so we don't
         // round-trip through name-resolution when the user picks.
-        let mut opt = CreateSelectMenuOption::new(template.display_name, template.id.to_string());
+        let mut opt =
+            CreateSelectMenuOption::new(template.display_name.clone(), template.id.to_string());
         if let Some(emoji) = template.emoji.as_deref() {
             // Only attach unicode emoji literals — custom application
             // emoji would need the bot_emoji map and a ReactionType build

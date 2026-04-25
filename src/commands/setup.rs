@@ -139,7 +139,6 @@ async fn run_dashboard_loop(
             "setup:section:superadmin" => section_superadmin(ctx, &mci).await?,
             "setup:section:log" => section_log_channel(ctx, &mci).await?,
             "setup:section:verify" => section_verification(ctx, &mci).await?,
-            "setup:section:so" => section_self_organize(ctx, &mci).await?,
             _ => {
                 // Unknown custom_id — just acknowledge so Discord doesn't
                 // show "interaction failed" to the user.
@@ -594,6 +593,11 @@ async fn dashboard_view(ctx: BotContext<'_>) -> Result<(CreateEmbed, Vec<CreateA
                 .runs_channel_id
                 .map(|c| format!("<#{c}>"))
                 .unwrap_or_else(|| "_no runs channel_".to_string());
+            let so_chip = if t.enable_self_organization {
+                " · self-organize ✅"
+            } else {
+                ""
+            };
             let extra = if tiers.len() > 1 {
                 format!(
                     "\n_+ {} more tier(s) — manage with `/tier`._",
@@ -602,7 +606,7 @@ async fn dashboard_view(ctx: BotContext<'_>) -> Result<(CreateEmbed, Vec<CreateA
             } else {
                 String::new()
             };
-            format!("**{}** — runs: {runs}{extra}", t.name)
+            format!("**{}** — runs: {runs}{so_chip}{extra}", t.name)
         }
         None => "_no tiers yet — set one up to enable **Finish**_".to_string(),
     };
@@ -639,7 +643,7 @@ async fn dashboard_view(ctx: BotContext<'_>) -> Result<(CreateEmbed, Vec<CreateA
     let description = format!(
         "Configure Starship for **{guild_name}**. Click a section to edit.\n\
          \n\
-         {tier_mark} **First tier** *(required)*\n\
+         {tier_mark} **Tier** *(required)*\n\
          {tier_block}\n\
          \n\
          {sa_mark} **Superadmin** *(bypass for emergencies)*\n\
@@ -670,11 +674,9 @@ async fn dashboard_view(ctx: BotContext<'_>) -> Result<(CreateEmbed, Vec<CreateA
         .color(0x5865F2)
         .footer(footer);
 
-    let tier_label = if first_tier.is_some() {
-        "Edit first tier"
-    } else {
-        "Set up first tier"
-    };
+    // Same label whether the tier exists or not — the section handles
+    // create vs edit internally and "Setup tier" reads cleanly for both.
+    let tier_label = "Setup tier";
     let tier_style = if first_tier_ready {
         ButtonStyle::Secondary
     } else {
@@ -687,11 +689,6 @@ async fn dashboard_view(ctx: BotContext<'_>) -> Result<(CreateEmbed, Vec<CreateA
         ButtonStyle::Primary
     };
 
-    let so_label = if tiers.iter().any(|t| t.enable_self_organization) {
-        "Self-organize ✅"
-    } else {
-        "Self-organize"
-    };
     let sections_row = CreateActionRow::Buttons(vec![
         CreateButton::new("setup:section:tier")
             .label(tier_label)
@@ -705,10 +702,6 @@ async fn dashboard_view(ctx: BotContext<'_>) -> Result<(CreateEmbed, Vec<CreateA
         CreateButton::new("setup:section:verify")
             .label("Verification")
             .style(verify_style),
-        CreateButton::new("setup:section:so")
-            .label(so_label)
-            .style(ButtonStyle::Secondary)
-            .disabled(first_tier.is_none()),
     ]);
 
     let finish_label = if guild.setup_complete {
@@ -769,12 +762,11 @@ async fn summary_view(ctx: BotContext<'_>) -> Result<CreateEmbed> {
          **Try it out**\n\
          • Click **Start a run** in the self-organize channel (if enabled).\n\
          • Or run `/headcount <dungeon>` to start gathering raiders.\n\
-         • Or run `/run <dungeon>` to skip the headcount and jump straight in.\n\
          • Run `/pingroles` to subscribe to dungeon notifications.\n\
          \n\
          **Manage later**\n\
-         • `/setup` → **Self-organize** — tune knobs, repost stickies, \
-           switch tiers\n\
+         • `/setup` → **Setup tier** → **Configure self-organize** — \
+           tune knobs, repost stickies, switch tiers\n\
          • `/tier` — add more tiers, change channels, assign access roles\n\
          • `/permission` — let specific roles run headcounts and runs\n\
          • `/dungeon` — customise or add dungeons\n\
@@ -882,6 +874,19 @@ async fn section_first_tier(
                         .await?;
                     }
                 }
+            }
+            "setup:tier:so" => {
+                // Hand off to the self-organize sub-view (it has its own
+                // click loop and "Back" returns to the dashboard). Only
+                // reachable when the tier exists in the DB — the button
+                // is disabled before first save.
+                //
+                // We RETURN here rather than fall through so the outer
+                // dashboard loop resumes awaiting clicks; otherwise this
+                // tier-section loop would race the dashboard loop on the
+                // same message.
+                section_self_organize(ctx, &mci).await?;
+                return Ok(());
             }
             "setup:tier:save" => {
                 let Some(runs) = draft.runs_channel else {
@@ -1002,7 +1007,7 @@ fn tier_view(
     );
 
     let embed = CreateEmbed::new()
-        .title(format!("🎯 First tier · {name}"))
+        .title(format!("🎯 Setup tier · {name}"))
         .description(description)
         .color(0x57F287);
 
@@ -1047,6 +1052,24 @@ fn tier_view(
                 .style(ButtonStyle::Primary),
         );
     }
+    // Configure self-organize: only meaningful once the tier exists in
+    // the DB (the SO knobs live on the tier row). Shown disabled before
+    // first save so the user knows where to find SO config without
+    // needing to discover it elsewhere.
+    let so_enabled = existing
+        .map(|t| t.enable_self_organization)
+        .unwrap_or(false);
+    let so_label = if so_enabled {
+        "Configure self-organize ✅"
+    } else {
+        "Configure self-organize"
+    };
+    buttons.push(
+        CreateButton::new("setup:tier:so")
+            .label(so_label)
+            .style(ButtonStyle::Secondary)
+            .disabled(existing.is_none()),
+    );
     buttons.push(
         CreateButton::new("setup:tier:back")
             .label("← Back")
@@ -1910,7 +1933,7 @@ fn so_config_view(tiers: &[Tier], tier: &Tier) -> (CreateEmbed, Vec<CreateAction
     let runs_line = tier
         .runs_channel_id
         .map(|c| format!("<#{c}>"))
-        .unwrap_or_else(|| "_not set — set in `Edit first tier` or `/tier edit`_".to_string());
+        .unwrap_or_else(|| "_not set — set in `Setup tier` or `/tier edit`_".to_string());
 
     let body = format!(
         "Per-tier opt-in: any user can start a headcount via a sticky **Start a run** \

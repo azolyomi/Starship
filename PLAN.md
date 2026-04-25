@@ -2508,6 +2508,76 @@ convert / run end / transfer).
 Verification: `cargo fmt --check`, `cargo build`, `cargo clippy
 --all-targets -- -D warnings`, `cargo test` (15 passed) all green.
 
+### 2026-04-25 — Picker sort, run idle timeout, wizard restructure
+
+Three asks in one chunk:
+
+1. **Searchable dropdown.** Discord StringSelect has no native search;
+   only slash-command argument autocomplete supports it. Settled for
+   alphabetical instead.
+2. **Auto-end runs after 24h.** Leaders forget to End. Added a periodic
+   sweeper.
+3. **SO config inside tier section.** User's mental model is "Setup
+   tier → channels + roles + self-organize all in one place."
+
+Landed:
+
+**Picker sort:**
+- `handlers/self_organize.rs::render_picker_page` resolves every
+  template up front, sorts by lowercased `display_name`, then
+  paginates. Sort is stable across all pages so a dungeon's position
+  is predictable. The N+1 `get_by_id` per template is unchanged
+  (tier sizes are bounded by guild dungeon count, currently ~60).
+
+**Run idle timeout:**
+- `db::run::list_created_before(pool, cutoff)` (new) — `SELECT * FROM
+  runs WHERE created_at < $1`. The runs table doesn't track
+  last-activity, so 24h-since-creation is the proxy.
+- `services::raid::end_run(serenity_ctx, pool, &run, ended_by)` (new) —
+  shared teardown extracted from `handlers::run::handle_end`. Same
+  semantics: claim release + row delete in tx, then best-effort VC
+  delete, embed edit, audit-log line, listing refresh. `ended_by` is
+  `Some(uid)` for user-driven ends, `None` for auto-ends (audit log
+  credits "**Starship** (idle timeout)").
+- `handlers::run::handle_end` collapsed to a thin caller of
+  `end_run` plus the user-ack `UpdateMessage`. ~140 lines deleted.
+- `services::orphan_sweep::sweep_idle_runs` (new) — calls
+  `list_created_before(now - 24h)`, hands each result to `end_run`
+  with `ended_by = None`. Logs per-run info on success.
+- `services::orphan_sweep::spawn_idle_run_sweeper(ctx, pool)` (new) —
+  spawns a tokio task with a 10-min `Interval`. Skips the immediate
+  first tick so the boot orphan_sweep settles state first. Spawned
+  once from `main::run_bot`'s framework `setup` callback.
+- Constants: `RUN_IDLE_HOURS = 24`, `SWEEP_INTERVAL = 600s`. Per-tier
+  knob can land later if guilds want different policies.
+
+**Wizard restructure:**
+- Dropped the dashboard "Self-organize" button entirely. Dashboard
+  now has 4 buttons (Setup tier · Superadmin · Log channel ·
+  Verification) plus the existing Finish/Close row.
+- Renamed dashboard tier button to "Setup tier" (was "Set up first
+  tier" / "Edit first tier"). Section title also updated to "🎯
+  Setup tier · {name}". The dashboard description now shows a tiny
+  `· self-organize ✅` chip on the tier line when SO is enabled.
+- `tier_view` gained a "Configure self-organize" button (with `✅`
+  suffix when enabled). Disabled before first save — the SO knobs
+  live on the tier row, so they need a tier id to attach to.
+- `setup:tier:so` handler in `section_first_tier` calls
+  `section_self_organize` and **returns** from the tier loop. The
+  outer dashboard loop resumes awaiting clicks. Without the return,
+  two loops would race for clicks on the same message after the SO
+  Back button restored the dashboard view.
+- `section_self_organize`'s "Switch tier" button (added two chunks
+  ago) still works for multi-tier nav — entry from "Setup tier"
+  drops you on the first tier's SO config; users with multiple tiers
+  can switch from there.
+- Stale `/run <dungeon>` mention in the post-Quick-Setup summary
+  copy removed (the command doesn't exist; was deleted in the FK
+  fix chunk).
+
+Verification: `cargo fmt --check`, `cargo build`, `cargo clippy
+--all-targets -- -D warnings`, `cargo test` (15 passed) all green.
+
 ### Credentials still needed from the user
 
 Collected into `.env` when we're ready to boot:

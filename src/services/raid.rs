@@ -275,3 +275,124 @@ pub async fn finalize_run_post_create(
 
     Ok(())
 }
+
+/// Tear down a live run: release any slot claim, delete the row, delete
+/// the temp VC, edit the public message to its ended state, post the
+/// audit log line, and refresh the self-organize listing.
+///
+/// `ended_by`:
+/// - `Some(uid)` — user-driven End click. Audit log mentions the user.
+/// - `None` — auto-end (idle timeout). Audit log credits the bot.
+///
+/// Returns `Ok(false)` when the run row was already deleted by another
+/// path (concurrent click, prior auto-end, manual SQL surgery). Past
+/// the DB delete, every Discord-side step is best-effort: failures log
+/// and continue rather than bubbling, since the row delete is the
+/// canonical "ended" state.
+pub async fn end_run(
+    serenity_ctx: &serenity::Context,
+    pool: &PgPool,
+    run: &Run,
+    ended_by: Option<serenity::UserId>,
+) -> Result<bool> {
+    let mut tx = pool.begin().await?;
+    db::self_organize::claim_release_by_run(&mut tx, run.id).await?;
+    let row_existed = db::run::delete_tx(&mut tx, run.id).await?;
+    if !row_existed {
+        tx.rollback().await?;
+        return Ok(false);
+    }
+    tx.commit().await?;
+
+    if let Some(vc_id) = run.voice_channel_id {
+        voice::delete_temp_vc(&serenity_ctx.http, serenity::ChannelId::new(vc_id as u64)).await;
+    }
+
+    let template = match db::dungeon::get_by_id(pool, run.dungeon_template_id).await {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::warn!(error = ?e, run_id = run.id, "failed to load template for ended embed");
+            None
+        }
+    };
+
+    if let Some(template) = template.as_ref() {
+        let emoji_map = match db::emoji::get_all_as_map(pool).await {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::warn!(
+                    error = ?e,
+                    run_id = run.id,
+                    "failed to load emoji map for ended embed",
+                );
+                Default::default()
+            }
+        };
+        let ended_embed = embeds::run::build_ended(run, template, &emoji_map);
+        if let Err(e) = serenity::ChannelId::new(run.channel_id as u64)
+            .edit_message(
+                &serenity_ctx.http,
+                serenity::MessageId::new(run.message_id as u64),
+                serenity::EditMessage::new()
+                    .add_embed(ended_embed)
+                    .components(vec![]),
+            )
+            .await
+        {
+            tracing::warn!(
+                error = ?e,
+                run_id = run.id,
+                channel_id = run.channel_id,
+                message_id = run.message_id,
+                "failed to update run message to ended state",
+            );
+        }
+    }
+
+    if let Some(template) = template.as_ref() {
+        if let Ok(Some(guild)) = db::guild::get(pool, run.guild_id).await {
+            if let Some(log_id) = guild.log_channel_id {
+                let actor = match ended_by {
+                    Some(uid) => format!("<@{}>", uid.get()),
+                    None => "**Starship** (idle timeout)".to_string(),
+                };
+                let content = format!(
+                    "Run #{id} ({name}) ended by {actor}.",
+                    id = run.id,
+                    name = template.display_name,
+                );
+                if let Err(e) = serenity::ChannelId::new(log_id as u64)
+                    .send_message(
+                        &serenity_ctx.http,
+                        serenity::CreateMessage::new().content(content),
+                    )
+                    .await
+                {
+                    tracing::warn!(
+                        error = ?e,
+                        run_id = run.id,
+                        log_channel_id = log_id,
+                        "failed to write audit log entry for ended run",
+                    );
+                }
+            }
+        }
+    }
+
+    if let Ok(Some(tier)) = db::tier::get_by_id(pool, run.tier_id).await {
+        if tier.enable_self_organization {
+            if let Err(e) =
+                crate::services::self_organize_listing::refresh_listing(serenity_ctx, pool, &tier)
+                    .await
+            {
+                tracing::warn!(
+                    error = ?e,
+                    tier_id = tier.id,
+                    "failed to refresh self-organize listing after run end",
+                );
+            }
+        }
+    }
+
+    Ok(true)
+}
