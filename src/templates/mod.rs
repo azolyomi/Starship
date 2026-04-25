@@ -246,8 +246,10 @@ pub async fn load_and_seed(pool: &PgPool) -> Result<()> {
 
     if dump.dungeons.is_empty() && overrides.0.is_empty() {
         warn!(
-            "no wiki dump at {DUMP_FILE} and no overrides at {OVERRIDES_FILE} — \
-             skipping dungeon seed. Run `starship sync-wiki` to populate."
+            dump_path = DUMP_FILE,
+            overrides_path = OVERRIDES_FILE,
+            "no wiki dump and no overrides — skipping dungeon seed. \
+             Run `starship sync-wiki` to populate.",
         );
         return Ok(());
     }
@@ -271,7 +273,7 @@ pub async fn load_and_seed(pool: &PgPool) -> Result<()> {
             Ok(false) => {}
             Err(e) => warn!(
                 dungeon = %name,
-                error = %e,
+                error = ?e,
                 "could not delete stale global dungeon template (likely a live raid still references it); will retry on next boot"
             ),
         }
@@ -346,7 +348,8 @@ fn merge(dump: &WikiDump, overrides: &Overrides) -> Result<Vec<Effective>> {
     for name in overrides.0.keys() {
         if !seen_override_names.contains(name) {
             warn!(
-                "override `{name}` matched no wiki dungeon and has no `extends` — ignored"
+                override_name = %name,
+                "override matched no wiki dungeon and has no `extends` — ignored",
             );
         }
     }

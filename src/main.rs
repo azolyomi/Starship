@@ -77,12 +77,7 @@ enum CliCommand {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "starship=info,warn".into()),
-        )
-        .init();
+    init_tracing();
 
     let config = config::Config::from_env()?;
     info!(config = ?config, "loaded config");
@@ -223,8 +218,102 @@ async fn r4_migration_preflight(pool: &PgPool) -> Result<()> {
 }
 
 async fn on_error(error: poise::FrameworkError<'_, BotData, BotError>) {
+    use poise::FrameworkError::*;
+    match &error {
+        Setup { error, .. } => {
+            tracing::error!(error = ?error, "framework setup failed");
+        }
+        Command { error, ctx, .. } => {
+            tracing::error!(
+                error = ?error,
+                command = %ctx.command().qualified_name,
+                user_id = ctx.author().id.get(),
+                guild_id = ctx.guild_id().map(|g| g.get()),
+                "command failed",
+            );
+        }
+        CommandCheckFailed { error, ctx, .. } => {
+            tracing::warn!(
+                error = ?error,
+                command = %ctx.command().qualified_name,
+                user_id = ctx.author().id.get(),
+                guild_id = ctx.guild_id().map(|g| g.get()),
+                "command check failed",
+            );
+        }
+        EventHandler { error, event, .. } => {
+            tracing::error!(
+                error = ?error,
+                event = event.snake_case_name(),
+                "event handler failed",
+            );
+        }
+        other => {
+            tracing::warn!(kind = %framework_error_kind(other), "framework error");
+        }
+    }
     if let Err(e) = poise::builtins::on_error(error).await {
-        tracing::error!("error while handling error: {e}");
+        tracing::error!(error = ?e, "error while handling framework error");
+    }
+}
+
+/// Friendly variant name for `FrameworkError` cases the structured logger
+/// doesn't break out individually. Avoids requiring `Debug` on `BotData`.
+fn framework_error_kind(err: &poise::FrameworkError<'_, BotData, BotError>) -> &'static str {
+    use poise::FrameworkError::*;
+    match err {
+        Setup { .. } => "setup",
+        Command { .. } => "command",
+        CommandCheckFailed { .. } => "command_check_failed",
+        ArgumentParse { .. } => "argument_parse",
+        CommandStructureMismatch { .. } => "command_structure_mismatch",
+        CooldownHit { .. } => "cooldown_hit",
+        MissingBotPermissions { .. } => "missing_bot_permissions",
+        MissingUserPermissions { .. } => "missing_user_permissions",
+        NotAnOwner { .. } => "not_an_owner",
+        GuildOnly { .. } => "guild_only",
+        DmOnly { .. } => "dm_only",
+        NsfwOnly { .. } => "nsfw_only",
+        EventHandler { .. } => "event_handler",
+        DynamicPrefix { .. } => "dynamic_prefix",
+        UnknownCommand { .. } => "unknown_command",
+        UnknownInteraction { .. } => "unknown_interaction",
+        SubcommandRequired { .. } => "subcommand_required",
+        _ => "other",
+    }
+}
+
+/// Configure the global tracing subscriber.
+///
+/// Output goes to stdout so the same binary produces useful logs under
+/// `docker logs` (Compose deploy) and `journalctl -u starship` (bare-metal
+/// systemd). Set `RUST_LOG_FORMAT=json` to switch to a JSON-per-line
+/// format suitable for log shippers; default is the human-readable
+/// pretty format.
+///
+/// Default filter keeps `starship=info` while quieting third-party
+/// noise (`serenity=warn`, `sqlx=warn`). Override at runtime with
+/// `RUST_LOG=...` per the `EnvFilter` syntax.
+fn init_tracing() {
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        tracing_subscriber::EnvFilter::new("starship=info,serenity=warn,sqlx=warn,info")
+    });
+
+    let json = std::env::var("RUST_LOG_FORMAT").as_deref() == Ok("json");
+
+    if json {
+        tracing_subscriber::fmt()
+            .json()
+            .with_env_filter(filter)
+            .with_target(true)
+            .with_current_span(true)
+            .with_span_list(false)
+            .init();
+    } else {
+        tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_target(true)
+            .init();
     }
 }
 

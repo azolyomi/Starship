@@ -47,7 +47,7 @@ pub async fn delete_temp_vc(http: &Http, channel_id: ChannelId) {
     if let Err(e) = channel_id.delete(http).await {
         warn!(
             channel_id = %channel_id,
-            error = %e,
+            error = ?e,
             "failed to delete temp VC",
         );
     }

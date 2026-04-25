@@ -215,7 +215,11 @@ async fn quick_setup(
                 .await?;
         }
         Err(e) => {
-            tracing::warn!(error = %e, "quick setup failed");
+            tracing::warn!(
+                error = ?e,
+                guild_id = ctx.guild_id().map(|g| g.get()),
+                "quick setup failed",
+            );
             trigger
                 .edit_response(
                     ctx.http(),
@@ -329,7 +333,7 @@ async fn find_or_create_log_channel(ctx: BotContext<'_>) -> Result<ChannelId> {
     {
         Ok(ch) => Ok(ch.id),
         Err(e) => {
-            tracing::warn!(error = %e, "log channel with emoji prefix rejected, falling back");
+            tracing::warn!(error = ?e, "log channel with emoji prefix rejected, falling back");
             Ok(guild_id
                 .create_channel(http, CreateChannel::new(PLAIN).kind(ChannelType::Text))
                 .await?
@@ -611,7 +615,7 @@ async fn section_first_tier(
                         respond_with_view(ctx, &mci, embed, components).await?;
                     }
                     Err(e) => {
-                        tracing::warn!(error = %e, "tier channel creation failed");
+                        tracing::warn!(error = ?e, "tier channel creation failed");
                         mci.create_response(
                             ctx.http(),
                             CreateInteractionResponse::Message(

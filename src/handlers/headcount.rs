@@ -370,13 +370,22 @@ async fn handle_confirm_start(
 
     // Strip buttons off the original headcount message — it's no longer
     // actionable — but keep the embed intact so the thread stays readable.
-    let _ = serenity::ChannelId::new(hc.channel_id as u64)
+    if let Err(e) = serenity::ChannelId::new(hc.channel_id as u64)
         .edit_message(
             &ctx.http,
             MessageId::new(hc.message_id as u64),
             EditMessage::new().components(vec![]),
         )
-        .await;
+        .await
+    {
+        tracing::warn!(
+            error = ?e,
+            hc_id,
+            channel_id = hc.channel_id,
+            message_id = hc.message_id,
+            "failed to strip buttons from converted headcount message",
+        );
+    }
 
     services::raid::start_run(
         ctx,

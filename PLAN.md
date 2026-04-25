@@ -69,6 +69,16 @@ notify:<guild>:<template_id>    -- toggle notification role
 
 ## Data Model
 
+> **Note:** the SQL below is the original design sketch. The authoritative
+> schema lives in `migrations/`. Several columns / tables here have been
+> changed or removed since: `guilds.notification_channel_id` and
+> `tiers.{headcount,raid}_channel_id` are gone (R3/R4); `headcount_reactions`
+> and `run_participants` are gone (R4 — Discord reactions carry signups now);
+> `headcounts.status`, `runs.status`, `runs.ended_at`, `runs.headcount_id`
+> are gone (migration `…000007_raid_lifecycle_cleanup.sql` — terminal
+> transitions DELETE the row instead). `guilds.loot_tier_threshold` was
+> added (Phase 6.5) and the per-dungeon threshold table was dropped.
+
 ### Core Tables
 
 ```sql
@@ -343,12 +353,29 @@ run_participants (
 
 ## Crash Recovery
 
-On startup:
-1. Query all `active` headcounts and runs from Postgres
-2. For each, verify the Discord message still exists via API
-3. Orphaned messages -> mark `cancelled` / `ended`
-4. Orphaned voice channels -> delete
-5. All future interactions route statelessly via custom_id -> DB lookup
+Migration `20260424000007_raid_lifecycle_cleanup.sql` collapsed the lifecycle
+to a queue: a `headcounts` / `runs` row exists iff the raid is live, and
+terminal transitions (`Start Run`, `Cancel`, `End`) `DELETE` the row. That
+removes the original "scan for `status='active'` and reconcile" pass — there
+is no terminal state to mark.
+
+What still works for free:
+- Component buttons route statelessly via `custom_id` → DB lookup, so a
+  restart mid-raid resumes cleanly as long as the DB row + Discord message
+  are both still present.
+
+What's still missing (residual orphan sweep, scheduled for after Phase 7):
+1. **Stale DB rows.** A run row whose Discord message was deleted while the
+   bot was offline lives forever. On startup, fetch each row's `message_id`;
+   if the channel/message is gone, `DELETE` the row.
+2. **Orphan VCs.** `services::voice::create_temp_vc` writes
+   `runs.voice_channel_id` before the bot might crash. If a run's VC exists
+   but the run row does not, delete the VC. (Bot restart between
+   `End run` and the explicit VC delete is the realistic failure mode.)
+3. **Re-attach reactions.** `attach_signup_reactions` runs once on raid
+   creation. If the bot crashed mid-attach, the message is missing one or
+   more reactions; on startup, diff present-vs-required for every active
+   raid's message.
 
 ## RealmEye Wiki Scraper (`starship sync-wiki`)
 
@@ -376,13 +403,24 @@ Re-running picks up new dungeons/items (diff against existing DB entries).
 
 ## Project Structure
 
+> **Note:** the tree below is the original sketch. Current layout differs in
+> a few places: `commands/notifications.rs` was deleted in R3 and replaced
+> by `commands/pingroles.rs`; `services/reactions.rs` was added in R4;
+> `templates/mod.rs` (the dump+overrides pipeline) replaced
+> `templates/dungeons.rs` in Phase 6.5; and `cli/upload_emoji.rs` was added
+> in R4. The intended final shape includes a `Dockerfile` +
+> `docker-compose.yml` (Phase 7b) alongside the existing
+> `setup.sh` / `deploy.sh` / `starship.service`.
+
 ```
 starship/
 ├── Cargo.toml
 ├── .env.example
-├── setup.sh             -- dev + prod setup (rust, postgres, migrations)
-├── deploy.sh            -- prod-only (systemd, watchdog, log rotation)
-├── starship.service     -- systemd unit file
+├── setup.sh             -- bare-metal dev setup (rust, postgres, migrations)
+├── Dockerfile           -- multi-stage build → slim runtime image (Phase 7b)
+├── docker-compose.yml   -- postgres + bot stack (Phase 7b)
+├── deploy.sh            -- VPS-side: git pull + compose up (Phase 7b)
+├── starship.service     -- tiny systemd unit that starts compose at boot
 ├── migrations/
 │   ├── 20260423_001_initial.sql
 │   └── ...
@@ -444,6 +482,9 @@ starship/
 | `/notifications` | Post role-selection message | ConfigureGuild |
 
 ## Build Order
+
+Phases 1–6.5 are complete; see the Progress log below for what landed in each.
+The build order is preserved here for orientation.
 
 ### Phase 1: Foundation
 1. Initialize Rust project with Cargo, set up dependencies
@@ -568,13 +609,34 @@ the full design.
 
 ### Phase 6: Voice Channel Management
 26. Temp VC creation for VC raids
-27. VC join enforcement
+27. ~~VC join enforcement~~ — deferred (users trust each other; revisit later)
 28. VC cleanup on run end
 
+### Phase 6.5: Dungeon config refactor
+- Linearise the dungeon-template data flow (kill the two-source collision
+  between hardcoded builtins and the scraper).
+- Move loot-tier threshold from per-dungeon to per-guild.
+- Delete the curation module that overrides.json now subsumes.
+
 ### Phase 7: Reliability
-29. Crash recovery on startup
-30. `deploy.sh` + systemd service file + watchdog
-31. Logging + error handling
+- **7a. Logging + error handling sweep.** Configure `tracing-subscriber`
+  for stdout (Docker `docker logs` + systemd `journalctl` both consume it
+  cleanly), opt-in JSON output via `RUST_LOG_FORMAT=json`, structured
+  fields instead of formatted strings, lifecycle spans for raids and
+  interactions, top-level error reporter that captures command + caller
+  + guild + error chain. Audit `?` bubble points that should
+  warn-and-continue instead of aborting a flow.
+- **7b. Containerised deploy.** Multi-stage `Dockerfile` (Rust build →
+  slim runtime image). `docker-compose.yml` with `postgres:16` + bot
+  service, `.env` injected via `env_file:`. `deploy.sh` on the VPS is a
+  thin wrapper: `git pull && docker compose up -d`. A small systemd unit
+  starts Compose at boot (no per-process supervisor — Compose's
+  `restart: unless-stopped` is the watchdog). `setup.sh` stays for
+  bare-metal dev.
+- **7c. Orphan sweep on startup.** See "Crash Recovery" above. Delete
+  `runs` rows whose Discord message no longer exists; delete temp VCs
+  whose run row is gone; re-attach missing signup reactions on still-live
+  raids.
 
 ### Phase 8: Polish
 32. `/config` commands
@@ -1311,6 +1373,67 @@ Operator follow-ups / notes:
 - If the threshold ever needs to diverge per-guild beyond "the
   floor," we'd add a new table rather than resurrect the per-
   dungeon knob — simpler semantics have real value.
+
+### 2026-04-24 — Phase 7a complete (logging + error handling sweep)
+
+Targeted at Docker (`docker logs`) and systemd (`journalctl -u starship`)
+output side-by-side.
+
+Landed:
+- `Cargo.toml` — `tracing-subscriber` gains the `json` feature.
+- `src/main.rs::init_tracing` — split out from `main()`. Default filter
+  `starship=info,serenity=warn,sqlx=warn,info` keeps third-party noise
+  quiet without an explicit `RUST_LOG`. Set `RUST_LOG_FORMAT=json` to
+  switch to one JSON object per line for log shippers; otherwise the
+  human-readable pretty format. Both go to stdout.
+- `.env.example` — documents `RUST_LOG_FORMAT=` alongside the existing
+  `RUST_LOG=`. `RUST_LOG=` left blank so the in-code default applies.
+- `src/main.rs::on_error` — replaced the bare `poise::builtins::on_error`
+  delegate with a structured-logging match. Captures command name,
+  user_id, guild_id, full error chain on `Command` failures; warns with
+  caller info on `CommandCheckFailed`; logs event name + error chain on
+  `EventHandler` errors; categorises every other variant via a
+  `framework_error_kind` helper that returns a static label (avoids
+  requiring `Debug` on `BotData`).
+- Lifecycle spans via `#[tracing::instrument]`:
+  - `services::raid::start_headcount` → fields `guild_id`, `leader_id`,
+    `tier`, `dungeon`, `channel_id`, `hc_id` (recorded post-create).
+    Emits `info!("headcount created")` after the DB insert.
+  - `services::raid::start_run` → fields `guild_id`, `leader_id`, `tier`,
+    `dungeon`, `requires_vc`, `run_id` (recorded post-create). Emits
+    `info!("run created")` after the DB insert.
+  - `handlers::component::handle` → fields `custom_id`, `user_id`,
+    `guild_id`. Every nested log (reactions retries, voice failures,
+    template lookups) inherits this context.
+  - `handlers::modal::handle` → same shape as components.
+- Structured fields:
+  - `error = ?e` (Debug, prints the full anyhow chain) replaces
+    `error = %e` (Display, swallows `.context()` chains) at every
+    warn/error site in `services/`, `commands/setup.rs`, and
+    `templates/mod.rs`.
+  - `templates::load_and_seed` warn for missing files now carries
+    `dump_path` and `overrides_path` as fields.
+  - `templates::merge` orphan-override warn carries `override_name`.
+  - `commands/setup.rs::quick_setup` failure carries `guild_id`.
+- Warn-and-continue audit on terminal flows:
+  - `handlers::run::handle_end` — every step after `db::run::delete`
+    (template load, emoji map load, message edit, interaction reply,
+    audit log post) now warns and continues instead of bubbling. The
+    DB delete is the commit point; nothing after it should turn into a
+    user-visible "interaction failed" toast for an already-ended run.
+  - `handlers::headcount::handle_confirm_start` — the post-conversion
+    "strip buttons" message edit was a silent `let _ = …` swallow;
+    promoted to a structured `tracing::warn!` so the failure is at
+    least visible in logs.
+- **`cargo build` passes** (12 dead-code warnings — one less than before
+  because `init_tracing` consolidates the old inline subscriber).
+  **`cargo test`** passes (11/11).
+
+Phase 7b (containerised deploy) prerequisites are now met: stdout is
+the only sink, the format is selectable via env, and every lifecycle
+event carries enough structured context that JSON logs in production
+will be greppable by guild_id / run_id / hc_id without hunting for
+formatted strings.
 
 ### Credentials still needed from the user
 

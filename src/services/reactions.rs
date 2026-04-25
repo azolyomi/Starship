@@ -41,7 +41,7 @@ pub async fn attach_reactions(
                 channel_id = %channel_id,
                 message_id = %message_id,
                 reaction = ?rt,
-                error = %e,
+                error = ?e,
                 "giving up on attaching reaction"
             );
             failures.push(rt.clone());
@@ -74,7 +74,7 @@ async fn try_react(
                     attempt,
                     delay_ms = delay,
                     reaction = ?rt,
-                    error = %e,
+                    error = ?e,
                     "transient error attaching reaction, retrying"
                 );
                 sleep(Duration::from_millis(delay)).await;
@@ -126,7 +126,12 @@ pub async fn ping_organizer_on_failure(
         )
         .await
     {
-        warn!(error = %e, "failed to ping organizer about missing reactions");
+        warn!(
+            error = ?e,
+            channel_id = %channel_id,
+            organizer_id,
+            "failed to ping organizer about missing reactions",
+        );
     }
 }
 

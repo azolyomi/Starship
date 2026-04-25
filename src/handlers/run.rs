@@ -519,47 +519,93 @@ async fn handle_end(
         .await;
     }
 
+    // Past this point the run is already gone from the DB — every remaining
+    // step is decoration. Don't let a failed Discord call here turn into a
+    // bubbled error that the user sees as "interaction failed" after the
+    // run has effectively ended.
     let pool = &data.db;
-    let template = db::dungeon::get_by_id(pool, run.dungeon_template_id)
-        .await?
-        .ok_or_else(|| format!("template {} not found", run.dungeon_template_id))?;
-    let emoji_map = db::emoji::get_all_as_map(pool).await?;
+    let template = match db::dungeon::get_by_id(pool, run.dungeon_template_id).await {
+        Ok(Some(t)) => Some(t),
+        Ok(None) => {
+            tracing::warn!(
+                run_id = run.id,
+                template_id = run.dungeon_template_id,
+                "template not found while rendering ended embed; skipping",
+            );
+            None
+        }
+        Err(e) => {
+            tracing::warn!(error = ?e, run_id = run.id, "failed to load template for ended embed");
+            None
+        }
+    };
 
-    let ended_embed = embeds::run::build_ended(&run, &template, &emoji_map);
+    if let Some(template) = template.as_ref() {
+        let emoji_map = match db::emoji::get_all_as_map(pool).await {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::warn!(error = ?e, run_id = run.id, "failed to load emoji map for ended embed");
+                Default::default()
+            }
+        };
+        let ended_embed = embeds::run::build_ended(&run, template, &emoji_map);
+        if let Err(e) = serenity::ChannelId::new(run.channel_id as u64)
+            .edit_message(
+                &ctx.http,
+                MessageId::new(run.message_id as u64),
+                EditMessage::new().add_embed(ended_embed).components(vec![]),
+            )
+            .await
+        {
+            tracing::warn!(
+                error = ?e,
+                run_id = run.id,
+                channel_id = run.channel_id,
+                message_id = run.message_id,
+                "failed to update run message to ended state",
+            );
+        }
+    }
 
-    serenity::ChannelId::new(run.channel_id as u64)
-        .edit_message(
-            &ctx.http,
-            MessageId::new(run.message_id as u64),
-            EditMessage::new().add_embed(ended_embed).components(vec![]),
+    if let Err(e) = mci
+        .create_response(
+            ctx,
+            CreateInteractionResponse::UpdateMessage(
+                CreateInteractionResponseMessage::new()
+                    .content("🛑 Run ended.")
+                    .embeds(vec![])
+                    .components(vec![]),
+            ),
         )
-        .await?;
-
-    mci.create_response(
-        ctx,
-        CreateInteractionResponse::UpdateMessage(
-            CreateInteractionResponseMessage::new()
-                .content("🛑 Run ended.")
-                .embeds(vec![])
-                .components(vec![]),
-        ),
-    )
-    .await?;
+        .await
+    {
+        tracing::warn!(error = ?e, run_id = run.id, "failed to ack End to invoking user");
+    }
 
     // Best-effort audit log entry.
-    if let Ok(Some(guild)) = db::guild::get(pool, run.guild_id).await {
-        if let Some(log_id) = guild.log_channel_id {
-            let _ = serenity::ChannelId::new(log_id as u64)
-                .send_message(
-                    &ctx.http,
-                    serenity::CreateMessage::new().content(format!(
-                        "Run #{id} ({name}) ended by <@{caller}>.",
-                        id = run.id,
-                        name = template.display_name,
-                        caller = mci.user.id.get(),
-                    )),
-                )
-                .await;
+    if let Some(template) = template.as_ref() {
+        if let Ok(Some(guild)) = db::guild::get(pool, run.guild_id).await {
+            if let Some(log_id) = guild.log_channel_id {
+                if let Err(e) = serenity::ChannelId::new(log_id as u64)
+                    .send_message(
+                        &ctx.http,
+                        serenity::CreateMessage::new().content(format!(
+                            "Run #{id} ({name}) ended by <@{caller}>.",
+                            id = run.id,
+                            name = template.display_name,
+                            caller = mci.user.id.get(),
+                        )),
+                    )
+                    .await
+                {
+                    tracing::warn!(
+                        error = ?e,
+                        run_id = run.id,
+                        log_channel_id = log_id,
+                        "failed to write audit log entry for ended run",
+                    );
+                }
+            }
         }
     }
 

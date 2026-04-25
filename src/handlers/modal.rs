@@ -5,6 +5,15 @@ use crate::{BotData, BotError};
 /// Entry point for modal submit interactions. Dispatches on the custom_id
 /// prefix: `hc:*` (start-run confirmation) and `run:*` (location / party
 /// edits from the control panel).
+#[tracing::instrument(
+    name = "modal",
+    skip_all,
+    fields(
+        custom_id = %modal.data.custom_id,
+        user_id = modal.user.id.get(),
+        guild_id = modal.guild_id.map(|g| g.get()),
+    ),
+)]
 pub async fn handle(
     ctx: &serenity::Context,
     modal: &serenity::ModalInteraction,

@@ -11,6 +11,18 @@ use crate::{db, embeds, BotContext};
 /// and attach native reactions for each required item. R4: no more
 /// per-user DB tracking — the reactions on the message itself are the
 /// signup UI.
+#[tracing::instrument(
+    name = "start_headcount",
+    skip_all,
+    fields(
+        guild_id = ctx.guild_id().map(|g| g.get()),
+        leader_id = ctx.author().id.get(),
+        tier = %tier.name,
+        dungeon = %template.name,
+        channel_id,
+        hc_id = tracing::field::Empty,
+    ),
+)]
 pub async fn start_headcount(
     ctx: BotContext<'_>,
     tier: &Tier,
@@ -35,6 +47,8 @@ pub async fn start_headcount(
         party,
     )
     .await?;
+    tracing::Span::current().record("hc_id", hc.id);
+    tracing::info!("headcount created");
 
     let reactions_list = db::dungeon::get_reactions(pool, template.id).await?;
     let emoji_map = db::emoji::get_all_as_map(pool).await?;
@@ -84,6 +98,18 @@ pub async fn start_headcount(
 /// signup state, so this does *not* attach native reactions to the run
 /// message — it's a plain announcement with a Control Panel button.
 #[allow(clippy::too_many_arguments)]
+#[tracing::instrument(
+    name = "start_run",
+    skip_all,
+    fields(
+        guild_id,
+        leader_id = leader_user_id,
+        tier = %tier.name,
+        dungeon = %template.name,
+        requires_vc = template.requires_vc,
+        run_id = tracing::field::Empty,
+    ),
+)]
 pub async fn start_run(
     serenity_ctx: &serenity::Context,
     pool: &PgPool,
@@ -105,6 +131,8 @@ pub async fn start_run(
         template.requires_vc,
     )
     .await?;
+    tracing::Span::current().record("run_id", run.id);
+    tracing::info!("run created");
 
     // Prefill runs as a follow-up UPDATE so `create`'s signature stays
     // tight. Skip the round-trip entirely when nothing was prefilled.
@@ -140,7 +168,7 @@ pub async fn start_run(
             Err(e) => {
                 tracing::warn!(
                     run_id = run.id,
-                    error = %e,
+                    error = ?e,
                     "failed to create temp VC for run; continuing without one",
                 );
             }
