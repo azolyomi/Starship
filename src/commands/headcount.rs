@@ -64,6 +64,13 @@ pub async fn headcount(
         String,
     >,
 ) -> Result<(), BotError> {
+    // Defer immediately. `raid::start_headcount` posts a message and then
+    // attaches one reaction per required item, each with up to 5 retries
+    // and exponential backoff — that loop routinely exceeds Discord's
+    // 3-second interaction window on slower networks. After defer,
+    // every subsequent `ctx.send(...)` becomes a 15-minute followup.
+    ctx.defer_ephemeral().await?;
+
     let guild_id = guild_id_i64(ctx);
     let pool = &ctx.data().db;
 

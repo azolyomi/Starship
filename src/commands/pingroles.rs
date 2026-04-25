@@ -468,6 +468,10 @@ pub async fn create(
 ) -> Result<(), BotError> {
     perm_svc::require(ctx, Action::ConfigureGuild, None, None).await?;
 
+    // GuildId::roles + create_role are two HTTP round-trips on the slow
+    // path; defer keeps us under Discord's 3s interaction window.
+    ctx.defer_ephemeral().await?;
+
     let guild_id_struct = require_guild_id(ctx);
     let guild_id = guild_id_struct.get() as i64;
     let pool = &ctx.data().db;
