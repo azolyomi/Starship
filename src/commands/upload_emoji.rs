@@ -18,7 +18,11 @@ use crate::services::permission::GLOBAL_SUPERADMIN_USER_ID;
 use crate::{BotContext, BotError};
 
 /// Operator-only: upload a PNG as an application emoji (for scraper misses).
-#[poise::command(slash_command, rename = "upload-emoji")]
+#[poise::command(
+    slash_command,
+    rename = "upload-emoji",
+    default_member_permissions = "ADMINISTRATOR"
+)]
 pub async fn upload_emoji(
     ctx: BotContext<'_>,
     #[description = "Logical name used in code (e.g. wine_cellar_incantation)"] name: String,

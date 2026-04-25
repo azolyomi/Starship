@@ -22,7 +22,7 @@ const WIZARD_TIMEOUT: Duration = Duration::from_secs(600);
 // ---------------------------------------------------------------------------
 
 /// Configure Starship for this server. Re-run any time to change settings.
-#[poise::command(slash_command, guild_only)]
+#[poise::command(slash_command, guild_only, default_member_permissions = "MANAGE_GUILD")]
 pub async fn setup(ctx: BotContext<'_>) -> Result<(), BotError> {
     permission::require_discord_admin(ctx).await?;
 

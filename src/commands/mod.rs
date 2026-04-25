@@ -18,6 +18,7 @@ pub fn all() -> Vec<poise::Command<BotData, BotError>> {
         permission::permission(),
         tier::tier(),
         pingroles::pingroles(),
+        pingroles::pingroles_admin(),
         upload_emoji::upload_emoji(),
     ]
 }

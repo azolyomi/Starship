@@ -7,7 +7,8 @@ use crate::{guild_id_i64, BotContext, BotError};
 #[poise::command(
     slash_command,
     guild_only,
-    subcommands("list", "create", "edit", "delete")
+    subcommands("list", "create", "edit", "delete"),
+    default_member_permissions = "MANAGE_GUILD"
 )]
 pub async fn dungeon(_ctx: BotContext<'_>) -> Result<(), BotError> {
     Ok(())

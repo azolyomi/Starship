@@ -1,16 +1,16 @@
-//! `/pingroles` — dungeon-notification-role management.
+//! `/pingroles` and `/pingroles-admin` — dungeon notification-role management.
 //!
-//! Discord requires every slash invocation to land on a subcommand once a
-//! command has any registered, so the self-service picker lives under
-//! `/pingroles me` rather than the bare root.
+//! Split into two top-level commands so that Discord can hide the admin
+//! tree from non-admins via `default_member_permissions`. The picker
+//! (`/pingroles me`) stays visible to everyone; the bind/unbind/create
+//! flow (`/pingroles-admin …`) requires Manage Guild.
 //!
-//! Four flows:
 //! * `/pingroles me` (anyone) — paginated ephemeral opt-in picker that diffs
 //!   the user's desired subscriptions against their actual role membership
 //!   and applies add/remove with retries.
-//! * `/pingroles set <dungeon> <role>` (admin) — bind an existing role.
-//! * `/pingroles unset <dungeon>` (admin) — clear the binding.
-//! * `/pingroles create <dungeon>` (admin) — create a fresh mentionable role
+//! * `/pingroles-admin set <dungeon> <role>` — bind an existing role.
+//! * `/pingroles-admin unset <dungeon>` — clear the binding.
+//! * `/pingroles-admin create <dungeon>` — create a fresh mentionable role
 //!   named `"<display name> Pings"` and bind it.
 
 use std::collections::HashSet;
@@ -38,17 +38,21 @@ const ROLE_MUTATION_ATTEMPTS: usize = 3;
 async fn autocomplete_dungeon<'a>(
     ctx: BotContext<'_>,
     partial: &'a str,
-) -> impl Iterator<Item = String> + 'a {
+) -> impl Iterator<Item = serenity::AutocompleteChoice> + 'a {
     let guild_id = match ctx.guild_id() {
         Some(id) => id.get() as i64,
         None => return Vec::new().into_iter(),
     };
+    let needle = partial.to_lowercase();
     db::dungeon::list_for_guild(&ctx.data().db, guild_id)
         .await
         .unwrap_or_default()
         .into_iter()
-        .filter(move |d| d.name.to_lowercase().contains(&partial.to_lowercase()))
-        .map(|d| d.name)
+        .filter(move |d| {
+            d.display_name.to_lowercase().contains(&needle)
+                || d.name.to_lowercase().contains(&needle)
+        })
+        .map(|d| serenity::AutocompleteChoice::new(d.display_name, d.name))
         .collect::<Vec<_>>()
         .into_iter()
 }
@@ -58,13 +62,21 @@ fn ephemeral(msg: impl Into<String>) -> CreateReply {
 }
 
 /// Manage dungeon notification-role subscriptions.
+#[poise::command(slash_command, guild_only, subcommands("me"), subcommand_required)]
+pub async fn pingroles(_ctx: BotContext<'_>) -> Result<(), BotError> {
+    Ok(())
+}
+
+/// Bind / unbind / create dungeon notification roles. Manage-Guild gated.
 #[poise::command(
     slash_command,
     guild_only,
-    subcommands("me", "set_", "unset", "create"),
-    subcommand_required
+    rename = "pingroles-admin",
+    subcommands("set_", "unset", "create"),
+    subcommand_required,
+    default_member_permissions = "MANAGE_GUILD"
 )]
-pub async fn pingroles(_ctx: BotContext<'_>) -> Result<(), BotError> {
+pub async fn pingroles_admin(_ctx: BotContext<'_>) -> Result<(), BotError> {
     Ok(())
 }
 
@@ -92,8 +104,8 @@ async fn self_service_picker(ctx: BotContext<'_>) -> Result<(), BotError> {
     if dungeons.is_empty() {
         ctx.send(ephemeral(
             "No dungeons have notification roles set up in this server yet. \
-             An admin can bind one with `/pingroles set <dungeon>` or create \
-             a fresh role with `/pingroles create <dungeon>`.",
+             An admin can bind one with `/pingroles-admin set <dungeon>` or \
+             create a fresh role with `/pingroles-admin create <dungeon>`.",
         ))
         .await?;
         return Ok(());

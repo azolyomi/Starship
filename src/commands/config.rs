@@ -47,7 +47,8 @@ fn ephemeral(msg: impl Into<String>) -> CreateReply {
         "superadmin",
         "superadmin_clear"
     ),
-    subcommand_required
+    subcommand_required,
+    default_member_permissions = "MANAGE_GUILD"
 )]
 pub async fn config(_ctx: BotContext<'_>) -> Result<(), BotError> {
     Ok(())

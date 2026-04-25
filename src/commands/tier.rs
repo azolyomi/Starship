@@ -28,18 +28,21 @@ async fn autocomplete_tier<'a>(
 async fn autocomplete_dungeon<'a>(
     ctx: BotContext<'_>,
     partial: &'a str,
-) -> impl Iterator<Item = String> + 'a {
+) -> impl Iterator<Item = serenity::AutocompleteChoice> + 'a {
     let guild_id = match ctx.guild_id() {
         Some(id) => id.get() as i64,
         None => return Vec::new().into_iter(),
     };
-    let dungeons = db::dungeon::list_for_guild(&ctx.data().db, guild_id)
+    let needle = partial.to_lowercase();
+    db::dungeon::list_for_guild(&ctx.data().db, guild_id)
         .await
-        .unwrap_or_default();
-    dungeons
+        .unwrap_or_default()
         .into_iter()
-        .filter(move |d| d.name.to_lowercase().contains(&partial.to_lowercase()))
-        .map(|d| d.name)
+        .filter(move |d| {
+            d.display_name.to_lowercase().contains(&needle)
+                || d.name.to_lowercase().contains(&needle)
+        })
+        .map(|d| serenity::AutocompleteChoice::new(d.display_name, d.name))
         .collect::<Vec<_>>()
         .into_iter()
 }
@@ -58,7 +61,8 @@ async fn autocomplete_dungeon<'a>(
         "add_dungeon",
         "remove_dungeon"
     ),
-    subcommand_required
+    subcommand_required,
+    default_member_permissions = "MANAGE_GUILD"
 )]
 pub async fn tier(_ctx: BotContext<'_>) -> Result<(), BotError> {
     Ok(())

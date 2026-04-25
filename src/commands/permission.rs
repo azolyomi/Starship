@@ -21,7 +21,8 @@ async fn autocomplete_action<'a>(
     slash_command,
     guild_only,
     subcommands("grant", "revoke", "list"),
-    subcommand_required
+    subcommand_required,
+    default_member_permissions = "MANAGE_GUILD"
 )]
 pub async fn permission(_ctx: BotContext<'_>) -> Result<(), BotError> {
     Ok(())

@@ -22,7 +22,10 @@ pub async fn list_for_guild(pool: &PgPool, guild_id: i64) -> Result<Vec<DungeonT
     Ok(rows)
 }
 
-/// Guild-specific template preferred; falls back to global.
+/// Guild-specific template preferred; falls back to global. Matches against
+/// the canonical slug (`name`) first, then the human-readable `display_name`
+/// case-insensitively — so users who pick an autocomplete suggestion (slug
+/// value) AND users who type "Oryx's Sanctuary" by hand both resolve.
 pub async fn get_by_name(
     pool: &PgPool,
     guild_id: i64,
@@ -34,8 +37,9 @@ pub async fn get_by_name(
                message_title, message_description, thumbnail_url, image_url,
                requires_vc, showcase_emoji, created_at
         FROM dungeon_templates
-        WHERE name = $1 AND (guild_id = $2 OR guild_id IS NULL)
-        ORDER BY guild_id NULLS LAST
+        WHERE (name = $1 OR LOWER(display_name) = LOWER($1))
+          AND (guild_id = $2 OR guild_id IS NULL)
+        ORDER BY (name = $1) DESC, guild_id NULLS LAST
         LIMIT 1
         "#,
     )
