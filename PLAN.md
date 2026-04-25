@@ -1435,6 +1435,65 @@ event carries enough structured context that JSON logs in production
 will be greppable by guild_id / run_id / hc_id without hunting for
 formatted strings.
 
+### 2026-04-24 — Production-grade audit Phase A complete (lint + format baseline)
+
+First chunk of the production-grade audit triggered by the CLAUDE.md
+update (new Rust quality rules). Goal of Phase A: get to a zero-warning
+baseline and pin the toolchain so CI in Phase E has something
+unambiguous to enforce.
+
+Landed:
+- `cargo fmt` sweep across 23 files (88 mechanical diffs, isolated to
+  its own commit `Phase A.1: cargo fmt sweep`).
+- All 12 `cargo build` warnings resolved:
+  - Real fix: `templates::default_reactions` signature changed from
+    `Option<&WikiEmoji>` to `bool`. The function never read the wiki
+    emoji bytes — keys render as the native `🔑`. The unused-binding
+    warning was the symptom of an over-broad parameter.
+  - Deleted as dead: `db::emoji::get_by_logical_name` (handlers use
+    `get_all_as_map`), `services::permission::require_str` (component
+    handlers use the more specialized `can_organize_from_interaction`).
+  - `#![allow(dead_code)]` at `db/models.rs` module level with an
+    anchoring comment: every field is required by `sqlx::FromRow` to
+    populate from `SELECT *`-style queries even when no caller reads
+    it. Trimming would force the SQL to drop the column and re-add
+    it on the first new caller.
+  - `#[allow(dead_code)]` on `services::permission::Action` enum with
+    a comment: variants are the authoritative permission registry that
+    `ALL_ACTIONS` and `db::permission::check` match against, even when
+    no command currently calls `require(Action::X, …)` directly.
+- All 10 unique `cargo clippy` warnings resolved (full list in commit
+  `Phase A.2`). Notable:
+  - Test module in `cli/sync_wiki.rs` moved to file bottom so
+    `discord_name`, `absolute_url`, `purge_all` come before it.
+  - Four `too_many_arguments` sites annotated with
+    `#[allow(clippy::too_many_arguments)]` and a comment deferring the
+    parameter-struct refactor to **Phase D**, where it sits naturally
+    next to the snowflake-newtype work. Refactoring now would churn
+    every caller for purely cosmetic reasons.
+- New tooling files:
+  - `rustfmt.toml` — `edition = "2021"`, `max_width = 100`.
+  - `rust-toolchain.toml` — pin to `1.95.0` with `rustfmt` + `clippy`
+    components, `profile = "minimal"`. First contributor checkout
+    (and Phase E's CI image) installs the same toolchain
+    automatically.
+- All four gates pass on the branch:
+  - `cargo fmt --check` — 0 diffs
+  - `cargo build` — 0 warnings
+  - `cargo clippy --all-targets -- -D warnings` — 0 warnings
+  - `cargo test` — 11 passed, 0 failed (no test changes; the cli test
+    module just moved file position).
+
+**Deferred to later phases (intentional, called out so they aren't
+forgotten):**
+- 49 `ctx.guild_id().unwrap().get() as i64` instances → **Phase B**
+  (single `guild_id_i64(ctx)` helper).
+- 9 `Selector::parse(...).unwrap()` in `cli/sync_wiki.rs` → **Phase B**
+  (`once_cell::sync::Lazy`).
+- DB-arg parameter structs for the four `#[allow(too_many_arguments)]`
+  sites → **Phase D**.
+- Doc coverage gap (~30% of public items documented) → **Phase E**.
+
 ### Credentials still needed from the user
 
 Collected into `.env` when we're ready to boot:

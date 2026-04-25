@@ -3,6 +3,10 @@ use sqlx::PgPool;
 
 use crate::db::models::Headcount;
 
+// Phase D will introduce a `NewHeadcount` parameter struct alongside the
+// snowflake-newtype migration; collapsing now would churn every caller for
+// purely cosmetic reasons.
+#[allow(clippy::too_many_arguments)]
 pub async fn create(
     pool: &PgPool,
     guild_id: i64,

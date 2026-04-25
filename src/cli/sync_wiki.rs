@@ -1066,6 +1066,83 @@ fn slug_from_display(name: &str) -> String {
         .join("_")
 }
 
+/// Convert a logical name to a Discord-safe emoji name (alphanumeric + underscore,
+/// max 32 chars, must start with alphanumeric).
+fn discord_name(logical: &str) -> String {
+    let safe: String = logical
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    // Discord names must be 2-32 chars and start with alphanumeric.
+    let trimmed = safe.trim_start_matches('_');
+    let s = if trimmed.is_empty() { "emoji" } else { trimmed };
+    s.chars().take(32).collect()
+}
+
+fn absolute_url(src: &str) -> String {
+    if src.starts_with("http") {
+        src.to_string()
+    } else if src.starts_with("//") {
+        format!("https:{}", src)
+    } else {
+        format!("{}{}", REALMEYE_BASE, src)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Purge: wipe every application emoji + every bot_emoji row.
+//
+// Used once after the apostrophe-slug fix so stale `oryx_s_*` names don't
+// linger on the Discord application. Interactive: prompts for Y/N before
+// touching anything. Never auto-invoked; gated behind --purge flag.
+// ---------------------------------------------------------------------------
+
+async fn purge_all(emoji_api: &ApplicationEmojiClient, pool: Option<&sqlx::PgPool>) -> Result<()> {
+    use std::io::Write;
+
+    let existing = emoji_api.list().await.unwrap_or_else(|e| {
+        warn!("could not list application emojis for purge: {e:#}");
+        HashMap::new()
+    });
+
+    print!(
+        "--purge will DELETE {} application emoji(s) and TRUNCATE bot_emoji. Proceed? [y/N] ",
+        existing.len()
+    );
+    std::io::stdout().flush().ok();
+    let mut answer = String::new();
+    std::io::stdin().read_line(&mut answer)?;
+    if !matches!(answer.trim().to_lowercase().as_str(), "y" | "yes") {
+        info!("purge aborted by user");
+        return Ok(());
+    }
+
+    info!("purging {} application emojis…", existing.len());
+    for (name, (id, _animated)) in &existing {
+        if let Err(e) = emoji_api.delete(*id).await {
+            warn!("failed to delete emoji {name} ({id}): {e:#}");
+        }
+        // 100ms between deletes — Discord's per-route bucket refills
+        // quickly enough that this keeps us well under rate limits without
+        // adding material runtime to the purge.
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+
+    if let Some(pool) = pool {
+        db::emoji::truncate(pool).await?;
+        info!("truncated bot_emoji");
+    }
+
+    info!("purge complete; continuing with fresh scrape");
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -1229,81 +1306,4 @@ mod tests {
         assert!(!kept.contains("EVENT_ROW_DROP"), "event leaked: {kept}");
         assert!(!kept.contains("OTHER_ROW_DROP"), "other leaked: {kept}");
     }
-}
-
-/// Convert a logical name to a Discord-safe emoji name (alphanumeric + underscore,
-/// max 32 chars, must start with alphanumeric).
-fn discord_name(logical: &str) -> String {
-    let safe: String = logical
-        .chars()
-        .map(|c| {
-            if c.is_alphanumeric() || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    // Discord names must be 2-32 chars and start with alphanumeric.
-    let trimmed = safe.trim_start_matches('_');
-    let s = if trimmed.is_empty() { "emoji" } else { trimmed };
-    s.chars().take(32).collect()
-}
-
-fn absolute_url(src: &str) -> String {
-    if src.starts_with("http") {
-        src.to_string()
-    } else if src.starts_with("//") {
-        format!("https:{}", src)
-    } else {
-        format!("{}{}", REALMEYE_BASE, src)
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Purge: wipe every application emoji + every bot_emoji row.
-//
-// Used once after the apostrophe-slug fix so stale `oryx_s_*` names don't
-// linger on the Discord application. Interactive: prompts for Y/N before
-// touching anything. Never auto-invoked; gated behind --purge flag.
-// ---------------------------------------------------------------------------
-
-async fn purge_all(emoji_api: &ApplicationEmojiClient, pool: Option<&sqlx::PgPool>) -> Result<()> {
-    use std::io::Write;
-
-    let existing = emoji_api.list().await.unwrap_or_else(|e| {
-        warn!("could not list application emojis for purge: {e:#}");
-        HashMap::new()
-    });
-
-    print!(
-        "--purge will DELETE {} application emoji(s) and TRUNCATE bot_emoji. Proceed? [y/N] ",
-        existing.len()
-    );
-    std::io::stdout().flush().ok();
-    let mut answer = String::new();
-    std::io::stdin().read_line(&mut answer)?;
-    if !matches!(answer.trim().to_lowercase().as_str(), "y" | "yes") {
-        info!("purge aborted by user");
-        return Ok(());
-    }
-
-    info!("purging {} application emojis…", existing.len());
-    for (name, (id, _animated)) in &existing {
-        if let Err(e) = emoji_api.delete(*id).await {
-            warn!("failed to delete emoji {name} ({id}): {e:#}");
-        }
-        // 100ms between deletes — Discord's per-route bucket refills
-        // quickly enough that this keeps us well under rate limits without
-        // adding material runtime to the purge.
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    }
-
-    if let Some(pool) = pool {
-        db::emoji::truncate(pool).await?;
-        info!("truncated bot_emoji");
-    }
-
-    info!("purge complete; continuing with fresh scrape");
-    Ok(())
 }

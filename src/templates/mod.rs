@@ -162,7 +162,7 @@ impl Effective {
     /// Reactions default to `interest` + `key` (if the dungeon has a key).
     fn from_dump(d: &WikiDungeon) -> Self {
         let showcase_emoji = d.drops.iter().map(|e| e.logical_name.clone()).collect();
-        let reactions = default_reactions(d.key.as_ref());
+        let reactions = default_reactions(d.key.is_some());
         Effective {
             name: d.name.clone(),
             display_name: d.display_name.clone(),
@@ -208,7 +208,12 @@ impl Effective {
     }
 }
 
-fn default_reactions(key: Option<&WikiEmoji>) -> Vec<OverrideReaction> {
+/// Build the default reaction set for a dungeon: always `interest` (Joining),
+/// plus a hardcoded `🔑 Key` row when `has_key` is true. We deliberately use
+/// the native unicode key emoji rather than the wiki's per-dungeon key
+/// sprite — keys are visually identical across dungeons in-game and the
+/// native emoji renders without needing the bot's emoji budget.
+fn default_reactions(has_key: bool) -> Vec<OverrideReaction> {
     let mut out = vec![OverrideReaction {
         name: "interest".into(),
         display_name: "Joining".into(),
@@ -217,7 +222,7 @@ fn default_reactions(key: Option<&WikiEmoji>) -> Vec<OverrideReaction> {
         requires_confirmation: false,
         sort_order: 0,
     }];
-    if let Some(k) = key {
+    if has_key {
         out.push(OverrideReaction {
             name: "key".into(),
             display_name: "Key".into(),

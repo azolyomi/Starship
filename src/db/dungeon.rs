@@ -118,6 +118,9 @@ pub async fn insert_guild_template(
 }
 
 /// Update a guild-specific template; returns false if the row doesn't belong to this guild.
+// Phase D will lift the patch fields into a dedicated `TemplatePatch` struct
+// alongside the snowflake-newtype migration.
+#[allow(clippy::too_many_arguments)]
 pub async fn update_guild_template(
     pool: &PgPool,
     guild_id: i64,
@@ -328,6 +331,8 @@ pub async fn list_notification_roles(
 }
 
 /// Upsert a reaction for a template (used by sync-wiki).
+// Phase D will introduce a `ReactionRow` parameter struct.
+#[allow(clippy::too_many_arguments)]
 pub async fn upsert_reaction(
     pool: &PgPool,
     template_id: i32,

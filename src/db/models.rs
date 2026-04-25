@@ -1,3 +1,14 @@
+//! sqlx-hydrated row structs that mirror tables 1:1.
+//!
+//! Every field is required by `sqlx::FromRow` to populate from the
+//! corresponding `SELECT *`-style query, even when no caller currently
+//! reads it. Trimming a struct field would force the SQL to drop the
+//! column and re-add it the moment a future caller needs it. Mirroring
+//! the schema here is the contract — `#[allow(dead_code)]` stays at the
+//! module level and individual structs are not re-annotated.
+
+#![allow(dead_code)]
+
 use chrono::{DateTime, Utc};
 
 #[derive(Debug, sqlx::FromRow)]

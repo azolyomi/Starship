@@ -14,6 +14,16 @@ fn is_global_superadmin(ctx: BotContext<'_>) -> bool {
     ctx.author().id.get() == GLOBAL_SUPERADMIN_USER_ID
 }
 
+/// Authoritative permission action set.
+///
+/// Mirrors `ALL_ACTIONS` below — that constant is what `/permission grant`
+/// autocompletes against and what `db::permission::check` matches. Every
+/// variant is part of the public permission contract even when no command
+/// calls `require(Action::X, …)` directly today (e.g. `ManageRuns` is
+/// checked via `can_organize`'s string path, `EndRun` is leader-gated
+/// rather than action-gated). Keep enum, `as_str`, and `ALL_ACTIONS` in
+/// lockstep.
+#[allow(dead_code)] // see doc comment — variants are the authoritative registry
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
     StartHeadcount,
@@ -144,53 +154,6 @@ pub async fn require(
     Ok(())
 }
 
-/// Same as `require` but takes a raw action string (for component handlers
-/// where the action is decoded from a custom_id at runtime).
-pub async fn require_str(
-    ctx: BotContext<'_>,
-    action: &str,
-    tier_id: Option<i32>,
-    dungeon_template_id: Option<i32>,
-) -> Result<()> {
-    if is_global_superadmin(ctx) {
-        return Ok(());
-    }
-
-    let guild_id = ctx
-        .guild_id()
-        .ok_or_else(|| anyhow::anyhow!("This command can only be used in a server."))?
-        .get() as i64;
-
-    let caller_id = ctx.author().id.get() as i64;
-
-    if let Some(guild) = db::guild::get(&ctx.data().db, guild_id).await? {
-        if guild.superadmin_user_id == Some(caller_id) {
-            return Ok(());
-        }
-    }
-
-    let role_ids: Vec<i64> = ctx
-        .author_member()
-        .await
-        .map(|m| m.roles.iter().map(|r| r.get() as i64).collect())
-        .unwrap_or_default();
-
-    let allowed = db::permission::check(
-        &ctx.data().db,
-        guild_id,
-        &role_ids,
-        action,
-        tier_id,
-        dungeon_template_id,
-    )
-    .await?;
-
-    if !allowed {
-        bail!("You don't have permission to perform `{action}`.");
-    }
-    Ok(())
-}
-
 /// All valid action names, for use in autocomplete and validation.
 pub const ALL_ACTIONS: &[&str] = &[
     "StartHeadcount",
@@ -216,7 +179,7 @@ pub fn is_valid_action(s: &str) -> bool {
 // These take raw `(pool, caller_id, role_ids, ...)` because component /
 // modal handlers don't have a `BotContext` — they run off `serenity::Context`
 // + the `BotData`. Mirrors the superadmin / Discord-admin bypass chain from
-// `require` / `require_str` so the gating rules stay uniform.
+// `require` so the gating rules stay uniform.
 // ---------------------------------------------------------------------------
 
 /// Organizer gate for run / headcount lifecycle buttons (Start, Cancel, End,
@@ -228,6 +191,10 @@ pub fn is_valid_action(s: &str) -> bool {
 ///   4. caller IS the raid leader
 ///   5. caller has the `ManageRuns` action granted, scoped to this
 ///      (tier, dungeon) or broader
+// Each parameter is genuinely orthogonal — caller identity, caller's
+// Discord-side permissions, the leader, and the scope tuple. Naming wins
+// over a struct here; keeping the explicit signature.
+#[allow(clippy::too_many_arguments)]
 pub async fn can_organize(
     pool: &PgPool,
     guild_id: i64,

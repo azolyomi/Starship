@@ -12,7 +12,7 @@ use crate::embeds::build_loot_fields_all;
 /// has uploaded the custom set. Logical names are ASCII [a-z0-9_]+; anything
 /// with a non-ASCII char is treated as a Unicode literal.
 fn is_unicode_literal(s: &str) -> bool {
-    !s.is_empty() && s.chars().any(|c| !c.is_ascii())
+    !s.is_empty() && !s.is_ascii()
 }
 
 /// Returns a `<:name:id>` / `<a:name:id>` string for use in embed text fields.

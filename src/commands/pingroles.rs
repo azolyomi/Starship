@@ -140,9 +140,7 @@ async fn self_service_picker(ctx: BotContext<'_>) -> Result<(), BotError> {
                 respond_refresh(&ctx, &mci, &dungeons, &desired, page, num_pages).await?;
             }
             "pingroles:prev" => {
-                if page > 0 {
-                    page -= 1;
-                }
+                page = page.saturating_sub(1);
                 respond_refresh(&ctx, &mci, &dungeons, &desired, page, num_pages).await?;
             }
             "pingroles:next" => {

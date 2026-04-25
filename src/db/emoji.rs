@@ -59,20 +59,6 @@ pub async fn upsert(
     Ok(())
 }
 
-pub async fn get_by_logical_name(pool: &PgPool, name: &str) -> Result<Option<BotEmoji>> {
-    let row = sqlx::query_as::<_, BotEmoji>(
-        r#"
-        SELECT id, logical_name, discord_emoji_id, name_on_discord, animated,
-               source_guild_id, category, realmeye_url, uploaded_at, bag_tier
-        FROM bot_emoji WHERE logical_name = $1
-        "#,
-    )
-    .bind(name)
-    .fetch_optional(pool)
-    .await?;
-    Ok(row)
-}
-
 pub async fn get_all_as_map(pool: &PgPool) -> Result<HashMap<String, BotEmoji>> {
     let all = get_all(pool).await?;
     Ok(all
@@ -138,7 +124,7 @@ impl ApplicationEmojiClient {
     pub async fn list(&self) -> Result<HashMap<String, (u64, bool)>> {
         let resp = self
             .client
-            .get(&self.base_url())
+            .get(self.base_url())
             .header("Authorization", self.auth())
             .send()
             .await
@@ -177,7 +163,7 @@ impl ApplicationEmojiClient {
 
         let resp = self
             .client
-            .post(&self.base_url())
+            .post(self.base_url())
             .header("Authorization", self.auth())
             .header("Content-Type", "application/json")
             .json(&body)

@@ -207,21 +207,22 @@ async fn handle_start(
 
     // Open the start-run modal so the leader can confirm / edit location and
     // party before the run message goes out.
-    let mut rows = Vec::new();
-    rows.push(CreateActionRow::InputText(
-        CreateInputText::new(InputTextStyle::Short, "Location", "location")
-            .placeholder("e.g. USW3 realm, nexus 5 o'clock")
-            .value(hc.location.clone().unwrap_or_default())
-            .required(false)
-            .max_length(200),
-    ));
-    rows.push(CreateActionRow::InputText(
-        CreateInputText::new(InputTextStyle::Paragraph, "Party", "party")
-            .placeholder("Free-form: classes, roles, pairings…")
-            .value(hc.party.clone().unwrap_or_default())
-            .required(false)
-            .max_length(1000),
-    ));
+    let rows = vec![
+        CreateActionRow::InputText(
+            CreateInputText::new(InputTextStyle::Short, "Location", "location")
+                .placeholder("e.g. USW3 realm, nexus 5 o'clock")
+                .value(hc.location.clone().unwrap_or_default())
+                .required(false)
+                .max_length(200),
+        ),
+        CreateActionRow::InputText(
+            CreateInputText::new(InputTextStyle::Paragraph, "Party", "party")
+                .placeholder("Free-form: classes, roles, pairings…")
+                .value(hc.party.clone().unwrap_or_default())
+                .required(false)
+                .max_length(1000),
+        ),
+    ];
     let modal = CreateModal::new(format!("hc:{hc_id}:confirmstart"), "Start run").components(rows);
     mci.create_response(ctx, CreateInteractionResponse::Modal(modal))
         .await?;

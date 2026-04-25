@@ -74,7 +74,7 @@ fn build_loot_fields_from(
     }
 
     let mut sorted: Vec<&BagTier> = bag_tiers.iter().collect();
-    sorted.sort_by(|a, b| b.sort_order.cmp(&a.sort_order));
+    sorted.sort_by_key(|t| std::cmp::Reverse(t.sort_order));
 
     let mut fields = Vec::new();
     for tier in sorted {
