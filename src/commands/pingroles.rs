@@ -22,7 +22,7 @@ use serenity::{
 
 use crate::db::models::DungeonTemplate;
 use crate::{
-    db,
+    db, guild_id_i64, require_guild_id,
     services::permission::{self as perm_svc, Action},
     BotContext, BotError,
 };
@@ -70,7 +70,7 @@ pub async fn pingroles(ctx: BotContext<'_>) -> Result<(), BotError> {
 // ---------------------------------------------------------------------------
 
 async fn self_service_picker(ctx: BotContext<'_>) -> Result<(), BotError> {
-    let guild_id = ctx.guild_id().unwrap().get() as i64;
+    let guild_id = guild_id_i64(ctx);
     let pool = &ctx.data().db;
 
     let bindings = db::dungeon::list_notification_roles(pool, guild_id).await?;
@@ -293,7 +293,7 @@ async fn apply_subscription_diff(
     desired: &HashSet<i32>,
 ) -> Result<String, BotError> {
     let http = ctx.http();
-    let guild_id = ctx.guild_id().unwrap();
+    let guild_id = require_guild_id(ctx);
     let user_id = ctx.author().id;
     let bindings =
         db::dungeon::list_notification_roles(&ctx.data().db, guild_id.get() as i64).await?;
@@ -409,7 +409,7 @@ pub async fn set_(
 ) -> Result<(), BotError> {
     perm_svc::require(ctx, Action::ConfigureGuild, None, None).await?;
 
-    let guild_id = ctx.guild_id().unwrap().get() as i64;
+    let guild_id = guild_id_i64(ctx);
     let pool = &ctx.data().db;
 
     let Some(template) = db::dungeon::get_by_name(pool, guild_id, &dungeon).await? else {
@@ -439,7 +439,7 @@ pub async fn unset(
 ) -> Result<(), BotError> {
     perm_svc::require(ctx, Action::ConfigureGuild, None, None).await?;
 
-    let guild_id = ctx.guild_id().unwrap().get() as i64;
+    let guild_id = guild_id_i64(ctx);
     let pool = &ctx.data().db;
 
     let Some(template) = db::dungeon::get_by_name(pool, guild_id, &dungeon).await? else {
@@ -468,7 +468,7 @@ pub async fn create(
 ) -> Result<(), BotError> {
     perm_svc::require(ctx, Action::ConfigureGuild, None, None).await?;
 
-    let guild_id_struct = ctx.guild_id().unwrap();
+    let guild_id_struct = require_guild_id(ctx);
     let guild_id = guild_id_struct.get() as i64;
     let pool = &ctx.data().db;
     let http = ctx.http();

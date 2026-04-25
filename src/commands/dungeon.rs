@@ -1,7 +1,7 @@
 use poise::serenity_prelude as serenity;
 
 use crate::db::dungeon as db;
-use crate::{BotContext, BotError};
+use crate::{guild_id_i64, BotContext, BotError};
 
 /// Manage dungeon templates for this server.
 #[poise::command(
@@ -19,7 +19,7 @@ pub async fn list(
     ctx: BotContext<'_>,
     #[description = "Show only global built-in templates"] global_only: Option<bool>,
 ) -> Result<(), BotError> {
-    let guild_id = ctx.guild_id().unwrap().get() as i64;
+    let guild_id = guild_id_i64(ctx);
     let pool = &ctx.data().db;
 
     let templates = if global_only.unwrap_or(false) {
@@ -79,7 +79,7 @@ pub async fn create(
     #[description = "Headcount embed description"] description: Option<String>,
     #[description = "Whether this is a voice-channel raid"] requires_vc: Option<bool>,
 ) -> Result<(), BotError> {
-    let guild_id = ctx.guild_id().unwrap().get() as i64;
+    let guild_id = guild_id_i64(ctx);
     let pool = &ctx.data().db;
 
     // Basic name validation: lowercase alphanumeric + underscore only.
@@ -146,7 +146,7 @@ pub async fn edit(
     #[description = "New headcount description"] description: Option<String>,
     #[description = "Change VC raid requirement"] requires_vc: Option<bool>,
 ) -> Result<(), BotError> {
-    let guild_id = ctx.guild_id().unwrap().get() as i64;
+    let guild_id = guild_id_i64(ctx);
     let pool = &ctx.data().db;
 
     let color_int = match color.as_deref() {
@@ -196,7 +196,7 @@ pub async fn delete(
     ctx: BotContext<'_>,
     #[description = "Internal name of the template to delete"] name: String,
 ) -> Result<(), BotError> {
-    let guild_id = ctx.guild_id().unwrap().get() as i64;
+    let guild_id = guild_id_i64(ctx);
     let pool = &ctx.data().db;
 
     let deleted = db::delete_guild_template(pool, guild_id, &name).await?;

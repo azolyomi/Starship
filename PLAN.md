@@ -1494,6 +1494,70 @@ forgotten):**
   sites → **Phase D**.
 - Doc coverage gap (~30% of public items documented) → **Phase E**.
 
+### 2026-04-24 — Production-grade audit Phase B complete (zero `.unwrap()` in src/)
+
+Second chunk of the production-grade audit. Goal: eliminate every
+`.unwrap()` call from `src/` so the only remaining "unrecoverable"
+surface is `expect()` calls each carrying a self-documenting invariant
+message. Per CLAUDE.md: "**NEVER** use `.unwrap()` in production code
+paths; use `.expect()` only for invariant violations with a descriptive
+message."
+
+Landed:
+- `src/main.rs` — two new helpers next to the `BotContext` type:
+  - `pub fn require_guild_id(ctx) -> serenity::GuildId`
+  - `pub fn guild_id_i64(ctx) -> i64`
+  Both `.expect()` the `guild_id()` result with the invariant message
+  "BotContext::guild_id() in a guild_only command". All slash commands
+  that touch DB rows are declared `#[poise::command(... guild_only)]`,
+  so reaching these from a DM is an upstream attribute bug (verified by
+  audit — every relevant command has `guild_only`).
+- 36 sites swept — every `let guild_id = ctx.guild_id().unwrap().get()
+  as i64;` collapsed to `let guild_id = guild_id_i64(ctx);`, every
+  bare `let guild_id = ctx.guild_id().unwrap();` to
+  `let guild_id = require_guild_id(ctx);`. Touched files:
+  `services/raid.rs`, `commands/{config,dungeon,headcount,permission,
+  pingroles,setup,tier}.rs`. Two `let guild_id_struct = …; let guild_id
+  = guild_id_struct.get() as i64;` two-line shapes collapsed where the
+  struct form was unused (`commands/setup.rs::do_quick_setup`).
+- `src/cli/sync_wiki.rs` — selector handling rewritten:
+  - 9 `Selector::parse(...).unwrap()` calls in three hot loops replaced
+    with 9 module-level `static ... : Lazy<Selector>` declarations,
+    parsed once on first use. Three previously-inline literals
+    (`"img"`, `"table tr"`, the `td:first-child a[href^="/wiki/"]`
+    drop-row anchor) lifted to named statics
+    (`SEL_ANY_IMG`, `SEL_ANY_TABLE_ROW`, `SEL_DROP_ROW_ANCHOR`).
+  - The pre-existing `const SEL_*: &str` strings disappear — the
+    `Lazy<Selector>` form holds the literal directly with the same
+    doc comments.
+  - `expect("static selector")` is the panic message; if a literal
+    becomes invalid CSS that's a static bug a contributor will hit on
+    the very next `cargo test` run.
+  - Local `let row_sel = …` rebindings deleted at every call site;
+    `doc.select(&SEL_*)` works directly via deref coercion.
+- 3 stragglers cleaned up:
+  - `commands/headcount.rs:90` — `tiers.into_iter().next().unwrap()`
+    after `tiers.len() == 1` check became
+    `.expect("len() == 1 just verified")`.
+  - `commands/setup.rs::superadmin_view` and
+    `commands/setup.rs::channel_section_view` — both did
+    `db::guild::get(&pool, guild_id).await?.unwrap()`; replaced with
+    `.expect("guild row upserted by setup() entry, exists for the
+    wizard's lifetime")`. The `setup()` entrypoint upserts and verifies
+    the row before any subview can be reached.
+
+**Net unwrap count:** 50 → 0. Confirmed by
+`grep -rn "\.unwrap()" src/` returning empty.
+
+All four gates pass on `main`:
+- `cargo fmt --check` — 0 diffs
+- `cargo build` — 0 warnings
+- `cargo clippy --all-targets -- -D warnings` — 0 warnings
+- `cargo test` — 11 passed, 0 failed
+
+Phase D (snowflake newtypes / DB-arg parameter structs) and Phase E
+(doc coverage + CI image) remain on the deferred list from Phase A.
+
 ### Credentials still needed from the user
 
 Collected into `.env` when we're ready to boot:

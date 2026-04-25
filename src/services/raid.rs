@@ -5,7 +5,7 @@ use sqlx::PgPool;
 use crate::db::models::{DungeonTemplate, Run, Tier};
 use crate::embeds::headcount::emoji_rt;
 use crate::services::{reactions, voice};
-use crate::{db, embeds, BotContext};
+use crate::{db, embeds, guild_id_i64, BotContext};
 
 /// Post a headcount embed to the tier's runs channel, create the DB row,
 /// and attach native reactions for each required item. R4: no more
@@ -33,7 +33,7 @@ pub async fn start_headcount(
 ) -> Result<()> {
     let pool = &ctx.data().db;
     let serenity_ctx = ctx.serenity_context();
-    let guild_id = ctx.guild_id().unwrap().get() as i64;
+    let guild_id = guild_id_i64(ctx);
     let leader_id = ctx.author().id.get() as i64;
 
     let hc = db::headcount::create(

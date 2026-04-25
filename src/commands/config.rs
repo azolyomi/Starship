@@ -1,7 +1,7 @@
 use poise::CreateReply;
 
 use crate::{
-    db,
+    db, guild_id_i64,
     services::permission::{self as perm_svc, Action},
     BotContext, BotError,
 };
@@ -49,7 +49,7 @@ pub async fn threshold(
 ) -> Result<(), BotError> {
     perm_svc::require(ctx, Action::ConfigureGuild, None, None).await?;
 
-    let guild_id = ctx.guild_id().unwrap().get() as i64;
+    let guild_id = guild_id_i64(ctx);
     let pool = &ctx.data().db;
 
     let bag_tiers = db::loot::list_bag_tiers(pool).await?;

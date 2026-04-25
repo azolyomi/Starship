@@ -21,6 +21,27 @@ pub struct BotData {
 pub type BotError = Box<dyn std::error::Error + Send + Sync>;
 pub type BotContext<'a> = poise::Context<'a, BotData, BotError>;
 
+/// Extract the current command's guild as a serenity [`GuildId`].
+///
+/// All command handlers calling this go through poise's `guild_only`
+/// gate, so `ctx.guild_id()` is `Some` by construction. A `None` here
+/// would be an upstream bug (a command attribute missing `guild_only`),
+/// not a runtime condition the caller can recover from — hence
+/// `.expect()` per the project rule on invariant violations.
+pub fn require_guild_id(ctx: BotContext<'_>) -> serenity::GuildId {
+    ctx.guild_id()
+        .expect("BotContext::guild_id() in a guild_only command")
+}
+
+/// Same as [`require_guild_id`] but pre-cast to `i64` for DB use.
+///
+/// `as i64` is safe for every Discord snowflake we'll ever see (timestamps
+/// since 2015 epoch fit well under 2^63). Centralized here so a Phase D
+/// snowflake-newtype refactor only has to replace one cast.
+pub fn guild_id_i64(ctx: BotContext<'_>) -> i64 {
+    require_guild_id(ctx).get() as i64
+}
+
 #[derive(Parser)]
 #[command(name = "starship", about = "RotMG raid bot")]
 struct Cli {

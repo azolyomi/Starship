@@ -1,7 +1,7 @@
 use poise::serenity_prelude as serenity;
 
 use crate::{
-    db,
+    db, guild_id_i64,
     services::permission::{self as perm_svc, Action, ALL_ACTIONS},
     BotContext, BotError,
 };
@@ -40,7 +40,7 @@ pub async fn grant(
 ) -> Result<(), BotError> {
     perm_svc::require(ctx, Action::ManagePermissions, None, None).await?;
 
-    let guild_id = ctx.guild_id().unwrap().get() as i64;
+    let guild_id = guild_id_i64(ctx);
     let pool = &ctx.data().db;
 
     if !perm_svc::is_valid_action(&action) {
@@ -117,7 +117,7 @@ pub async fn revoke(
 ) -> Result<(), BotError> {
     perm_svc::require(ctx, Action::ManagePermissions, None, None).await?;
 
-    let guild_id = ctx.guild_id().unwrap().get() as i64;
+    let guild_id = guild_id_i64(ctx);
     let pool = &ctx.data().db;
 
     if !perm_svc::is_valid_action(&action) {
@@ -172,7 +172,7 @@ pub async fn revoke(
 pub async fn list(ctx: BotContext<'_>) -> Result<(), BotError> {
     perm_svc::require(ctx, Action::ManagePermissions, None, None).await?;
 
-    let guild_id = ctx.guild_id().unwrap().get() as i64;
+    let guild_id = guild_id_i64(ctx);
     let rows = db::permission::list_for_guild(&ctx.data().db, guild_id).await?;
 
     if rows.is_empty() {

@@ -12,7 +12,7 @@ use serenity::{
 };
 
 use crate::db::models::Tier;
-use crate::{db, services::permission, BotContext, BotError};
+use crate::{db, guild_id_i64, require_guild_id, services::permission, BotContext, BotError};
 
 /// How long to wait for a click before the wizard expires.
 const WIZARD_TIMEOUT: Duration = Duration::from_secs(600);
@@ -26,7 +26,7 @@ const WIZARD_TIMEOUT: Duration = Duration::from_secs(600);
 pub async fn setup(ctx: BotContext<'_>) -> Result<(), BotError> {
     permission::require_discord_admin(ctx).await?;
 
-    let guild_id = ctx.guild_id().unwrap().get() as i64;
+    let guild_id = guild_id_i64(ctx);
 
     // Make sure the guild row exists before any downstream FK target is needed.
     db::guild::upsert(&ctx.data().db, guild_id).await?;
@@ -100,7 +100,7 @@ async fn run_dashboard_loop(
     handle: &ReplyHandle<'_>,
     msg_id: MessageId,
 ) -> Result<(), BotError> {
-    let guild_id = ctx.guild_id().unwrap().get() as i64;
+    let guild_id = guild_id_i64(ctx);
 
     loop {
         let Some(mci) = await_next(ctx, msg_id).await else {
@@ -237,8 +237,7 @@ async fn quick_setup(ctx: BotContext<'_>, trigger: &ComponentInteraction) -> Res
 }
 
 async fn do_quick_setup(ctx: BotContext<'_>) -> Result<()> {
-    let guild_id_struct = ctx.guild_id().unwrap();
-    let guild_id = guild_id_struct.get() as i64;
+    let guild_id = guild_id_i64(ctx);
     let pool = &ctx.data().db;
     let user_id = ctx.author().id.get() as i64;
 
@@ -302,7 +301,7 @@ async fn find_or_create_log_channel(ctx: BotContext<'_>) -> Result<ChannelId> {
     const FANCY: &str = "🚀starship-log";
     const PLAIN: &str = "starship-log";
 
-    let guild_id = ctx.guild_id().unwrap();
+    let guild_id = require_guild_id(ctx);
     let http = ctx.http();
     let existing = guild_id.channels(http).await?;
 
@@ -333,7 +332,7 @@ async fn find_or_create_log_channel(ctx: BotContext<'_>) -> Result<ChannelId> {
 /// Find-or-create a "Raid Leader" role. The role itself has no Discord
 /// permissions — Starship's permission checks happen in-bot. Idempotent.
 async fn find_or_create_raid_leader_role(ctx: BotContext<'_>) -> Result<RoleId> {
-    let guild_id = ctx.guild_id().unwrap();
+    let guild_id = require_guild_id(ctx);
     let http = ctx.http();
 
     let roles = guild_id.roles(http).await?;
@@ -362,7 +361,7 @@ async fn find_or_create_raid_leader_role(ctx: BotContext<'_>) -> Result<RoleId> 
 // ---------------------------------------------------------------------------
 
 async fn dashboard_view(ctx: BotContext<'_>) -> Result<(CreateEmbed, Vec<CreateActionRow>)> {
-    let guild_id = ctx.guild_id().unwrap().get() as i64;
+    let guild_id = guild_id_i64(ctx);
     let guild = db::guild::get(&ctx.data().db, guild_id)
         .await?
         .expect("guild row upserted in `setup`");
@@ -482,7 +481,7 @@ async fn dashboard_view(ctx: BotContext<'_>) -> Result<(CreateEmbed, Vec<CreateA
 /// Shown once the wizard is complete. No components — just a friendly
 /// landing card with next steps.
 async fn summary_view(ctx: BotContext<'_>) -> Result<CreateEmbed> {
-    let guild_id = ctx.guild_id().unwrap().get() as i64;
+    let guild_id = guild_id_i64(ctx);
     let tiers = db::tier::list(&ctx.data().db, guild_id).await?;
     let first = tiers
         .first()
@@ -539,7 +538,7 @@ async fn section_first_tier(
     ctx: BotContext<'_>,
     trigger: &ComponentInteraction,
 ) -> Result<(), BotError> {
-    let guild_id = ctx.guild_id().unwrap().get() as i64;
+    let guild_id = guild_id_i64(ctx);
     let pool = &ctx.data().db;
 
     let tiers = db::tier::list(pool, guild_id).await?;
@@ -793,7 +792,7 @@ async fn section_superadmin(
     ctx: BotContext<'_>,
     trigger: &ComponentInteraction,
 ) -> Result<(), BotError> {
-    let guild_id = ctx.guild_id().unwrap().get() as i64;
+    let guild_id = guild_id_i64(ctx);
     let (embed, components) = superadmin_view(ctx).await?;
     respond_with_view(ctx, trigger, embed, components).await?;
 
@@ -835,8 +834,10 @@ async fn section_superadmin(
 }
 
 async fn superadmin_view(ctx: BotContext<'_>) -> Result<(CreateEmbed, Vec<CreateActionRow>)> {
-    let guild_id = ctx.guild_id().unwrap().get() as i64;
-    let guild = db::guild::get(&ctx.data().db, guild_id).await?.unwrap();
+    let guild_id = guild_id_i64(ctx);
+    let guild = db::guild::get(&ctx.data().db, guild_id)
+        .await?
+        .expect("guild row upserted by setup() entry, exists for the wizard's lifetime");
 
     let current = guild
         .superadmin_user_id
@@ -894,7 +895,7 @@ async fn section_log_channel(
     ctx: BotContext<'_>,
     trigger: &ComponentInteraction,
 ) -> Result<(), BotError> {
-    let guild_id = ctx.guild_id().unwrap().get() as i64;
+    let guild_id = guild_id_i64(ctx);
     let (embed, components) = channel_section_view(
         ctx,
         "📜 Audit log channel",
@@ -950,8 +951,10 @@ async fn channel_section_view(
     clear_id: &str,
     back_id: &str,
 ) -> Result<(CreateEmbed, Vec<CreateActionRow>)> {
-    let guild_id = ctx.guild_id().unwrap().get() as i64;
-    let guild = db::guild::get(&ctx.data().db, guild_id).await?.unwrap();
+    let guild_id = guild_id_i64(ctx);
+    let guild = db::guild::get(&ctx.data().db, guild_id)
+        .await?
+        .expect("guild row upserted by setup() entry, exists for the wizard's lifetime");
     let current_id = field(&guild);
 
     let current_display = current_id
@@ -1050,7 +1053,7 @@ async fn back_to_dashboard(
 /// duplicating. R3 collapsed the old headcount/raid split to a single
 /// channel: both headcounts and runs post here.
 async fn create_default_channels(ctx: BotContext<'_>, tier_name: &str) -> Result<ChannelId> {
-    let guild_id = ctx.guild_id().unwrap();
+    let guild_id = require_guild_id(ctx);
     let http = ctx.http();
 
     let slug = slugify(tier_name);

@@ -1,7 +1,7 @@
 use poise::CreateReply;
 
 use crate::{
-    db,
+    db, guild_id_i64,
     services::permission::Action,
     services::{permission as perm_svc, raid},
     BotContext, BotError,
@@ -62,7 +62,7 @@ pub async fn headcount(
         String,
     >,
 ) -> Result<(), BotError> {
-    let guild_id = ctx.guild_id().unwrap().get() as i64;
+    let guild_id = guild_id_i64(ctx);
     let pool = &ctx.data().db;
 
     // Resolve dungeon template.
@@ -87,7 +87,7 @@ pub async fn headcount(
         },
         None => {
             if tiers.len() == 1 {
-                tiers.into_iter().next().unwrap()
+                tiers.into_iter().next().expect("len() == 1 just verified")
             } else if tiers.is_empty() {
                 ctx.send(ephemeral("No tiers configured — run `/setup` first."))
                     .await?;

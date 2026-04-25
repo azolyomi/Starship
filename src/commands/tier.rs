@@ -1,7 +1,7 @@
 use poise::serenity_prelude as serenity;
 
 use crate::{
-    db,
+    db, guild_id_i64,
     services::permission::{self as perm_svc, Action},
     BotContext, BotError,
 };
@@ -73,7 +73,7 @@ pub async fn create(
 ) -> Result<(), BotError> {
     perm_svc::require(ctx, Action::ManageTiers, None, None).await?;
 
-    let guild_id = ctx.guild_id().unwrap().get() as i64;
+    let guild_id = guild_id_i64(ctx);
 
     match db::tier::create(&ctx.data().db, guild_id, &name, description.as_deref()).await {
         Ok(tier) => {
@@ -102,7 +102,7 @@ pub async fn delete(
 ) -> Result<(), BotError> {
     perm_svc::require(ctx, Action::ManageTiers, None, None).await?;
 
-    let guild_id = ctx.guild_id().unwrap().get() as i64;
+    let guild_id = guild_id_i64(ctx);
     let pool = &ctx.data().db;
 
     match db::tier::get_by_name(pool, guild_id, &name).await? {
@@ -123,7 +123,7 @@ pub async fn delete(
 pub async fn list(ctx: BotContext<'_>) -> Result<(), BotError> {
     perm_svc::require(ctx, Action::ManageTiers, None, None).await?;
 
-    let guild_id = ctx.guild_id().unwrap().get() as i64;
+    let guild_id = guild_id_i64(ctx);
     let tiers = db::tier::list(&ctx.data().db, guild_id).await?;
 
     if tiers.is_empty() {
@@ -165,7 +165,7 @@ pub async fn edit(
 ) -> Result<(), BotError> {
     perm_svc::require(ctx, Action::ManageTiers, None, None).await?;
 
-    let guild_id = ctx.guild_id().unwrap().get() as i64;
+    let guild_id = guild_id_i64(ctx);
     let pool = &ctx.data().db;
 
     let tier = match db::tier::get_by_name(pool, guild_id, &name).await? {
@@ -215,7 +215,7 @@ pub async fn add_role(
 ) -> Result<(), BotError> {
     perm_svc::require(ctx, Action::ManageTiers, None, None).await?;
 
-    let guild_id = ctx.guild_id().unwrap().get() as i64;
+    let guild_id = guild_id_i64(ctx);
     let pool = &ctx.data().db;
 
     let t = match db::tier::get_by_name(pool, guild_id, &tier).await? {
@@ -252,7 +252,7 @@ pub async fn remove_role(
 ) -> Result<(), BotError> {
     perm_svc::require(ctx, Action::ManageTiers, None, None).await?;
 
-    let guild_id = ctx.guild_id().unwrap().get() as i64;
+    let guild_id = guild_id_i64(ctx);
     let pool = &ctx.data().db;
 
     let t = match db::tier::get_by_name(pool, guild_id, &tier).await? {
@@ -287,7 +287,7 @@ pub async fn add_dungeon(
 ) -> Result<(), BotError> {
     perm_svc::require(ctx, Action::ManageTiers, None, None).await?;
 
-    let guild_id = ctx.guild_id().unwrap().get() as i64;
+    let guild_id = guild_id_i64(ctx);
     let pool = &ctx.data().db;
 
     let t = match db::tier::get_by_name(pool, guild_id, &tier).await? {
@@ -333,7 +333,7 @@ pub async fn remove_dungeon(
 ) -> Result<(), BotError> {
     perm_svc::require(ctx, Action::ManageTiers, None, None).await?;
 
-    let guild_id = ctx.guild_id().unwrap().get() as i64;
+    let guild_id = guild_id_i64(ctx);
     let pool = &ctx.data().db;
 
     let t = match db::tier::get_by_name(pool, guild_id, &tier).await? {

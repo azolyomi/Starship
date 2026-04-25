@@ -10,6 +10,7 @@ use std::collections::{HashMap, HashSet};
 
 use anyhow::{Context, Result};
 use image::imageops::FilterType;
+use once_cell::sync::Lazy;
 use reqwest::Client;
 use scraper::{Html, Selector};
 use tracing::{info, warn};
@@ -37,19 +38,38 @@ use crate::templates::{WikiDump, WikiDungeon, WikiEmoji};
 // list one item per row (col 0 = item img, col 1 = source enemies).
 // ---------------------------------------------------------------------------
 
+// Selectors are parsed once at first use. The `expect` calls fire only if
+// a hand-written literal here is invalid CSS — i.e. a static bug, not a
+// runtime condition. Lifting them out of hot loops saves repeated parsing
+// (`Selector::parse` walks a state machine on every call).
+
 /// Rows in any dungeon index table.
-const SEL_INDEX_ROWS: &str = "table.table-striped tr";
+static SEL_INDEX_ROWS: Lazy<Selector> =
+    Lazy::new(|| Selector::parse("table.table-striped tr").expect("static selector"));
 /// Name link (dungeon anchor) in a dungeon row — first cell.
-const SEL_DUNGEON_NAME_CELL: &str = "td:first-child a";
+static SEL_DUNGEON_NAME_CELL: Lazy<Selector> =
+    Lazy::new(|| Selector::parse("td:first-child a").expect("static selector"));
 /// Portal image — second cell.
-const SEL_PORTAL_IMG: &str = "td:nth-child(2) img";
+static SEL_PORTAL_IMG: Lazy<Selector> =
+    Lazy::new(|| Selector::parse("td:nth-child(2) img").expect("static selector"));
 /// Key image — third cell (may be absent).
-const SEL_KEY_IMG: &str = "td:nth-child(3) img";
+static SEL_KEY_IMG: Lazy<Selector> =
+    Lazy::new(|| Selector::parse("td:nth-child(3) img").expect("static selector"));
 
 /// Rows in the "Drops of Interest" table on a dungeon page.
-const SEL_DROP_ROWS: &str = "table.table-striped tr";
+static SEL_DROP_ROWS: Lazy<Selector> =
+    Lazy::new(|| Selector::parse("table.table-striped tr").expect("static selector"));
 /// Drop item image — first cell of a drop row.
-const SEL_DROP_IMG: &str = "td:first-child img";
+static SEL_DROP_IMG: Lazy<Selector> =
+    Lazy::new(|| Selector::parse("td:first-child img").expect("static selector"));
+/// Internal-wiki anchor in the first cell of a drop row.
+static SEL_DROP_ROW_ANCHOR: Lazy<Selector> =
+    Lazy::new(|| Selector::parse(r#"td:first-child a[href^="/wiki/"]"#).expect("static selector"));
+/// Any `<img>` (used inside an anchor or any table row).
+static SEL_ANY_IMG: Lazy<Selector> = Lazy::new(|| Selector::parse("img").expect("static selector"));
+/// Any table row (used by the bag-tier sweep).
+static SEL_ANY_TABLE_ROW: Lazy<Selector> =
+    Lazy::new(|| Selector::parse("table tr").expect("static selector"));
 
 const REALMEYE_BASE: &str = "https://www.realmeye.com";
 const DUNGEONS_PATH: &str = "/wiki/dungeons";
@@ -616,19 +636,15 @@ async fn scrape_dungeon_list(client: &Client) -> Result<Vec<DungeonEntry>> {
     let section_html = keep_dungeon_sections(&html);
 
     let doc = Html::parse_fragment(&section_html);
-    let row_sel = Selector::parse(SEL_INDEX_ROWS).unwrap();
-    let name_sel = Selector::parse(SEL_DUNGEON_NAME_CELL).unwrap();
-    let portal_sel = Selector::parse(SEL_PORTAL_IMG).unwrap();
-    let key_sel = Selector::parse(SEL_KEY_IMG).unwrap();
 
     let mut dungeons = Vec::new();
     let mut seen_slugs = std::collections::HashSet::new();
 
-    for row in doc.select(&row_sel) {
+    for row in doc.select(&SEL_INDEX_ROWS) {
         // Continuation / header / empty rows don't have a dungeon link in the
         // first cell — they're skipped here. The dungeon's name cell carries
         // an <a href="/wiki/..."> that identifies it.
-        let name_el = match row.select(&name_sel).next() {
+        let name_el = match row.select(&SEL_DUNGEON_NAME_CELL).next() {
             Some(el) => el,
             None => continue,
         };
@@ -644,7 +660,7 @@ async fn scrape_dungeon_list(client: &Client) -> Result<Vec<DungeonEntry>> {
         // Require a portal image in column 2 — filters out stray rows that
         // happen to have a first-cell link but aren't actually dungeon rows.
         let portal_img_url = match row
-            .select(&portal_sel)
+            .select(&SEL_PORTAL_IMG)
             .next()
             .and_then(|el| el.value().attr("src"))
         {
@@ -653,7 +669,7 @@ async fn scrape_dungeon_list(client: &Client) -> Result<Vec<DungeonEntry>> {
         };
 
         let key_img_url = row
-            .select(&key_sel)
+            .select(&SEL_KEY_IMG)
             .next()
             .and_then(|el| el.value().attr("src"))
             // RealmEye reuses the generic "dungeon-keys" icon as a placeholder
@@ -795,21 +811,17 @@ async fn scrape_dungeon_page(client: &Client, wiki_path: &str) -> Result<Dungeon
 /// don't have a dedicated wiki page still render as a standalone `<img>`.
 fn parse_drop_items(section_html: &str) -> Vec<DropItem> {
     let doc = Html::parse_fragment(section_html);
-    let row_sel = Selector::parse(SEL_DROP_ROWS).unwrap();
-    let anchor_sel = Selector::parse(r#"td:first-child a[href^="/wiki/"]"#).unwrap();
-    let fallback_img_sel = Selector::parse(SEL_DROP_IMG).unwrap();
-    let img_in_anchor_sel = Selector::parse("img").unwrap();
 
     let mut drop_items = Vec::new();
 
-    for row in doc.select(&row_sel) {
+    for row in doc.select(&SEL_DROP_ROWS) {
         let mut seen_srcs: HashSet<String> = HashSet::new();
 
         // Primary pass: every `<a href="/wiki/…"><img></a>` in the first
         // cell is one drop. Iterating all anchors is what captures grouped
         // rows like "Potion of Life + Potion of Mana".
-        for anchor in row.select(&anchor_sel) {
-            let img_el = match anchor.select(&img_in_anchor_sel).next() {
+        for anchor in row.select(&SEL_DROP_ROW_ANCHOR) {
+            let img_el = match anchor.select(&SEL_ANY_IMG).next() {
                 Some(el) => el,
                 None => continue,
             };
@@ -836,7 +848,7 @@ fn parse_drop_items(section_html: &str) -> Vec<DropItem> {
 
         // Fallback pass: imgs in the first cell that weren't inside an
         // anchor (items without their own wiki page).
-        for img_el in row.select(&fallback_img_sel) {
+        for img_el in row.select(&SEL_DROP_IMG) {
             let src = match img_el.value().attr("src") {
                 Some(s) => s,
                 None => continue,
@@ -947,8 +959,6 @@ async fn scrape_item_page(client: &Client, item_path: &str) -> Result<ItemBagInf
     tokio::time::sleep(std::time::Duration::from_millis(250)).await;
 
     let doc = Html::parse_document(&html);
-    let row_sel = Selector::parse("table tr").unwrap();
-    let img_sel = Selector::parse("img").unwrap();
 
     // Pass 1 — find the "Loot Bag" row and classify.
     //
@@ -959,12 +969,12 @@ async fn scrape_item_page(client: &Client, item_path: &str) -> Result<ItemBagInf
     let mut tier: Option<&'static str> = None;
     let mut bag_image_url: Option<String> = None;
 
-    'outer: for row in doc.select(&row_sel) {
+    'outer: for row in doc.select(&SEL_ANY_TABLE_ROW) {
         let row_text = row.text().collect::<String>().to_lowercase();
         if !row_text.contains("loot bag") {
             continue;
         }
-        for img in row.select(&img_sel) {
+        for img in row.select(&SEL_ANY_IMG) {
             let alt = img.value().attr("alt").unwrap_or("").to_lowercase();
             let title = img.value().attr("title").unwrap_or("").to_lowercase();
             let haystack = format!("{alt} {title}");
@@ -991,7 +1001,7 @@ async fn scrape_item_page(client: &Client, item_path: &str) -> Result<ItemBagInf
     // bare `Shiny` on sprite-sheet cells. Accept all of them, but skip
     // projectile/bullet cells and obvious non-sprite UI chrome.
     let mut shiny_image_url: Option<String> = None;
-    for img in doc.select(&img_sel) {
+    for img in doc.select(&SEL_ANY_IMG) {
         let alt = img.value().attr("alt").unwrap_or("");
         let alt_lower = alt.to_lowercase();
         if !alt_lower.contains("shiny") {
