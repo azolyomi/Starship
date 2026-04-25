@@ -20,13 +20,16 @@
 //! channel down via channel permissions; the sticky messages stay
 //! near the top of the visible scroll for everyone.
 
+use std::collections::HashMap;
+
 use anyhow::Result;
 use chrono::{DateTime, Duration, Utc};
 use poise::serenity_prelude as serenity;
 use sqlx::PgPool;
 
 use crate::db;
-use crate::db::models::{DungeonTemplate, SlotClaim, Tier};
+use crate::db::models::{BotEmoji, SlotClaim, Tier};
+use crate::embeds::headcount::emoji_str;
 use crate::services::channels::is_not_found;
 
 /// Maximum rows shown in the listing embed. Discord caps embeds at 6000
@@ -41,19 +44,52 @@ fn button_custom_id(tier_id: i32) -> String {
     format!("so:btn:{tier_id}")
 }
 
-fn build_button_message(tier: &Tier) -> serenity::CreateMessage {
+/// Build the sticky "Start a run" message. Async so it can render the
+/// `bag_white` application emoji as a fancy bullet — falls back to a
+/// unicode money-bag glyph if the emoji hasn't been uploaded yet (e.g.
+/// fresh install before `sync-wiki` ran).
+async fn build_button_message(pool: &PgPool, tier: &Tier) -> serenity::CreateMessage {
+    let emoji_map = db::emoji::get_all_as_map(pool).await.unwrap_or_default();
+    let bag = if emoji_map.contains_key("bag_white") {
+        emoji_str("bag_white", &emoji_map)
+    } else {
+        // 💰 — picked over 🧰 because the bag-shape signals "loot run"
+        // more directly than the toolbox glyph.
+        "\u{1F4B0}".to_string()
+    };
+
+    let description = format!(
+        "{bag} **What this does**\n\
+         Open a **headcount** so other people can react to join your dungeon. \
+         When enough people have signed up, click **Start Run** on the headcount \
+         to convert it into a live raid.\n\
+         \n\
+         \u{1F465} **Who can use it**\n\
+         _Anyone_ who can see this channel — no leader role required. \
+         Trusted leaders (with the **Raid Leader** role, or `ManageRuns` permission) \
+         bypass the per-user cap, post-cancel cooldown, and minimum-reactor floor.\n\
+         \n\
+         \u{2699}\u{FE0F} **House rules**\n\
+         \u{2022} One raid per (tier, dungeon) at a time\n\
+         \u{2022} One self-organized raid per leader at a time\n\
+         \u{2022} Idle headcounts auto-cancel after **{idle} minutes**\n\
+         \u{2022} A short cooldown applies after you cancel your own headcount\n\
+         \u{2022} A headcount needs at least **{min} reactor(s)** before it can convert\n\
+         \n\
+         _Live raids appear in the **Status** message below._",
+        idle = tier.self_organize_idle_minutes,
+        min = tier.self_organize_min_reactors,
+    );
+
     let embed = serenity::CreateEmbed::default()
-        .title(format!("Start a raid in {}", tier.name))
-        .description(
-            "Click below to open a headcount for any dungeon in this tier. \
-             You'll pick the dungeon next, then fill in location and party.",
-        )
+        .title(format!("\u{1F680} Start a raid in {}", tier.name))
+        .description(description)
         .color(0x5865F2);
 
     let button = serenity::CreateButton::new(button_custom_id(tier.id))
         .label("Start a run")
         .style(serenity::ButtonStyle::Primary)
-        .emoji('\u{1F680}'); // rocket emoji — purely cosmetic
+        .emoji('\u{1F680}'); // rocket — matches the title
 
     let row = serenity::CreateActionRow::Buttons(vec![button]);
     serenity::CreateMessage::new()
@@ -98,7 +134,7 @@ pub async fn ensure_button_message(
     }
 
     let msg = channel
-        .send_message(&serenity_ctx.http, build_button_message(tier))
+        .send_message(&serenity_ctx.http, build_button_message(pool, tier).await)
         .await?;
     db::tier::set_self_organize_button_message(pool, tier.id, Some(msg.id.get() as i64)).await?;
     Ok(())
@@ -140,7 +176,7 @@ pub async fn ensure_listing_message(
         }
     }
 
-    let embed = render_listing_embed(serenity_ctx, pool, tier).await?;
+    let embed = render_listing_embed(pool, tier).await?;
     let msg = channel
         .send_message(
             &serenity_ctx.http,
@@ -209,7 +245,7 @@ pub async fn refresh_listing(
 
     let channel = serenity::ChannelId::new(channel_id as u64);
     let message = serenity::MessageId::new(message_id as u64);
-    let embed = render_listing_embed(serenity_ctx, pool, tier).await?;
+    let embed = render_listing_embed(pool, tier).await?;
 
     match channel
         .edit_message(
@@ -248,45 +284,32 @@ pub async fn refresh_listing(
     }
 }
 
-async fn render_listing_embed(
-    _serenity_ctx: &serenity::Context,
-    pool: &PgPool,
-    tier: &Tier,
-) -> Result<serenity::CreateEmbed> {
+async fn render_listing_embed(pool: &PgPool, tier: &Tier) -> Result<serenity::CreateEmbed> {
     let claims = db::self_organize::claim_list_for_guild(pool, tier.guild_id).await?;
+    let emoji_map = db::emoji::get_all_as_map(pool).await?;
     let stale_after = Duration::minutes(tier.self_organize_idle_minutes as i64);
     let now = Utc::now();
 
-    let mut rows: Vec<ListingRow> = Vec::new();
+    let mut headcounts: Vec<ListingRow> = Vec::new();
+    let mut runs: Vec<ListingRow> = Vec::new();
     for claim in claims.into_iter().filter(|c| c.tier_id == tier.id) {
-        if let Some(row) = build_row(pool, &claim, now, stale_after).await? {
-            rows.push(row);
+        if let Some(row) = build_row(pool, &claim, now, stale_after, &emoji_map).await? {
+            match row.kind {
+                ListingKind::Headcount => headcounts.push(row),
+                ListingKind::Run => runs.push(row),
+            }
         }
     }
 
     // Newest at the top so users see what's just been opened.
-    rows.sort_by_key(|r| std::cmp::Reverse(r.acquired_at));
+    headcounts.sort_by_key(|r| std::cmp::Reverse(r.acquired_at));
+    runs.sort_by_key(|r| std::cmp::Reverse(r.acquired_at));
 
-    let title = format!("Active raids \u{2022} {}", tier.name);
-
-    let body = if rows.is_empty() {
-        "_No active raids \u{2014} click **Start a run** above to be the first._".to_string()
-    } else {
-        let shown = rows.len().min(LISTING_MAX_ROWS);
-        let mut s = String::with_capacity(64 * shown);
-        for row in rows.iter().take(LISTING_MAX_ROWS) {
-            s.push_str(&row.format(now));
-            s.push('\n');
-        }
-        if rows.len() > LISTING_MAX_ROWS {
-            s.push_str(&format!("_+{} more_", rows.len() - LISTING_MAX_ROWS));
-        }
-        s
-    };
+    let title = format!("Status \u{2022} {}", tier.name);
+    let body = format_status_body(&headcounts, &runs, now);
 
     let footer_text = format!(
-        "Click \"Start a run\" to organize your own. \
-         Idle headcounts auto-cancel after {}m.",
+        "Click \"Start a run\" to open your own. Idle headcounts auto-cancel after {}m.",
         tier.self_organize_idle_minutes,
     );
 
@@ -297,22 +320,87 @@ async fn render_listing_embed(
         .color(0x57F287))
 }
 
+/// Render the two-section body. Each section caps at `LISTING_MAX_ROWS`
+/// with an overflow note so a runaway tier can't blow Discord's 4096-char
+/// embed-description limit.
+fn format_status_body(
+    headcounts: &[ListingRow],
+    runs: &[ListingRow],
+    now: DateTime<Utc>,
+) -> String {
+    let mut body = String::with_capacity(256);
+
+    body.push_str(&format!(
+        "\u{1F4E3} **Headcounts** \u{00B7} _{}_\n",
+        headcounts.len()
+    ));
+    if headcounts.is_empty() {
+        body.push_str("_None right now \u{2014} click **Start a run** above to open one._\n");
+    } else {
+        for row in headcounts.iter().take(LISTING_MAX_ROWS) {
+            body.push_str(&row.format(now));
+            body.push('\n');
+        }
+        if headcounts.len() > LISTING_MAX_ROWS {
+            body.push_str(&format!(
+                "_+{} more_\n",
+                headcounts.len() - LISTING_MAX_ROWS
+            ));
+        }
+    }
+
+    body.push('\n');
+    body.push_str(&format!(
+        "\u{2694}\u{FE0F} **Runs** \u{00B7} _{}_\n",
+        runs.len()
+    ));
+    if runs.is_empty() {
+        body.push_str("_None in progress._\n");
+    } else {
+        for row in runs.iter().take(LISTING_MAX_ROWS) {
+            body.push_str(&row.format(now));
+            body.push('\n');
+        }
+        if runs.len() > LISTING_MAX_ROWS {
+            body.push_str(&format!("_+{} more_\n", runs.len() - LISTING_MAX_ROWS));
+        }
+    }
+
+    body
+}
+
+/// Whether a listing row represents a still-collecting headcount or a
+/// live run. Drives which section the row appears under.
+#[derive(Clone, Copy, PartialEq)]
+enum ListingKind {
+    Headcount,
+    Run,
+}
+
 /// One pre-formatted listing row. We resolve the dungeon template name
 /// per-claim because a guild may have only a handful of live raids and
 /// the per-row query keeps the rendering code straight-line.
 struct ListingRow {
     leader_user_id: i64,
     dungeon_display: String,
-    kind_label: &'static str,
+    /// Pre-rendered Discord-emoji string (`<:name:id>`, a unicode literal,
+    /// or empty if the template has no emoji or it isn't resolvable).
+    dungeon_emoji_rendered: String,
+    kind: ListingKind,
     acquired_at: DateTime<Utc>,
 }
 
 impl ListingRow {
     fn format(&self, now: DateTime<Utc>) -> String {
         let age_min = (now - self.acquired_at).num_minutes().max(0);
+        let prefix = if self.dungeon_emoji_rendered.is_empty() {
+            String::new()
+        } else {
+            format!("{} ", self.dungeon_emoji_rendered)
+        };
         format!(
-            "\u{2022} **{}** \u{00B7} <@{}> \u{00B7} `{}` \u{00B7} {}m ago",
-            self.dungeon_display, self.leader_user_id, self.kind_label, age_min,
+            "\u{2022} {prefix}**{}** \u{00B7} <@{}> \u{00B7} {}m ago",
+            self.dungeon_display, self.leader_user_id, age_min,
         )
     }
 }
@@ -325,14 +413,24 @@ async fn build_row(
     claim: &SlotClaim,
     now: DateTime<Utc>,
     stale_after: Duration,
+    emoji_map: &HashMap<String, BotEmoji>,
 ) -> Result<Option<ListingRow>> {
     let template = db::dungeon::get_by_id(pool, claim.dungeon_template_id).await?;
-    let dungeon_display = template
-        .as_ref()
-        .map(|t: &DungeonTemplate| t.display_name.clone())
-        .unwrap_or_else(|| format!("dungeon #{}", claim.dungeon_template_id));
+    let (dungeon_display, dungeon_emoji_rendered) = match template.as_ref() {
+        Some(t) => (
+            t.display_name.clone(),
+            t.emoji
+                .as_deref()
+                .map(|name| emoji_str(name, emoji_map))
+                .unwrap_or_default(),
+        ),
+        None => (
+            format!("dungeon #{}", claim.dungeon_template_id),
+            String::new(),
+        ),
+    };
 
-    let (kind_label, acquired_at) = if let Some(hc_id) = claim.headcount_id {
+    let (kind, acquired_at) = if let Some(hc_id) = claim.headcount_id {
         let Some(hc) = db::headcount::get(pool, hc_id).await? else {
             // Dangling claim — orphan sweep will reconcile. Skip it.
             return Ok(None);
@@ -340,12 +438,12 @@ async fn build_row(
         if now - hc.created_at >= stale_after {
             return Ok(None);
         }
-        ("HC", hc.created_at)
+        (ListingKind::Headcount, hc.created_at)
     } else if let Some(run_id) = claim.run_id {
         let Some(run) = db::run::get(pool, run_id).await? else {
             return Ok(None);
         };
-        ("Run", run.created_at)
+        (ListingKind::Run, run.created_at)
     } else {
         // Should be unreachable per the table CHECK, but defence in depth.
         return Ok(None);
@@ -354,7 +452,8 @@ async fn build_row(
     Ok(Some(ListingRow {
         leader_user_id: claim.leader_user_id,
         dungeon_display,
-        kind_label,
+        dungeon_emoji_rendered,
+        kind,
         acquired_at,
     }))
 }

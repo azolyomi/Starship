@@ -2461,6 +2461,53 @@ Operator follow-up: any HC stuck in the broken state from the prior
 boot will convert cleanly on retry — the FK violation aborts the tx
 without leaving partial state, so no DB cleanup needed.
 
+### 2026-04-25 — Sticky message + status listing copy pass
+
+User wants the sticky button to actually explain what it does + who can
+use it, and the listing reorganized.
+
+Landed:
+- `services::self_organize_listing::build_button_message` is now async
+  and takes `pool` so it can render the `bag_white` application emoji
+  (with a `\u{1F4B0}` 💰 fallback when the emoji isn't uploaded yet —
+  e.g. a fresh install pre-`sync-wiki`). Description rewrites into
+  three labelled sections:
+  - **What this does** — opens a headcount, you click Start Run to
+    convert.
+  - **Who can use it** — anyone who can see the channel. Calls out
+    that Raid Leaders / `ManageRuns` bypass the per-user cap,
+    cooldown, and min-reactor floor.
+  - **House rules** — five-bullet recap of the anti-troll guardrails
+    with the tier's actual `idle_minutes` / `min_reactors` values
+    interpolated.
+- `render_listing_embed` rewritten:
+  - Title `Active raids • {tier}` → `Status • {tier}`.
+  - Two sections separated by a blank line: `📣 **Headcounts** · _N_`
+    and `⚔️ **Runs** · _N_`. Each lists rows newest-first and caps at
+    `LISTING_MAX_ROWS` with the existing `+N more` overflow.
+  - Per-row format: `• <portal_emoji> **{display_name}** · <@leader>
+    · {age}m ago` (the `HC`/`Run` kind suffix is gone — the section
+    header carries that info now).
+  - Empty-state copy is per-section: "_None right now — click **Start
+    a run** above to open one._" / "_None in progress._"
+- `ListingRow` gained `dungeon_emoji_rendered: String` (pre-rendered
+  via `embeds::headcount::emoji_str`, empty when the template has no
+  emoji or it isn't in `bot_emoji`) and `kind: ListingKind { Headcount,
+  Run }`. `build_row` resolves both at construction time so `format`
+  stays straight-line text.
+- The unused `serenity_ctx` parameter on `render_listing_embed` is
+  gone (it was inherited from an earlier draft that needed HTTP).
+
+Operator follow-up: the button message is static (never edited per the
+module's design), so existing tiers still show the terse pre-change
+copy. Click `/setup → Self-organize → Repost stickies` once on each
+SO-enabled tier to pick up the new wording. The listing message
+auto-refreshes on the next state transition (HC create / cancel /
+convert / run end / transfer).
+
+Verification: `cargo fmt --check`, `cargo build`, `cargo clippy
+--all-targets -- -D warnings`, `cargo test` (15 passed) all green.
+
 ### Credentials still needed from the user
 
 Collected into `.env` when we're ready to boot:
