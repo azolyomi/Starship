@@ -498,6 +498,12 @@ fn verify_button_embed() -> CreateEmbed {
                 you'll get the **Verified** role and your nickname will be \
                 set to your IGN.\n\
              \n\
+             **Don't have a RealmEye password?**\n\
+             In-game, message MrEyeball with `/tell MrEyeball password` and \
+             they'll send you one. We're not affiliated with RealmEye and \
+             don't control MrEyeball — **never share that password with us \
+             or anyone else**, and we will never ask you for it.\n\
+             \n\
              **Trouble?**\n\
              • Make sure your RealmEye description is set to public.\n\
              • Make sure you've logged into the game on this account at \
