@@ -113,3 +113,21 @@ pub async fn set_voice_channel(
     .await?;
     Ok(())
 }
+
+/// Every live run across every guild. Used by the startup orphan sweep to
+/// reconcile DB rows against Discord state.
+pub async fn list_all(pool: &PgPool) -> Result<Vec<Run>> {
+    let rows = sqlx::query_as!(
+        Run,
+        r#"
+        SELECT id, guild_id, tier_id, dungeon_template_id,
+               channel_id, message_id, leader_user_id,
+               location, party, voice_channel_id, is_vc_raid,
+               created_at
+        FROM runs
+        "#
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}

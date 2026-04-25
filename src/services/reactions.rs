@@ -129,6 +129,20 @@ pub async fn ping_organizer_on_failure(
     }
 }
 
+/// Compare two `ReactionType`s for *practical* equality: custom emojis
+/// match by ID (display name is mutable on Discord and not a stable key),
+/// unicode emojis match by string. Other variants are exotic and never
+/// match. Used by the headcount "all reactions covered?" check and by the
+/// orphan sweep's missing-reactions diff.
+pub fn reaction_types_match(a: &ReactionType, b: &ReactionType) -> bool {
+    use ReactionType::*;
+    match (a, b) {
+        (Custom { id: ia, .. }, Custom { id: ib, .. }) => ia == ib,
+        (Unicode(sa), Unicode(sb)) => sa == sb,
+        _ => false,
+    }
+}
+
 fn format_reaction(rt: &ReactionType) -> String {
     match rt {
         ReactionType::Unicode(s) => s.clone(),

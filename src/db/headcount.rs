@@ -66,3 +66,12 @@ pub async fn delete(pool: &PgPool, id: i32) -> Result<bool> {
         .await?;
     Ok(rows.rows_affected() > 0)
 }
+
+/// Every live headcount across every guild. Used by the startup orphan
+/// sweep to reconcile DB rows against Discord state.
+pub async fn list_all(pool: &PgPool) -> Result<Vec<Headcount>> {
+    let rows = sqlx::query_as::<_, Headcount>("SELECT * FROM headcounts")
+        .fetch_all(pool)
+        .await?;
+    Ok(rows)
+}

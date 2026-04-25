@@ -16,6 +16,7 @@ use serenity::{
 
 use crate::db::models::{BotEmoji, DungeonReaction, Headcount};
 use crate::embeds::headcount::emoji_rt;
+use crate::services::reactions::reaction_types_match;
 use crate::{db, embeds, services, BotData, BotError};
 
 // ---------------------------------------------------------------------------
@@ -159,17 +160,6 @@ async fn missing_reactions(
         }
     }
     Ok(missing)
-}
-
-/// Compare two ReactionTypes for equality in a way that's useful for us:
-/// custom emojis match by ID, unicode by string. Other variants never match.
-fn reaction_types_match(a: &serenity::ReactionType, b: &serenity::ReactionType) -> bool {
-    use serenity::ReactionType::*;
-    match (a, b) {
-        (Custom { id: ia, .. }, Custom { id: ib, .. }) => ia == ib,
-        (Unicode(sa), Unicode(sb)) => sa == sb,
-        _ => false,
-    }
 }
 
 // ---------------------------------------------------------------------------

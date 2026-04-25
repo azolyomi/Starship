@@ -1558,6 +1558,68 @@ All four gates pass on `main`:
 Phase D (snowflake newtypes / DB-arg parameter structs) and Phase E
 (doc coverage + CI image) remain on the deferred list from Phase A.
 
+### 2026-04-24 — Phase 7c complete (orphan sweep on startup)
+
+Reconciles DB lifecycle rows against Discord state once per boot. The R4
+schema collapsed lifecycle to a queue (a `headcounts`/`runs` row exists
+iff the raid is live, terminal transitions DELETE), so the only crash-
+recovery work left was these three orphan conditions called out in the
+"Crash Recovery" section.
+
+Landed:
+- `src/services/orphan_sweep.rs` (new) — `pub async fn run(ctx, pool)`
+  with three passes:
+  1. **Stale headcount/run rows.** `db::headcount::list_all` /
+     `db::run::list_all`, fetch `(channel_id, message_id)` via
+     `ChannelId::message`. Only Discord 404 (narrowly matched on
+     `HttpError::UnsuccessfulRequest.status_code == 404`) triggers a
+     `db::*::delete`; 403/5xx/network leave the row alone so a bot kick
+     or transient outage doesn't nuke live raids.
+  2. **Orphan VCs.** When step 1 deletes a run row that had a
+     `voice_channel_id`, fire-and-forget
+     `services::voice::delete_temp_vc`. Same shape as `handlers::run::handle_end`.
+  3. **Missing reactions.** For each surviving headcount, load the
+     template's required reactions, diff against
+     `Message.reactions` filtered by `me = true`, re-attach the missing
+     ones via `services::reactions::attach_reactions`. Failures fall
+     through to `ping_organizer_on_failure` so the leader hears about it
+     instead of finding out mid-raid. Run messages don't carry signup
+     reactions in R4, so they're skipped.
+- Edge case: `message_id == 0` is the placeholder INSERT before
+  `set_message_id` lands. A crash in that window leaves a bare row with
+  no Discord message ever posted; sweep treats it the same as 404.
+- `services::reactions::reaction_types_match` lifted from
+  `handlers::headcount` to be `pub`; sweep + headcount handler now share
+  the one comparator (`Custom` → ID equality, `Unicode` → string equality,
+  exotic variants → false).
+- `db::headcount::list_all` + `db::run::list_all` — minimal `SELECT *`
+  helpers added next to existing CRUD; only callers are the sweep but
+  the abstraction keeps queries out of `services/`.
+- `src/main.rs::run_bot` — sweep runs inside the framework `setup`
+  callback after command registration but before `BotData` is returned.
+  By then the bot is connected and HTTP works, but interaction handlers
+  aren't yet dispatching (they need `BotData`), so there's no race
+  against live writes. Errors log and continue — refusing to boot
+  because sweep stumbled would be worse than booting with a few orphans.
+- All four gates pass (`cargo fmt --check`, `cargo build`,
+  `cargo clippy --all-targets -- -D warnings`, `cargo test` 11/11). No
+  new warnings; no schema changes; no migration.
+
+Phase 7c residual:
+- Sweep runs only on boot. A long-running bot that loses a message
+  during a Discord outage won't reconcile until the next restart. A
+  periodic sweep (e.g. once an hour via `tokio::spawn` from
+  `setup`) is a future polish item — for now restarts are frequent
+  enough that this is fine.
+- Read-only on the bot's permissions: 403 leaves rows alone. If the
+  bot is permanently kicked from a guild, those rows linger forever.
+  A "guild_create / guild_delete" hook that prunes on kick is a
+  cleaner solution than counting 403s as "delete me."
+
+Phase 7b (containerised deploy) and Phase 8 (`/config` polish + edge
+cases) remain on the main build order. Production-grade audit Phases D
++ E remain deferred from the audit roadmap.
+
 ### Credentials still needed from the user
 
 Collected into `.env` when we're ready to boot:

@@ -167,6 +167,12 @@ async fn run_bot(config: config::Config) -> Result<()> {
                     poise::builtins::register_globally(ctx, &framework.options().commands).await?;
                     info!("registered commands globally");
                 }
+                // Reconcile DB lifecycle rows against Discord state. Failure
+                // is logged but doesn't block startup — running the bot with
+                // a few orphan rows beats refusing to boot.
+                if let Err(e) = services::orphan_sweep::run(ctx, &pool).await {
+                    error!(error = ?e, "orphan sweep failed; continuing startup");
+                }
                 Ok(BotData { db: pool, config })
             })
         })
