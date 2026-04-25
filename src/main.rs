@@ -139,10 +139,11 @@ async fn run_bot(config: config::Config) -> Result<()> {
             commands: commands::all(),
             command_check: Some(|ctx| Box::pin(ensure_setup(ctx))),
             on_error: |err| Box::pin(on_error(err)),
-            event_handler: |ctx, event, _framework, data| {
+            event_handler: |ctx, event, framework, data| {
                 Box::pin(async move {
-                    if let serenity::FullEvent::InteractionCreate { interaction } = event {
-                        match interaction {
+                    match event {
+                        serenity::FullEvent::InteractionCreate { interaction } => match interaction
+                        {
                             serenity::Interaction::Component(mci) => {
                                 handlers::component::handle(ctx, mci, data).await?;
                             }
@@ -150,25 +151,54 @@ async fn run_bot(config: config::Config) -> Result<()> {
                                 handlers::modal::handle(ctx, modal, data).await?;
                             }
                             _ => {}
+                        },
+                        // New guild joined (or existing guild went from
+                        // unavailable to available). Register slash commands
+                        // immediately so the user doesn't have to wait for
+                        // the global propagation window when adding the bot
+                        // somewhere fresh. `is_new == Some(false)` means
+                        // the bot was already a member and Discord is just
+                        // hydrating the guild on connect — those are
+                        // handled at startup by `register_in_known_guilds`,
+                        // so skip them here.
+                        serenity::FullEvent::GuildCreate {
+                            guild,
+                            is_new: Some(true),
+                        } => {
+                            let commands = &framework.options().commands;
+                            match poise::builtins::register_in_guild(ctx, commands, guild.id).await
+                            {
+                                Ok(()) => info!(
+                                    guild_id = %guild.id,
+                                    name = %guild.name,
+                                    "registered commands in newly-joined guild",
+                                ),
+                                Err(e) => tracing::warn!(
+                                    error = ?e,
+                                    guild_id = %guild.id,
+                                    "failed to register commands in newly-joined guild",
+                                ),
+                            }
                         }
+                        _ => {}
                     }
                     Ok(())
                 })
             },
             ..Default::default()
         })
-        .setup(move |ctx, _ready, framework| {
+        .setup(move |ctx, ready, framework| {
             Box::pin(async move {
-                if let Some(guild_id) = test_guild {
-                    poise::builtins::register_in_guild(
-                        ctx,
-                        &framework.options().commands,
-                        guild_id,
-                    )
-                    .await?;
-                    info!(%guild_id, "registered commands in test guild");
-                } else {
-                    poise::builtins::register_globally(ctx, &framework.options().commands).await?;
+                let commands = &framework.options().commands;
+                register_in_known_guilds(ctx, commands, ready, test_guild).await;
+                // Without a configured test guild we're in production mode:
+                // register globally too so guilds the bot joins later (and
+                // any guilds we didn't see in `ready.guilds`) eventually
+                // pick up the commands without needing a per-guild
+                // registration. Skipped in dev so test-guild iteration
+                // doesn't pollute the global command set.
+                if test_guild.is_none() {
+                    poise::builtins::register_globally(ctx, commands).await?;
                     info!("registered commands globally");
                 }
                 // Reconcile DB lifecycle rows against Discord state. Failure
@@ -199,6 +229,40 @@ async fn run_bot(config: config::Config) -> Result<()> {
     info!("starting bot");
     client.start().await?;
     Ok(())
+}
+
+/// Register slash commands in every guild the bot is currently a
+/// member of (per the `Ready` payload), plus the configured test guild
+/// if it isn't already in that list. Per-guild registration is
+/// effectively instant — Discord skips the global ~1 hour propagation
+/// window — so this gives commands immediate availability everywhere
+/// the bot lives, including freshly-added guilds operators want to
+/// poke at right now.
+///
+/// Failures are logged but never fatal: a single guild rejecting
+/// registration (kicked between gateway connect and HTTP call,
+/// rate-limited, etc.) shouldn't block startup for the other guilds.
+async fn register_in_known_guilds(
+    ctx: &serenity::Context,
+    commands: &[poise::Command<BotData, BotError>],
+    ready: &serenity::Ready,
+    test_guild: Option<serenity::GuildId>,
+) {
+    let mut guild_ids: Vec<serenity::GuildId> = ready.guilds.iter().map(|g| g.id).collect();
+    if let Some(test_id) = test_guild {
+        if !guild_ids.contains(&test_id) {
+            guild_ids.push(test_id);
+        }
+    }
+
+    for gid in guild_ids {
+        match poise::builtins::register_in_guild(ctx, commands, gid).await {
+            Ok(()) => info!(guild_id = %gid, "registered commands in guild"),
+            Err(e) => {
+                tracing::warn!(error = ?e, guild_id = %gid, "guild command registration failed")
+            }
+        }
+    }
 }
 
 /// Refuse to apply the R4 migration (which drops `headcount_reactions` +
