@@ -173,10 +173,7 @@ pub async fn complete(
     tx.commit().await?;
 
     Ok(match prior_ign {
-        Some(prior) if prior != realmeye_ign => UpsertResult::Rebound {
-            from: prior,
-            to: realmeye_ign.to_string(),
-        },
+        Some(prior) if prior != realmeye_ign => UpsertResult::Rebound { from: prior },
         Some(_) => UpsertResult::Refreshed,
         None => UpsertResult::Created,
     })
@@ -193,7 +190,8 @@ pub enum UpsertResult {
     /// re-ran /verify with the same name). `verified_at` was bumped.
     Refreshed,
     /// User was already verified to a different IGN, now rebound.
-    Rebound { from: String, to: String },
+    /// Caller already knows the new IGN — only the prior is reported.
+    Rebound { from: String },
     /// Another Discord user in this guild is already verified as this
     /// IGN. The caller refuses and reports `holder`.
     IgnTaken { holder: i64 },

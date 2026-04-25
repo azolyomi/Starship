@@ -2,9 +2,9 @@ use poise::serenity_prelude as serenity;
 
 use crate::{BotData, BotError};
 
-/// Entry point for all component interactions. Routes `hc:*` and `run:*`.
-/// Other prefixes (e.g. `setup:*` from the /setup wizard's own collector)
-/// are silently ignored here.
+/// Entry point for all component interactions. Routes `hc:*`, `run:*`,
+/// and `verify:*`. Other prefixes (e.g. `setup:*` from the /setup
+/// wizard's own collector) are silently ignored here.
 #[tracing::instrument(
     name = "component",
     skip_all,
@@ -26,6 +26,9 @@ pub async fn handle(
     }
     if id.starts_with("hc:") {
         return super::headcount::handle_component(ctx, mci, data).await;
+    }
+    if id.starts_with("verify:") {
+        return super::verify::handle_component(ctx, mci, data).await;
     }
     Ok(())
 }

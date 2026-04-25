@@ -2733,6 +2733,7 @@ dependencies = [
  "image",
  "once_cell",
  "poise",
+ "rand 0.8.6",
  "reqwest",
  "scraper",
  "serde",

@@ -20,6 +20,11 @@
 //!    or more required reactions. For each surviving headcount, diff the
 //!    template's required reactions against `MessageReaction::me` and
 //!    re-attach any with `me = false`.
+//! 4. **Stale verification state.** Pending verification rows older than
+//!    their `expires_at` are deleted (cheap GC, no Discord I/O). Each
+//!    guild's persistent Verify message is fetched; on 404, the
+//!    `verify_message_id` column is nulled out so the next `/setup` run
+//!    knows to repost.
 //!
 //! All steps are best-effort. Per-row failures log and continue — we'd
 //! rather boot the bot with a few orphans than refuse to boot because the
@@ -50,6 +55,7 @@ pub async fn run(ctx: &serenity::Context, pool: &PgPool) -> Result<()> {
     let mut deleted_runs = 0usize;
     let mut deleted_vcs = 0usize;
     let mut reattached = 0usize;
+    let mut cleared_verify_messages = 0usize;
 
     // Loaded once — every reaction reconcile needs it.
     let emoji_map = db::emoji::get_all_as_map(pool).await?;
@@ -137,9 +143,52 @@ pub async fn run(ctx: &serenity::Context, pool: &PgPool) -> Result<()> {
         }
     }
 
+    let expired_verifications = match db::verification::delete_expired(pool).await {
+        Ok(n) => n,
+        Err(e) => {
+            warn!(error = ?e, "failed to delete expired verifications");
+            0
+        }
+    };
+
+    for (guild_id, channel_id, message_id) in db::guild::list_verify_messages(pool).await? {
+        let channel = ChannelId::new(channel_id as u64);
+        let message = MessageId::new(message_id as u64);
+        match channel.message(&ctx.http, message).await {
+            Ok(_) => {}
+            Err(e) if is_not_found(&e) => {
+                if let Err(e) = db::guild::set_verify_message(pool, guild_id, None).await {
+                    warn!(error = ?e, guild_id, "failed to clear stale verify_message_id");
+                } else {
+                    cleared_verify_messages += 1;
+                    info!(
+                        guild_id,
+                        channel_id, message_id, "cleared stale verify_message_id"
+                    );
+                }
+            }
+            Err(e) => {
+                warn!(
+                    error = ?e,
+                    guild_id,
+                    channel_id,
+                    message_id,
+                    "fetch verify message failed; leaving row alone",
+                );
+            }
+        }
+    }
+
     info!(
         surviving_hcs,
-        deleted_hcs, surviving_runs, deleted_runs, deleted_vcs, reattached, "orphan sweep complete",
+        deleted_hcs,
+        surviving_runs,
+        deleted_runs,
+        deleted_vcs,
+        reattached,
+        expired_verifications,
+        cleared_verify_messages,
+        "orphan sweep complete",
     );
     Ok(())
 }

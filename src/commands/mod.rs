@@ -6,6 +6,7 @@ pub mod pingroles;
 pub mod setup;
 pub mod tier;
 pub mod upload_emoji;
+pub mod verify;
 
 use crate::{BotData, BotError};
 
@@ -20,5 +21,7 @@ pub fn all() -> Vec<poise::Command<BotData, BotError>> {
         pingroles::pingroles(),
         pingroles::pingroles_admin(),
         upload_emoji::upload_emoji(),
+        verify::verify(),
+        verify::manual_verify(),
     ]
 }

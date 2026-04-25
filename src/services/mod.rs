@@ -4,4 +4,6 @@ pub mod orphan_sweep;
 pub mod permission;
 pub mod raid;
 pub mod reactions;
+pub mod realmeye;
+pub mod verification;
 pub mod voice;

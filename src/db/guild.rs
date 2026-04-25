@@ -94,6 +94,32 @@ pub async fn set_verify_channel(
     Ok(())
 }
 
+/// Every guild with a posted Verify message, returned as
+/// `(guild_id, channel_id, message_id)`. Used by the startup sweep to
+/// detect deleted persistent messages and null out the message ID. Both
+/// channel + message are NOT NULL when message is set.
+pub async fn list_verify_messages(pool: &PgPool) -> Result<Vec<(i64, i64, i64)>> {
+    let rows = sqlx::query!(
+        "SELECT guild_id, verify_channel_id, verify_message_id
+         FROM guilds
+         WHERE verify_message_id IS NOT NULL
+           AND verify_channel_id IS NOT NULL"
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| {
+            // Both verified non-null by the WHERE clause.
+            (
+                r.guild_id,
+                r.verify_channel_id.expect("verify_channel_id non-null"),
+                r.verify_message_id.expect("verify_message_id non-null"),
+            )
+        })
+        .collect())
+}
+
 pub async fn set_verify_message(
     pool: &PgPool,
     guild_id: i64,

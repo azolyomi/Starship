@@ -16,6 +16,10 @@ mod templates;
 pub struct BotData {
     pub db: PgPool,
     pub config: config::Config,
+    /// Built once at startup. Verification handlers borrow it for
+    /// `realmeye.com/player/<ign>` lookups; the wiki scraper has its own
+    /// short-lived client because it runs as a CLI subcommand.
+    pub realmeye: services::realmeye::RealmEyeClient,
 }
 
 pub type BotError = Box<dyn std::error::Error + Send + Sync>;
@@ -173,7 +177,13 @@ async fn run_bot(config: config::Config) -> Result<()> {
                 if let Err(e) = services::orphan_sweep::run(ctx, &pool).await {
                     error!(error = ?e, "orphan sweep failed; continuing startup");
                 }
-                Ok(BotData { db: pool, config })
+                let realmeye =
+                    services::realmeye::RealmEyeClient::new(&config.realmeye_user_agent)?;
+                Ok(BotData {
+                    db: pool,
+                    config,
+                    realmeye,
+                })
             })
         })
         .build();

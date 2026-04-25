@@ -1807,6 +1807,87 @@ needs a live Discord 404 to exercise.
   `send_message` call. Falls back to the existing bubble-error path —
   user sees "Internal error" and the orphan sweep cleans up later.
 
+### 2026-04-25 — Verification end-to-end complete
+
+User flow live: click Verify (channel) or `/verify` → modal → ephemeral
+with 6-digit code → user pastes code into RealmEye description → "I
+added it" → bot scrapes → assigns Verified role + sets nickname.
+Admin override `/mv @user <ign>` skips the RealmEye check and applies
+the same role+nickname effect. Implemented as a single second-chunk
+push beyond the originally-planned breakpoint.
+
+**Services**
+- `services::realmeye` (new) — focused HTTP client with a typed
+  `LookupResult` (Found / NotFound / Private / Throttled /
+  TransportError). `RealmEyeClient::new(user_agent)` takes the
+  configurable `REALMEYE_USER_AGENT` from `Config`. CSS selectors
+  (`.player-description`, `<h1>` for canonical IGN) parsed once via
+  `once_cell::Lazy`, with a `div.well` fallback that warns when it
+  catches anything (CSS rename canary).
+- `services::verification` (new) — pure orchestration:
+  `issue_code` (6-digit zero-padded, 30-min TTL via `chrono::Duration`),
+  `complete` (full RealmEye → outcome mapping; on match calls
+  `db::verification::complete` for the atomic delete-pending +
+  UPSERT-verified transaction), `manual_verify` (skips fetch,
+  `verified_by = Some(admin_user_id)`), and `apply_verified_state`
+  (role with 3-attempt 200/400/800ms retry mirroring
+  `pingroles::mutate_role_with_retry`; nickname best-effort, never
+  fatal). Outcome enums distinguish first-time / refresh / rebind so
+  the success embed can pick the right verb.
+- `services::orphan_sweep` extended — GC's expired
+  `verifications` rows (`db::verification::delete_expired`) and 404-checks each
+  guild's persistent Verify message, nulling out `verify_message_id`
+  on miss so `/setup`'s repost button knows to act.
+
+**Wizard**
+- `commands::setup` quick-setup now provisions the Verified role +
+  `🔐verify` channel + persistent message. Channel permission
+  overwrites lock down `@everyone` to read-history only and hide the
+  channel from the Verified role (already verified users don't need
+  to see it).
+- New "Verification" dashboard section
+  (`section_verification`, `verification_view`,
+  `handle_verify_post`, `handle_verify_auto`) mirrors the existing
+  log-channel pattern: pick role + channel manually, post/repost the
+  Verify message, or one-click auto-provision.
+
+**Handlers + commands**
+- `handlers::verify` (new) — stateless `verify:start` /
+  `verify:submit_ign` / `verify:check` / `verify:resend` flow.
+  Persistent button responses use ephemeral messages so the IGN +
+  code stay private without depending on DM permissions. Discord's
+  ephemeral interaction-token lifetime (15 min) is shorter than the
+  pending-row TTL (30 min) by design — a user whose ephemeral
+  expired can rerun `/verify` and pick up where they left off.
+- `commands::verify` (new) — `/verify` opens the IGN modal directly
+  off the slash command (poise has no modal helper, so we reach
+  through `Context::Application` to grab the raw
+  `CommandInteraction`); `/mv` is the admin override gated on
+  `MANAGE_GUILD` + `Action::ConfigureGuild`.
+- `BotData` carries the `RealmEyeClient` so handlers don't rebuild
+  it per request.
+
+**Schema** (already committed in chunk 1):
+`migrations/20260425000001_verification.sql` adds three nullable
+guild columns + the `verifications` and `verified_users` tables with
+UNIQUE (guild, ign).
+
+**Gates:** `cargo fmt --check`, `cargo build`, `cargo clippy
+--all-targets -- -D warnings`, `cargo test` (11/11) all green. New
+dep: `rand = "0.8"` (already a transitive — added as direct).
+
+**Not done** (deferred):
+- Audit-log embeds for verification events. The user's plan called
+  for posting "Verified: <@user> as <ign>" to the configured log
+  channel; deliberately skipped this chunk to keep the surface tight
+  and ship the user-facing feature. A small follow-up (~50 lines:
+  add `services::audit_log::post(...)` + 3 callsites in
+  `complete` + `manual_verify`) can land in a separate commit.
+- Soak: I haven't run the bot against a live test guild this session
+  — the user-side test plan in
+  `~/.claude/plans/now-we-need-to-whimsical-meteor.md` (steps 1-11
+  + negative paths) is the next step.
+
 ### 2026-04-25 — Verification chunk 1 complete (schema + DB layer)
 
 Foundation for the verification feature. Detailed plan at

@@ -6,9 +6,9 @@ use poise::{CreateReply, ReplyHandle};
 use serenity::{
     ButtonStyle, ChannelId, ChannelType, ComponentInteraction, ComponentInteractionCollector,
     ComponentInteractionDataKind, CreateActionRow, CreateButton, CreateChannel, CreateEmbed,
-    CreateEmbedFooter, CreateInteractionResponse, CreateInteractionResponseMessage,
+    CreateEmbedFooter, CreateInteractionResponse, CreateInteractionResponseMessage, CreateMessage,
     CreateSelectMenu, CreateSelectMenuKind, EditInteractionResponse, EditRole, MessageId,
-    Permissions, RoleId, UserId,
+    PermissionOverwrite, PermissionOverwriteType, Permissions, RoleId, UserId,
 };
 
 use crate::db::models::Tier;
@@ -137,6 +137,7 @@ async fn run_dashboard_loop(
             "setup:section:tier" => section_first_tier(ctx, &mci).await?,
             "setup:section:superadmin" => section_superadmin(ctx, &mci).await?,
             "setup:section:log" => section_log_channel(ctx, &mci).await?,
+            "setup:section:verify" => section_verification(ctx, &mci).await?,
             _ => {
                 // Unknown custom_id — just acknowledge so Discord doesn't
                 // show "interaction failed" to the user.
@@ -289,6 +290,16 @@ async fn do_quick_setup(ctx: BotContext<'_>) -> Result<()> {
         db::permission::grant(pool, guild_id, role_id.get() as i64, action, None, None).await?;
     }
 
+    // Verification: a role for verified users + a channel hosting the
+    // persistent Verify button + the button message itself. Wired
+    // together by storing the three IDs on the guild row.
+    let verified_role_id = find_or_create_verified_role(ctx).await?;
+    let verify_channel_id = find_or_create_verify_channel(ctx, verified_role_id).await?;
+    let verify_message_id = find_or_post_verify_message(ctx, verify_channel_id, None).await?;
+    db::guild::set_verified_role(pool, guild_id, Some(verified_role_id.get() as i64)).await?;
+    db::guild::set_verify_channel(pool, guild_id, Some(verify_channel_id.get() as i64)).await?;
+    db::guild::set_verify_message(pool, guild_id, Some(verify_message_id.get() as i64)).await?;
+
     db::guild::mark_setup_complete(pool, guild_id, true).await?;
     Ok(())
 }
@@ -327,6 +338,175 @@ async fn find_or_create_log_channel(ctx: BotContext<'_>) -> Result<ChannelId> {
                 .id)
         }
     }
+}
+
+/// Find-or-create a "Verified" role. No Discord permissions — it's a
+/// flag the bot reads, not a permission grant. Idempotent.
+async fn find_or_create_verified_role(ctx: BotContext<'_>) -> Result<RoleId> {
+    let guild_id = require_guild_id(ctx);
+    let http = ctx.http();
+
+    let roles = guild_id.roles(http).await?;
+    if let Some((id, _)) = roles
+        .iter()
+        .find(|(_, r)| r.name.eq_ignore_ascii_case("Verified"))
+    {
+        return Ok(*id);
+    }
+
+    let role = guild_id
+        .create_role(
+            http,
+            EditRole::new()
+                .name("Verified")
+                .permissions(Permissions::empty())
+                .mentionable(false)
+                .hoist(false),
+        )
+        .await?;
+    Ok(role.id)
+}
+
+/// Find-or-create the verification channel. Prefers the emoji-prefixed
+/// `🔐verify` name; falls back to plain `verify` if Discord rejects the
+/// glyph (some guild settings choke on leading emoji). Permission
+/// overwrites:
+///
+/// * `@everyone` may read history but cannot send messages — the only
+///   interaction is the persistent Verify button.
+/// * The verified role's view is denied so already-verified users don't
+///   see the channel cluttering their list. They never need to come
+///   back.
+async fn find_or_create_verify_channel(
+    ctx: BotContext<'_>,
+    verified_role_id: RoleId,
+) -> Result<ChannelId> {
+    const FANCY: &str = "🔐verify";
+    const PLAIN: &str = "verify";
+
+    let guild_id = require_guild_id(ctx);
+    let http = ctx.http();
+    let existing = guild_id.channels(http).await?;
+
+    for name in [FANCY, PLAIN] {
+        if let Some(c) = existing
+            .values()
+            .find(|c| c.kind == ChannelType::Text && c.name.eq_ignore_ascii_case(name))
+        {
+            return Ok(c.id);
+        }
+    }
+
+    // Permission overwrites baked into the create call so the channel is
+    // born locked-down. Server admins can edit overwrites later if they
+    // want different visibility — `/setup` doesn't enforce them on each
+    // re-run.
+    let everyone_role_id = RoleId::new(guild_id.get());
+    let overwrites = verify_channel_overwrites(everyone_role_id, verified_role_id);
+
+    let create = CreateChannel::new(FANCY)
+        .kind(ChannelType::Text)
+        .permissions(overwrites.clone());
+    match guild_id.create_channel(http, create).await {
+        Ok(ch) => Ok(ch.id),
+        Err(e) => {
+            tracing::warn!(error = ?e, "verify channel with emoji prefix rejected, falling back");
+            Ok(guild_id
+                .create_channel(
+                    http,
+                    CreateChannel::new(PLAIN)
+                        .kind(ChannelType::Text)
+                        .permissions(overwrites),
+                )
+                .await?
+                .id)
+        }
+    }
+}
+
+fn verify_channel_overwrites(
+    everyone_role_id: RoleId,
+    verified_role_id: RoleId,
+) -> Vec<PermissionOverwrite> {
+    vec![
+        PermissionOverwrite {
+            allow: Permissions::VIEW_CHANNEL | Permissions::READ_MESSAGE_HISTORY,
+            deny: Permissions::SEND_MESSAGES
+                | Permissions::ADD_REACTIONS
+                | Permissions::CREATE_PUBLIC_THREADS
+                | Permissions::CREATE_PRIVATE_THREADS,
+            kind: PermissionOverwriteType::Role(everyone_role_id),
+        },
+        // Verified users don't need to see the channel anymore. Hiding
+        // it reduces noise and discourages re-verification spam.
+        PermissionOverwrite {
+            allow: Permissions::empty(),
+            deny: Permissions::VIEW_CHANNEL,
+            kind: PermissionOverwriteType::Role(verified_role_id),
+        },
+    ]
+}
+
+/// Find-or-post the persistent Verify button message. If `existing_id`
+/// is provided and the message still exists, returns it as-is. Otherwise
+/// posts a fresh message and returns its ID. The caller persists the
+/// returned ID on the guild row.
+async fn find_or_post_verify_message(
+    ctx: BotContext<'_>,
+    channel_id: ChannelId,
+    existing_id: Option<MessageId>,
+) -> Result<MessageId> {
+    let http = ctx.http();
+    if let Some(id) = existing_id {
+        if channel_id.message(http, id).await.is_ok() {
+            return Ok(id);
+        }
+        // 404 (or any error) → fall through and post a new one.
+    }
+
+    let embed = verify_button_embed();
+    let buttons = CreateActionRow::Buttons(vec![CreateButton::new("verify:start")
+        .label("Verify")
+        .style(ButtonStyle::Success)]);
+    let msg = channel_id
+        .send_message(
+            http,
+            CreateMessage::new().embed(embed).components(vec![buttons]),
+        )
+        .await?;
+    Ok(msg.id)
+}
+
+/// The persistent Verify-button message body. Mirrors the public
+/// verification scripts most RotMG halls use — the user pastes a code
+/// into their RealmEye description; the bot scrapes it back. Kept as
+/// one function so the wording stays consistent between quick-setup
+/// posting, custom-setup repost, and any future restart-recovery post.
+fn verify_button_embed() -> CreateEmbed {
+    CreateEmbed::new()
+        .title("🔐 Get verified")
+        .description(
+            "Verification links your Discord account to your in-game name (IGN) \
+             via your RealmEye profile.\n\
+             \n\
+             **How it works**\n\
+             1. Click **Verify** below and enter your IGN.\n\
+             2. The bot will reply with a 6-digit code (only you can see it).\n\
+             3. Log in to <https://www.realmeye.com>, open your profile, and \
+                paste the code into your description. Save.\n\
+             4. Come back here, click **I added it**, and you're done — \
+                you'll get the **Verified** role and your nickname will be \
+                set to your IGN.\n\
+             \n\
+             **Trouble?**\n\
+             • Make sure your RealmEye description is set to public.\n\
+             • Make sure you've logged into the game on this account at \
+                least once recently — RealmEye won't show characters \
+                that have never been seen.\n\
+             • If verification keeps failing, ask a moderator to verify \
+                you manually.",
+        )
+        .color(0x57F287)
 }
 
 /// Find-or-create a "Raid Leader" role. The role itself has no Discord
@@ -407,6 +587,26 @@ async fn dashboard_view(ctx: BotContext<'_>) -> Result<(CreateEmbed, Vec<CreateA
         .map(|cid| format!("<#{cid}>"))
         .unwrap_or_else(|| "_not set_".to_string());
 
+    // Verification: ✅ requires role + channel + posted message all
+    // present. Anything less and the persistent button won't be visible
+    // to users.
+    let verify_ready = guild.verified_role_id.is_some()
+        && guild.verify_channel_id.is_some()
+        && guild.verify_message_id.is_some();
+    let verify_block = match (
+        guild.verified_role_id,
+        guild.verify_channel_id,
+        guild.verify_message_id,
+    ) {
+        (Some(role), Some(chan), Some(_)) => format!("role <@&{role}> in <#{chan}>"),
+        (Some(role), Some(chan), None) => {
+            format!("role <@&{role}> in <#{chan}> — _Verify message not posted yet_")
+        }
+        (Some(role), None, _) => format!("role <@&{role}> — _no channel set_"),
+        (None, Some(chan), _) => format!("<#{chan}> — _no role set_"),
+        (None, None, _) => "_not set_".to_string(),
+    };
+
     let description = format!(
         "Configure Starship for **{guild_name}**. Click a section to edit.\n\
          \n\
@@ -417,10 +617,14 @@ async fn dashboard_view(ctx: BotContext<'_>) -> Result<(CreateEmbed, Vec<CreateA
          {sa}\n\
          \n\
          {log_mark} **Audit log channel** *(optional)*\n\
-         {log}",
+         {log}\n\
+         \n\
+         {verify_mark} **Verification** *(optional)*\n\
+         {verify_block}",
         tier_mark = mark(first_tier_ready),
         sa_mark = mark(guild.superadmin_user_id.is_some()),
         log_mark = mark(guild.log_channel_id.is_some()),
+        verify_mark = mark(verify_ready),
     );
 
     let footer = if guild.setup_complete {
@@ -448,6 +652,12 @@ async fn dashboard_view(ctx: BotContext<'_>) -> Result<(CreateEmbed, Vec<CreateA
         ButtonStyle::Primary
     };
 
+    let verify_style = if verify_ready {
+        ButtonStyle::Secondary
+    } else {
+        ButtonStyle::Primary
+    };
+
     let sections_row = CreateActionRow::Buttons(vec![
         CreateButton::new("setup:section:tier")
             .label(tier_label)
@@ -458,6 +668,9 @@ async fn dashboard_view(ctx: BotContext<'_>) -> Result<(CreateEmbed, Vec<CreateA
         CreateButton::new("setup:section:log")
             .label("Log channel")
             .style(ButtonStyle::Secondary),
+        CreateButton::new("setup:section:verify")
+            .label("Verification")
+            .style(verify_style),
     ]);
 
     let finish_label = if guild.setup_complete {
@@ -939,6 +1152,267 @@ async fn section_log_channel(
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Section: verification
+// ---------------------------------------------------------------------------
+
+async fn section_verification(
+    ctx: BotContext<'_>,
+    trigger: &ComponentInteraction,
+) -> Result<(), BotError> {
+    let guild_id = guild_id_i64(ctx);
+    let pool = &ctx.data().db;
+
+    let (embed, components) = verification_view(ctx).await?;
+    respond_with_view(ctx, trigger, embed, components).await?;
+
+    let msg_id = trigger.message.id;
+    loop {
+        let Some(mci) = await_next(ctx, msg_id).await else {
+            return Ok(());
+        };
+        match mci.data.custom_id.as_str() {
+            "setup:verify:back" => {
+                back_to_dashboard(ctx, &mci).await?;
+                return Ok(());
+            }
+            "setup:verify:role" => {
+                if let ComponentInteractionDataKind::RoleSelect { values } = &mci.data.kind {
+                    let rid = values.first().map(|r| r.get() as i64);
+                    db::guild::set_verified_role(pool, guild_id, rid).await?;
+                }
+                let (embed, components) = verification_view(ctx).await?;
+                respond_with_view(ctx, &mci, embed, components).await?;
+            }
+            "setup:verify:channel" => {
+                if let ComponentInteractionDataKind::ChannelSelect { values } = &mci.data.kind {
+                    let cid = values.first().map(|c| c.get() as i64);
+                    db::guild::set_verify_channel(pool, guild_id, cid).await?;
+                    // Picking a different channel invalidates any
+                    // previously-posted message id — the old message
+                    // lives in a different channel and would never be
+                    // clicked. Clear it so the user has to repost.
+                    db::guild::set_verify_message(pool, guild_id, None).await?;
+                }
+                let (embed, components) = verification_view(ctx).await?;
+                respond_with_view(ctx, &mci, embed, components).await?;
+            }
+            "setup:verify:post" => match handle_verify_post(ctx, &mci).await {
+                Ok(()) => {
+                    let (embed, components) = verification_view(ctx).await?;
+                    respond_with_view(ctx, &mci, embed, components).await?;
+                }
+                Err(e) => {
+                    tracing::warn!(error = ?e, "post verify message failed");
+                    mci.create_response(
+                        ctx.http(),
+                        CreateInteractionResponse::Message(
+                            CreateInteractionResponseMessage::new()
+                                .content(format!(
+                                    "⚠ Couldn't post the Verify message: {e}\n\
+                                     Make sure I have **Send Messages** in that channel."
+                                ))
+                                .ephemeral(true),
+                        ),
+                    )
+                    .await?;
+                }
+            },
+            "setup:verify:auto" => match handle_verify_auto(ctx, &mci).await {
+                Ok(()) => {
+                    let (embed, components) = verification_view(ctx).await?;
+                    respond_with_view(ctx, &mci, embed, components).await?;
+                }
+                Err(e) => {
+                    tracing::warn!(error = ?e, "auto-provision verification failed");
+                    mci.create_response(
+                        ctx.http(),
+                        CreateInteractionResponse::Message(
+                            CreateInteractionResponseMessage::new()
+                                .content(format!(
+                                    "⚠ Couldn't auto-provision verification: {e}\n\
+                                     Make sure I have **Manage Channels** and \
+                                     **Manage Roles**, then try again."
+                                ))
+                                .ephemeral(true),
+                        ),
+                    )
+                    .await?;
+                }
+            },
+            "setup:verify:clear" => {
+                db::guild::set_verified_role(pool, guild_id, None).await?;
+                db::guild::set_verify_channel(pool, guild_id, None).await?;
+                db::guild::set_verify_message(pool, guild_id, None).await?;
+                let (embed, components) = verification_view(ctx).await?;
+                respond_with_view(ctx, &mci, embed, components).await?;
+            }
+            _ => {
+                mci.defer(ctx.http()).await?;
+            }
+        }
+    }
+}
+
+async fn verification_view(ctx: BotContext<'_>) -> Result<(CreateEmbed, Vec<CreateActionRow>)> {
+    let guild_id = guild_id_i64(ctx);
+    let guild = db::guild::get(&ctx.data().db, guild_id)
+        .await?
+        .expect("guild row upserted by setup() entry, exists for the wizard's lifetime");
+
+    let role_line = guild
+        .verified_role_id
+        .map(|r| format!("Role: <@&{r}>"))
+        .unwrap_or_else(|| "Role: _not set_".to_string());
+    let channel_line = guild
+        .verify_channel_id
+        .map(|c| format!("Channel: <#{c}>"))
+        .unwrap_or_else(|| "Channel: _not set_".to_string());
+    let message_line = if guild.verify_message_id.is_some() {
+        "Verify message: ✅ posted"
+    } else {
+        "Verify message: ⬜ not posted"
+    };
+
+    let body = format!(
+        "Verification links Discord users to RealmEye in-game names. Once \
+         configured, users can click the persistent **Verify** button (or run \
+         `/verify`) to bind their account to their IGN.\n\
+         \n\
+         {role_line}\n\
+         {channel_line}\n\
+         {message_line}\n\
+         \n\
+         **Auto-provision** creates a `Verified` role + a `🔐verify` channel \
+         and posts the button for you. Or pick an existing role / channel \
+         and click **Post Verify message** to post manually."
+    );
+
+    let embed = CreateEmbed::new()
+        .title("🔐 Verification")
+        .description(body)
+        .color(0x57F287);
+
+    let role_select = CreateSelectMenu::new(
+        "setup:verify:role",
+        CreateSelectMenuKind::Role {
+            default_roles: guild.verified_role_id.map(|r| vec![RoleId::new(r as u64)]),
+        },
+    )
+    .placeholder("Verified role")
+    .min_values(1)
+    .max_values(1);
+
+    let channel_select = CreateSelectMenu::new(
+        "setup:verify:channel",
+        CreateSelectMenuKind::Channel {
+            channel_types: Some(vec![ChannelType::Text]),
+            default_channels: guild
+                .verify_channel_id
+                .map(|c| vec![ChannelId::new(c as u64)]),
+        },
+    )
+    .placeholder("Verify channel")
+    .min_values(1)
+    .max_values(1);
+
+    let post_label = if guild.verify_message_id.is_some() {
+        "Repost Verify message"
+    } else {
+        "Post Verify message"
+    };
+    let can_post = guild.verified_role_id.is_some() && guild.verify_channel_id.is_some();
+    let any_set = guild.verified_role_id.is_some()
+        || guild.verify_channel_id.is_some()
+        || guild.verify_message_id.is_some();
+
+    let actions = CreateActionRow::Buttons(vec![
+        CreateButton::new("setup:verify:post")
+            .label(post_label)
+            .style(ButtonStyle::Success)
+            .disabled(!can_post),
+        CreateButton::new("setup:verify:auto")
+            .label("Auto-provision")
+            .style(ButtonStyle::Primary),
+        CreateButton::new("setup:verify:clear")
+            .label("Clear")
+            .style(ButtonStyle::Danger)
+            .disabled(!any_set),
+        CreateButton::new("setup:verify:back")
+            .label("← Back")
+            .style(ButtonStyle::Secondary),
+    ]);
+
+    Ok((
+        embed,
+        vec![
+            CreateActionRow::SelectMenu(role_select),
+            CreateActionRow::SelectMenu(channel_select),
+            actions,
+        ],
+    ))
+}
+
+/// Post (or repost) the persistent Verify-button message in the
+/// configured channel. If a prior message is recorded and still alive,
+/// it's deleted first so the new button is the only one. The new
+/// message ID is persisted on the guild row.
+async fn handle_verify_post(ctx: BotContext<'_>, _mci: &ComponentInteraction) -> Result<()> {
+    let guild_id = guild_id_i64(ctx);
+    let pool = &ctx.data().db;
+    let guild = db::guild::get(pool, guild_id)
+        .await?
+        .expect("guild row upserted by setup() entry, exists for the wizard's lifetime");
+
+    let Some(channel_raw) = guild.verify_channel_id else {
+        anyhow::bail!("verify channel not set");
+    };
+    let channel_id = ChannelId::new(channel_raw as u64);
+    let http = ctx.http();
+
+    if let Some(prior) = guild.verify_message_id {
+        let prior_id = MessageId::new(prior as u64);
+        // Best-effort delete — 404 is fine, it means the message was
+        // already gone. Permission-error stays in the log but doesn't
+        // block posting the replacement.
+        if let Err(e) = channel_id.delete_message(http, prior_id).await {
+            tracing::warn!(error = ?e, "could not delete prior verify message");
+        }
+    }
+
+    let new_id = find_or_post_verify_message(ctx, channel_id, None).await?;
+    db::guild::set_verify_message(pool, guild_id, Some(new_id.get() as i64)).await?;
+    Ok(())
+}
+
+/// Auto-provision: create role + channel + message in one click. Same
+/// code path as quick-setup. Idempotent — re-running picks up existing
+/// `Verified` / `🔐verify` artefacts rather than duplicating.
+async fn handle_verify_auto(ctx: BotContext<'_>, mci: &ComponentInteraction) -> Result<()> {
+    // Acknowledge silently so the channel-creation + message-post HTTP
+    // sequence can take a moment without the button showing
+    // "interaction failed". The caller refreshes the dashboard view
+    // afterwards.
+    mci.defer(ctx.http()).await?;
+
+    let guild_id = guild_id_i64(ctx);
+    let pool = &ctx.data().db;
+    let prior = db::guild::get(pool, guild_id).await?;
+
+    let role_id = find_or_create_verified_role(ctx).await?;
+    let channel_id = find_or_create_verify_channel(ctx, role_id).await?;
+    let prior_message = prior
+        .as_ref()
+        .and_then(|g| g.verify_message_id)
+        .map(|m| MessageId::new(m as u64));
+    let message_id = find_or_post_verify_message(ctx, channel_id, prior_message).await?;
+
+    db::guild::set_verified_role(pool, guild_id, Some(role_id.get() as i64)).await?;
+    db::guild::set_verify_channel(pool, guild_id, Some(channel_id.get() as i64)).await?;
+    db::guild::set_verify_message(pool, guild_id, Some(message_id.get() as i64)).await?;
+    Ok(())
 }
 
 /// Shared view builder for channel-picker sections.
