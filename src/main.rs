@@ -2,7 +2,9 @@ use anyhow::{bail, Result};
 use clap::Parser;
 use poise::serenity_prelude as serenity;
 use sqlx::PgPool;
+use tokio::sync::mpsc;
 use tracing::{error, info};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod cli;
 mod commands;
@@ -102,13 +104,17 @@ enum CliCommand {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    init_tracing();
+    // The tracing init returns the receiver half of the error-DM channel.
+    // Only the `Bot` subcommand uses it; the CLI subcommands drop it on
+    // exit, which closes the channel and turns the layer into a no-op
+    // for any tracing events they emit.
+    let dm_receiver = init_tracing();
 
     let config = config::Config::from_env()?;
     info!(config = ?config, "loaded config");
 
     match cli.command.unwrap_or(CliCommand::Bot) {
-        CliCommand::Bot => run_bot(config).await,
+        CliCommand::Bot => run_bot(config, dm_receiver).await,
         CliCommand::SyncWiki { dry_run, purge } => cli::sync_wiki::run(dry_run, purge).await,
         CliCommand::UploadEmoji {
             name,
@@ -120,7 +126,10 @@ async fn main() -> Result<()> {
     }
 }
 
-async fn run_bot(config: config::Config) -> Result<()> {
+async fn run_bot(
+    config: config::Config,
+    dm_receiver: mpsc::Receiver<services::error_dm::DmEvent>,
+) -> Result<()> {
     let pool = db::create_pool(&config.database_url).await?;
     info!("connected to database");
 
@@ -133,6 +142,8 @@ async fn run_bot(config: config::Config) -> Result<()> {
 
     let token = config.discord_token.clone();
     let test_guild = config.discord_test_guild_id.map(serenity::GuildId::new);
+    // Extract before the framework builder consumes `config`.
+    let error_dm_user_ids = config.error_dm_user_ids.clone();
 
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
@@ -247,6 +258,19 @@ async fn run_bot(config: config::Config) -> Result<()> {
     let mut client = serenity::Client::builder(token, intents)
         .framework(framework)
         .await?;
+
+    // Spawn the error-DM dispatch loop now that we have a Discord HTTP
+    // client. Done outside the framework `setup` callback because
+    // `mpsc::Receiver` isn't `Sync` and `setup`'s closure must be —
+    // moving it through the closure would require a `Mutex` dance for
+    // no real benefit. Doing it here also means the dispatch loop is
+    // alive for any errors that fire during the framework's setup
+    // (orphan sweep, command registration, etc.).
+    let recipients: Vec<serenity::UserId> = error_dm_user_ids
+        .into_iter()
+        .map(serenity::UserId::new)
+        .collect();
+    services::error_dm::spawn_dispatch_loop(client.http.clone(), recipients, dm_receiver);
 
     info!("starting bot");
     client.start().await?;
@@ -405,27 +429,40 @@ fn framework_error_kind(err: &poise::FrameworkError<'_, BotData, BotError>) -> &
 /// Default filter keeps `starship=info` while quieting third-party
 /// noise (`serenity=warn`, `sqlx=warn`). Override at runtime with
 /// `RUST_LOG=...` per the `EnvFilter` syntax.
-fn init_tracing() {
+fn init_tracing() -> mpsc::Receiver<services::error_dm::DmEvent> {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
         tracing_subscriber::EnvFilter::new("starship=info,serenity=warn,sqlx=warn,info")
     });
 
     let json = std::env::var("RUST_LOG_FORMAT").as_deref() == Ok("json");
+    let (dm_layer, dm_receiver) = services::error_dm::install();
 
+    // Compose layers via `registry()` so the fmt subscriber and the
+    // error-DM layer share one filter and one event stream. Using
+    // `tracing_subscriber::fmt()` directly (the previous shape) only
+    // installs the fmt subscriber and gives no place to attach extra
+    // layers.
     if json {
-        tracing_subscriber::fmt()
-            .json()
-            .with_env_filter(filter)
-            .with_target(true)
-            .with_current_span(true)
-            .with_span_list(false)
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .json()
+                    .with_target(true)
+                    .with_current_span(true)
+                    .with_span_list(false),
+            )
+            .with(dm_layer)
             .init();
     } else {
-        tracing_subscriber::fmt()
-            .with_env_filter(filter)
-            .with_target(true)
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(tracing_subscriber::fmt::layer().with_target(true))
+            .with(dm_layer)
             .init();
     }
+
+    dm_receiver
 }
 
 /// Framework command_check: bail out of any non-`/setup` command when the

@@ -205,41 +205,62 @@ bucket nightly (~$0/mo at this volume). Defer until we feel the pain.
 
 ## Step 4 — Tracing → Discord DM
 
-Goal: every WARN+ event from the bot lands in the superadmin's DMs,
-without flooding when something repeats.
+Live in [`src/services/error_dm.rs`](src/services/error_dm.rs). Design
+notes (from when this was a proposal — kept here so the rationale is
+co-located with the configuration):
 
-**Design (proposed — flag any concern before I code it):**
+- A tracing `Layer` filters `WARN`+ events and forwards them through a
+  bounded `mpsc` channel (capacity 256). Backpressure drops events
+  rather than blocking the tracing call site.
+- A background task drains the channel, batches events for 30 s,
+  dedups by `(level, target, message)` keeping a count
+  (`(x12) failed to fetch message …`), and DMs each recipient via the
+  bot's existing Discord HTTP client.
+- Recursion guard: events whose target starts with `serenity::` or
+  `starship::services::error_dm` are dropped before they enter the
+  channel. Without this, a Discord outage would loop — every failed
+  DM logs an error, which the layer would try to DM, etc.
+- The dispatch loop is spawned from `main::run_bot` after the
+  `serenity::Client` is built (its HTTP client is reusable and works
+  without a live gateway connection), so the layer is alive before
+  `client.start()`.
 
-- New `src/services/error_dm.rs` module exposing a `tracing` `Layer` that
-  filters `level >= WARN`, formats one event per line, and pushes it into
-  an `mpsc` channel.
-- A background task drains the channel, batches events for 30s, dedups
-  identical message+target pairs (keep a count: `(x12) failed to fetch
-  message …`), and DMs each `superadmin` user via the existing serenity
-  HTTP client.
-- Recursion guard: if the failing event itself originates from the
-  Discord HTTP path (target starts with `serenity::` or `error_dm::`),
-  drop it. Otherwise a Discord outage would loop forever trying to DM
-  about Discord being down.
-- Backpressure: bounded channel (capacity 256). If full, drop and
-  increment a local counter that gets flushed in the next batch as
-  `"(N events dropped due to backpressure)"`.
-- Config: `ERROR_DM_USER_IDS` env var, comma-separated. Empty = layer
-  is registered but no-op (still useful so dev doesn't DM you).
+**Configure recipients:** set `ERROR_DM_USER_IDS` in `.env` to a
+comma-separated list of Discord user IDs:
+
+```
+ERROR_DM_USER_IDS=123456789012345678
+```
+
+To find your user ID: turn on Discord Developer Mode (User Settings →
+Advanced → Developer Mode), right-click your name in any chat → Copy
+User ID.
+
+Empty `ERROR_DM_USER_IDS` = the dispatch task isn't spawned, the
+channel closes, and the in-process layer becomes a no-op. Useful for
+dev so iteration noise doesn't ping you.
+
+**Verify it's wired** — once in prod, force a WARN to confirm the
+pipeline:
+
+```bash
+ssh starship@<vps>
+cd ~/Starship
+docker compose exec -T postgres psql -U starship -d starship \
+    -c 'SELECT * FROM nonexistent_table;' 2>/dev/null || true
+# Some operations log WARN on failure; tail the bot logs to confirm
+# the layer fired, then check your DMs (~30s batch window).
+docker compose logs --since=2m bot | grep -E 'WARN|ERROR'
+```
 
 Why DM and not a Discord webhook URL: the bot already has an
-authenticated client, the recipient list is just user IDs, and there's
-nothing to leak/rotate. Webhooks add a second secret to manage.
+authenticated HTTP client, the recipient list is just user IDs,
+there's nothing to leak/rotate. Webhooks add a second secret.
 
-Why not a separate channel: DMs are unmissable; a channel can be muted
-or buried. If the volume gets noisy we can pivot to a `#starship-alerts`
-channel later — same Layer, different sink.
-
-**Open questions for you:**
-- Single recipient (you) or a small list?
-- Cap at WARN+ or include INFO for lifecycle events (run start/end)?
-  My vote: WARN+ only, lifecycle stays in the log channel (which already
-  exists).
+Why not a dedicated channel: DMs are unmissable; a channel can be muted
+or buried. If the volume gets noisy later we pivot to a
+`#starship-alerts` channel (same layer, different sink) — but that's
+a future change, not a launch-day one.
 
 ---
 

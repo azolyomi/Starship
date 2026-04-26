@@ -7,6 +7,10 @@ pub struct Config {
     pub discord_test_guild_id: Option<u64>,
     pub database_url: String,
     pub realmeye_user_agent: String,
+    /// Discord user IDs that receive DM'd batches of WARN+ tracing
+    /// events from `services::error_dm`. Empty = the dispatch loop
+    /// is never spawned and the layer becomes a no-op.
+    pub error_dm_user_ids: Vec<u64>,
 }
 
 impl std::fmt::Debug for Config {
@@ -23,6 +27,7 @@ impl std::fmt::Debug for Config {
             .field("discord_test_guild_id", &self.discord_test_guild_id)
             .field("database_url", &mask(&self.database_url))
             .field("realmeye_user_agent", &self.realmeye_user_agent)
+            .field("error_dm_user_ids", &self.error_dm_user_ids)
             .finish()
     }
 }
@@ -45,6 +50,13 @@ impl Config {
         let database_url = std::env::var("DATABASE_URL").context("DATABASE_URL must be set")?;
         let realmeye_user_agent =
             std::env::var("REALMEYE_USER_AGENT").unwrap_or_else(|_| "starship-bot/0.1".to_string());
+        let error_dm_user_ids = std::env::var("ERROR_DM_USER_IDS")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .map(parse_user_id_list)
+            .transpose()
+            .context("ERROR_DM_USER_IDS must be a comma-separated list of u64 Discord IDs")?
+            .unwrap_or_default();
 
         Ok(Config {
             discord_token,
@@ -52,6 +64,19 @@ impl Config {
             discord_test_guild_id,
             database_url,
             realmeye_user_agent,
+            error_dm_user_ids,
         })
     }
+}
+
+/// Parse a comma-separated list of `u64` Discord user IDs. Whitespace
+/// around each entry is tolerated, empty entries are skipped (so a
+/// trailing comma is harmless). Returns `Err` on the first non-numeric
+/// entry so a typo doesn't silently disable error reporting.
+fn parse_user_id_list(s: String) -> Result<Vec<u64>, std::num::ParseIntError> {
+    s.split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::parse::<u64>)
+        .collect()
 }

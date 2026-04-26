@@ -1,5 +1,6 @@
 pub mod audit_log;
 pub mod channels;
+pub mod error_dm;
 pub mod guild;
 pub mod orphan_sweep;
 pub mod permission;
