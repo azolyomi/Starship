@@ -79,7 +79,39 @@
     "extends": "the_void",
     "display_name": "Fullskip Void",
     "message_title": "Fullskip Void Headcount",
-    "requires_vc": true
+    "requires_vc": true,
+    "reactions": [
+      {
+        "name": "interest",
+        "display_name": "Joining",
+        "emoji": "✅",
+        "sort_order": 0
+      },
+      {
+        "name": "lost_halls_key",
+        "display_name": "Lost Halls Key",
+        "emoji": "key_lost_halls",
+        "sort_order": 1
+      },
+      {
+        "name": "vial_of_pure_darkness",
+        "display_name": "Vial of Pure Darkness",
+        "emoji": "vial_of_pure_darkness",
+        "sort_order": 2
+      },
+      {
+        "name": "class_mystic",
+        "display_name": "Mystic",
+        "emoji": "class_mystic",
+        "sort_order": 3
+      },
+      {
+        "name": "status_stun",
+        "display_name": "Stun",
+        "emoji": "status_stun",
+        "sort_order": 4
+      }
+    ]
   },
   "void_remnant": {
     "extends": "the_void",
