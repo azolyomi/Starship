@@ -1,0 +1,35 @@
+#!/bin/sh
+# Auto-regenerate .sqlx/ when staged Rust changes might affect SQL queries.
+# Activated per-clone with: git config core.hooksPath .githooks
+#
+# Behaviour:
+#   - No staged .rs changes        -> no-op (fast path).
+#   - DATABASE_URL not loadable    -> skip with a warning (lets you commit
+#                                     from a machine without the dev DB,
+#                                     e.g. a CI runner or another laptop;
+#                                     CI build is the backstop).
+#   - Otherwise                    -> run `cargo sqlx prepare`, stage any
+#                                     resulting .sqlx/ updates so the
+#                                     commit captures the cache + the
+#                                     query change atomically.
+set -e
+
+if ! git diff --cached --name-only | grep -qE '\.rs$'; then
+    exit 0
+fi
+
+# Source .env so DATABASE_URL is picked up. `|| true` because a malformed
+# .env shouldn't block commits — sqlx-cli will fail loudly if it actually
+# needs the var.
+set -a
+. ./.env 2>/dev/null || true
+set +a
+
+if [ -z "${DATABASE_URL:-}" ]; then
+    echo "pre-commit: DATABASE_URL not set; skipping sqlx prepare." >&2
+    echo "pre-commit: CI will catch a stale .sqlx/ on push." >&2
+    exit 0
+fi
+
+cargo sqlx prepare --workspace >/dev/null
+git add .sqlx
