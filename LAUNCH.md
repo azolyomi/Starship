@@ -143,60 +143,63 @@ working baseline.
 
 ## Step 3 — Postgres backup cron
 
-Daily `pg_dump` from inside the container, written to a host directory,
-14-day rotation. Single shell script + cron entry; no compose changes.
+Nightly `pg_dump` from inside the postgres compose service, gzipped to a
+user-owned directory, 14-day rotation. Script lives at
+[`scripts/backup.sh`](scripts/backup.sh) and is committed in the repo —
+so a `git pull` on the VPS gives you the latest version.
 
-`/home/starship/Starship/scripts/backup.sh` (new file, mode 700):
+The script:
+- Uses the staged-tmp + rename pattern, so a broken pg_dump never
+  surfaces as the latest backup.
+- Aborts with a non-zero exit if the gzipped dump is under 10 KB — that
+  threshold catches the case where pg_dump errors out before producing
+  data (schema-only dumps land around 7 KB, so anything smaller is
+  broken).
+- Rotates anything older than `KEEP_DAYS` (default 14).
+
+Install on the VPS (one-time, as the `starship` user):
+
 ```bash
-#!/usr/bin/env bash
-set -euo pipefail
+mkdir -p ~/backups
+chmod 700 ~/backups
 
-REPO=/home/starship/Starship
-DEST=/var/backups/starship
-KEEP_DAYS=14
-
-mkdir -p "$DEST"
-chmod 700 "$DEST"
-
-cd "$REPO"
-ts=$(date -u +%Y%m%dT%H%M%SZ)
-out="$DEST/starship-$ts.sql.gz"
-
-docker compose exec -T postgres \
-    pg_dump -U starship -d starship --clean --if-exists \
-    | gzip -9 > "$out"
-
-# rotate
-find "$DEST" -name 'starship-*.sql.gz' -mtime +$KEEP_DAYS -delete
-
-# fail loudly if the dump is suspiciously small (<10 KB) — schema-only
-# dumps are ~7 KB, anything smaller means pg_dump errored mid-stream
-size=$(stat -c%s "$out")
-if [[ $size -lt 10240 ]]; then
-    echo "FATAL: backup is only $size bytes" >&2
-    rm -f "$out"
-    exit 1
-fi
+# add to user crontab
+crontab -e
+# paste:
+# 17 3 * * * /home/starship/Starship/scripts/backup.sh >>/home/starship/backups/backup.log 2>&1
 ```
 
-Wire it into root's crontab (root because /var/backups is root-owned):
+Verify with a one-shot manual run:
 ```bash
-sudo install -d -m 700 -o root /var/backups/starship
-sudo crontab -e
-# add:
-# 17 3 * * *  /home/starship/Starship/scripts/backup.sh >>/var/log/starship-backup.log 2>&1
+~/Starship/scripts/backup.sh
+ls -lh ~/backups/starship/
 ```
 
-Restoration drill (do this once, manually, to confirm the dump is real):
+**Restoration drill** — run this once now, then again whenever the
+schema changes meaningfully. Tests that the dump is real and the
+restore path actually works:
+
 ```bash
-gunzip -c /var/backups/starship/<latest>.sql.gz | \
-    docker compose exec -T postgres psql -U starship -d starship_restore_test
+LATEST=$(ls -t ~/backups/starship/starship-*.sql.gz | head -1)
+
+docker compose exec -T postgres psql -U starship -d postgres \
+    -c 'CREATE DATABASE starship_restore_test;'
+
+gunzip -c "$LATEST" | docker compose exec -T postgres \
+    psql -U starship -d starship_restore_test
+
+# sanity check
+docker compose exec -T postgres psql -U starship -d starship_restore_test \
+    -c 'SELECT count(*) FROM guilds;'
+
+docker compose exec -T postgres psql -U starship -d postgres \
+    -c 'DROP DATABASE starship_restore_test;'
 ```
 
 Off-site copy is a separate question — for a hobby bot the host-local
-backup is enough, but if the VPS dies you lose 24h. Cheap upgrade is
-`rclone` to a Backblaze B2 bucket nightly (~$0/mo at this volume).
-Defer until we feel the pain.
+backup is enough, but if the VPS dies you lose at most 24h plus
+whatever's in flight. Cheap upgrade is `rclone` to a Backblaze B2
+bucket nightly (~$0/mo at this volume). Defer until we feel the pain.
 
 ---
 
