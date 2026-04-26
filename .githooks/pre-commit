@@ -4,7 +4,7 @@
 #
 # Behaviour:
 #   - No staged .rs changes        -> no-op (fast path).
-#   - DATABASE_URL not loadable    -> skip with a warning (lets you commit
+#   - DATABASE_URL not findable    -> skip with a warning (lets you commit
 #                                     from a machine without the dev DB,
 #                                     e.g. a CI runner or another laptop;
 #                                     CI build is the backstop).
@@ -12,18 +12,26 @@
 #                                     resulting .sqlx/ updates so the
 #                                     commit captures the cache + the
 #                                     query change atomically.
+#
+# Note: we extract DATABASE_URL from .env with grep rather than
+# `. ./.env`. Sourcing the whole file aborts under `dash` (which git
+# uses for hooks on Debian) if any line has a shell syntax error —
+# e.g. an unquoted value with parens. Grep skips that minefield.
 set -e
 
 if ! git diff --cached --name-only | grep -qE '\.rs$'; then
     exit 0
 fi
 
-# Source .env so DATABASE_URL is picked up. `|| true` because a malformed
-# .env shouldn't block commits — sqlx-cli will fail loudly if it actually
-# needs the var.
-set -a
-. ./.env 2>/dev/null || true
-set +a
+if [ -f .env ]; then
+    DATABASE_URL=$(grep -E '^DATABASE_URL=' .env | head -n1 | cut -d= -f2-)
+    # Strip optional surrounding quotes.
+    DATABASE_URL=${DATABASE_URL#\"}
+    DATABASE_URL=${DATABASE_URL%\"}
+    DATABASE_URL=${DATABASE_URL#\'}
+    DATABASE_URL=${DATABASE_URL%\'}
+    export DATABASE_URL
+fi
 
 if [ -z "${DATABASE_URL:-}" ]; then
     echo "pre-commit: DATABASE_URL not set; skipping sqlx prepare." >&2

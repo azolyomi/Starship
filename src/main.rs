@@ -152,19 +152,16 @@ async fn run_bot(config: config::Config) -> Result<()> {
                             }
                             _ => {}
                         },
-                        // New guild joined (or existing guild went from
-                        // unavailable to available). Register slash commands
-                        // immediately so the user doesn't have to wait for
-                        // the global propagation window when adding the bot
-                        // somewhere fresh. `is_new == Some(false)` means
-                        // the bot was already a member and Discord is just
-                        // hydrating the guild on connect — those are
-                        // handled at startup by `register_in_known_guilds`,
-                        // so skip them here.
+                        // New guild joined. In dev (test_guild set) we
+                        // per-guild-register so commands appear instantly;
+                        // in prod we rely on global registration, and a
+                        // duplicate per-guild registration here would
+                        // double every command in the picker. New prod
+                        // joins eat the ~1h global propagation window.
                         serenity::FullEvent::GuildCreate {
                             guild,
                             is_new: Some(true),
-                        } => {
+                        } if data.config.discord_test_guild_id.is_some() => {
                             let commands = &framework.options().commands;
                             match poise::builtins::register_in_guild(ctx, commands, guild.id).await
                             {
@@ -190,16 +187,37 @@ async fn run_bot(config: config::Config) -> Result<()> {
         .setup(move |ctx, ready, framework| {
             Box::pin(async move {
                 let commands = &framework.options().commands;
-                register_in_known_guilds(ctx, commands, ready, test_guild).await;
-                // Without a configured test guild we're in production mode:
-                // register globally too so guilds the bot joins later (and
-                // any guilds we didn't see in `ready.guilds`) eventually
-                // pick up the commands without needing a per-guild
-                // registration. Skipped in dev so test-guild iteration
-                // doesn't pollute the global command set.
-                if test_guild.is_none() {
-                    poise::builtins::register_globally(ctx, commands).await?;
-                    info!("registered commands globally");
+                match test_guild {
+                    Some(gid) => {
+                        // Dev: per-guild only, in the test guild. Skips
+                        // the ~1h global propagation window and avoids
+                        // polluting the global command set with WIP
+                        // iterations.
+                        match poise::builtins::register_in_guild(ctx, commands, gid).await {
+                            Ok(()) => info!(guild_id = %gid, "registered commands in test guild"),
+                            Err(e) => error!(
+                                error = ?e,
+                                guild_id = %gid,
+                                "failed to register commands in test guild",
+                            ),
+                        }
+                    }
+                    None => {
+                        // Prod: global registration. Discord caches by
+                        // application id so subsequent boots are a no-op
+                        // for already-known commands.
+                        poise::builtins::register_globally(ctx, commands).await?;
+                        info!("registered commands globally");
+                        // One-time cleanup: clear per-guild registrations
+                        // left over from any prior dev boot under the
+                        // same application id. Without this, those
+                        // per-guild commands appear alongside the new
+                        // globals as duplicates in the picker. Cheap
+                        // (one HTTP call per guild the bot is in) and
+                        // idempotent — once cleared, future boots see
+                        // an already-empty per-guild set.
+                        clear_per_guild_commands(ctx, ready).await;
+                    }
                 }
                 // Reconcile DB lifecycle rows against Discord state. Failure
                 // is logged but doesn't block startup — running the bot with
@@ -235,36 +253,28 @@ async fn run_bot(config: config::Config) -> Result<()> {
     Ok(())
 }
 
-/// Register slash commands in every guild the bot is currently a
-/// member of (per the `Ready` payload), plus the configured test guild
-/// if it isn't already in that list. Per-guild registration is
-/// effectively instant — Discord skips the global ~1 hour propagation
-/// window — so this gives commands immediate availability everywhere
-/// the bot lives, including freshly-added guilds operators want to
-/// poke at right now.
+/// Clear per-guild slash command registrations for every guild the
+/// bot is currently a member of. Used on prod startup to scrub stale
+/// per-guild registrations left behind by an earlier dev boot of the
+/// same Discord application — without this they coexist with the new
+/// global registration and Discord shows every command twice.
 ///
-/// Failures are logged but never fatal: a single guild rejecting
-/// registration (kicked between gateway connect and HTTP call,
-/// rate-limited, etc.) shouldn't block startup for the other guilds.
-async fn register_in_known_guilds(
-    ctx: &serenity::Context,
-    commands: &[poise::Command<BotData, BotError>],
-    ready: &serenity::Ready,
-    test_guild: Option<serenity::GuildId>,
-) {
-    let mut guild_ids: Vec<serenity::GuildId> = ready.guilds.iter().map(|g| g.id).collect();
-    if let Some(test_id) = test_guild {
-        if !guild_ids.contains(&test_id) {
-            guild_ids.push(test_id);
-        }
-    }
-
-    for gid in guild_ids {
-        match poise::builtins::register_in_guild(ctx, commands, gid).await {
-            Ok(()) => info!(guild_id = %gid, "registered commands in guild"),
-            Err(e) => {
-                tracing::warn!(error = ?e, guild_id = %gid, "guild command registration failed")
-            }
+/// Idempotent (clearing an already-empty set is a no-op on Discord's
+/// side) and cheap: one HTTP call per guild. Failures are logged
+/// individually so one rate-limited / kicked guild doesn't abort the
+/// rest.
+async fn clear_per_guild_commands(ctx: &serenity::Context, ready: &serenity::Ready) {
+    // Annotated empty slice — `register_in_guild` is generic over the bot's
+    // command type and rustc can't infer it from `&[]` alone.
+    let empty: &[poise::Command<BotData, BotError>] = &[];
+    for guild in &ready.guilds {
+        match poise::builtins::register_in_guild(ctx, empty, guild.id).await {
+            Ok(()) => info!(guild_id = %guild.id, "cleared per-guild commands"),
+            Err(e) => tracing::warn!(
+                error = ?e,
+                guild_id = %guild.id,
+                "failed to clear per-guild commands",
+            ),
         }
     }
 }
