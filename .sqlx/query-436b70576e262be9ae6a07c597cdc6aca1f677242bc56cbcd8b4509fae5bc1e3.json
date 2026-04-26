@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO verified_users\n            (guild_id, discord_user_id, realmeye_ign, verified_at, verified_by)\n         VALUES ($1, $2, $3, NOW(), $4)\n         ON CONFLICT (guild_id, discord_user_id) DO UPDATE\n            SET realmeye_ign = EXCLUDED.realmeye_ign,\n                verified_at  = NOW(),\n                verified_by  = EXCLUDED.verified_by",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "436b70576e262be9ae6a07c597cdc6aca1f677242bc56cbcd8b4509fae5bc1e3"
+}

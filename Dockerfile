@@ -19,6 +19,12 @@ FROM rust:1.95.0-slim-bookworm AS builder
 
 WORKDIR /app
 
+# Force sqlx's compile-time query macros to use the pre-generated offline
+# cache (`.sqlx/`) instead of trying to open a live DB connection — there's
+# no Postgres reachable from the build container. The cache is regenerated
+# in dev with `cargo sqlx prepare` whenever a query changes.
+ENV SQLX_OFFLINE=true
+
 # Warm the dependency cache first: copy only the manifests, build a stub
 # crate, then swap in the real sources. Subsequent rebuilds that only touch
 # src/ skip re-downloading and re-compiling deps.
@@ -32,6 +38,7 @@ RUN mkdir -p src \
 COPY src ./src
 COPY migrations ./migrations
 COPY data ./data
+COPY .sqlx ./.sqlx
 RUN touch src/main.rs \
     && cargo build --release --locked
 

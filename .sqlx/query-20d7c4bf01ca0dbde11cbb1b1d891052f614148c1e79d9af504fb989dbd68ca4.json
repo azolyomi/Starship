@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM permissions\n         WHERE guild_id = $1\n           AND role_id = $2\n           AND action = $3\n           AND COALESCE(tier_id, 0) = COALESCE($4, 0)\n           AND COALESCE(dungeon_template_id, 0) = COALESCE($5, 0)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Text",
+        "Int4",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "20d7c4bf01ca0dbde11cbb1b1d891052f614148c1e79d9af504fb989dbd68ca4"
+}

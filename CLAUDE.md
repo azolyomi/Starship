@@ -1,37 +1,8 @@
 # Starship — project rules for Claude
 
-## Context-cost hygiene (IMPORTANT)
-
-This is a long-running implementation project. Context is expensive. Work in
-discrete chunks and hand control back to the user at natural breakpoints so
-they can reset your context (`/clear`) between chunks.
-
-**A breakpoint is appropriate when:**
-- A phase from `PLAN.md` is complete and the code compiles, OR
-- A coherent sub-unit is done (e.g. "schema + setup.sh", "bot skeleton
-  connects to Discord", "one full command flow works end-to-end"), AND
-- The next unit of work is large enough that continuing would meaningfully
-  grow the transcript.
-
-**At every breakpoint, in this order:**
-1. Make sure any in-flight file write / tool call is finished — never stop
-   mid-edit.
-2. Update `PLAN.md`: mark finished items under "## Progress" with the date
-   and a one-line note on what landed. Leave the original build order intact.
-3. **Stage and commit every dirty file.** A context reset is always preceded
-   by a commit — this is non-negotiable. The commit is what the next
-   session's Claude reads to rebuild context; uncommitted work is invisible
-   to a fresh session. One commit per breakpoint is fine; split only if
-   there are genuinely unrelated changes. Never skip hooks, never force
-   push. If the working tree is already clean, say so explicitly in the
-   handoff.
-4. Post a short handoff: what was done, what the next chunk is, any
-   decisions the user needs to make, and any credentials still needed.
-5. End with an explicit nudge: **"Run `/clear` and tell me to resume — I'll
-   pick up from PLAN.md's Progress section."**
-
-Do not chain multiple phases in a single session unless the user explicitly
-asks for it.
+The implementation phase is finished; the codebase is post-launch from the
+spec side. Day-to-day work is now production launch + ongoing maintenance.
+The launch checklist lives in `LAUNCH.md`.
 
 ## Secret files (IMPORTANT)
 
@@ -119,7 +90,7 @@ one costs compounding tech debt.
 - Run `cargo build` (and `cargo clippy` once we wire it up) after each
   meaningful edit batch. Compilation errors are cheaper to fix in-session
   than after a handoff.
-- Prefer editing `PLAN.md` and this file over spawning new docs.
+- Prefer editing `LAUNCH.md` and this file over spawning new docs.
 
 # Agent Guidelines for Rust Code Quality
 

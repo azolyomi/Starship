@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT realmeye_ign FROM verified_users\n         WHERE guild_id = $1 AND discord_user_id = $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "realmeye_ign",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "ced394f7aefe69acdcaccf81e30d3f5cfb6928f4bf45fff97da1c3ec1a9af348"
+}

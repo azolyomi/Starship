@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT dungeon_template_id FROM tier_dungeons WHERE tier_id = $1 ORDER BY dungeon_template_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "dungeon_template_id",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "92948029a87f286340a3a2b9667a5b3d268bad3796b8fd0ebfafb272da66a7d9"
+}

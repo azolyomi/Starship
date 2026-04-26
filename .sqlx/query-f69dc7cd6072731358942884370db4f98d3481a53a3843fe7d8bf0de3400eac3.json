@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM verifications\n         WHERE guild_id = $1 AND discord_user_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f69dc7cd6072731358942884370db4f98d3481a53a3843fe7d8bf0de3400eac3"
+}

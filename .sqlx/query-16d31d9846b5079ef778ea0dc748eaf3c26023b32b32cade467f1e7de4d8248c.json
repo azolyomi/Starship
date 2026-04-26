@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT COUNT(*) FROM self_organize_slot_claims\n          WHERE guild_id = $1 AND leader_user_id = $2 AND is_self_organized = TRUE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "16d31d9846b5079ef778ea0dc748eaf3c26023b32b32cade467f1e7de4d8248c"
+}

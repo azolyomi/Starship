@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT discord_user_id FROM verified_users\n         WHERE guild_id = $1 AND realmeye_ign = $2 AND discord_user_id <> $3",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "discord_user_id",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "880c20003645f09eb8498df3a9678e076348b60fbb9a6c86d3292d6989f832bc"
+}

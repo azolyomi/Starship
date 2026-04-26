@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM self_organize_slot_claims\n          WHERE guild_id = $1 AND tier_id = $2 AND dungeon_template_id = $3",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int4",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "29677f941ae78322db0df47674d98ce54cdb47c405c5597673464b1e4aadbc80"
+}

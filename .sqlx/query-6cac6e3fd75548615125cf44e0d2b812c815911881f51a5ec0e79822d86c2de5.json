@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO tier_dungeons (tier_id, dungeon_template_id)\n         VALUES ($1, $2) ON CONFLICT DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6cac6e3fd75548615125cf44e0d2b812c815911881f51a5ec0e79822d86c2de5"
+}

@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT role_id FROM permissions\n         WHERE tier_id = $1 AND action = 'StartHeadcount'\n         ORDER BY role_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "role_id",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "2f463de302b0f62297a3a400b159a21e6ea3c1f6fee7c65f1aa0f65a350ae9e5"
+}

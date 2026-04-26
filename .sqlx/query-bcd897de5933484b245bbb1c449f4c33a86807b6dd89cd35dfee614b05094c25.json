@@ -1,0 +1,52 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, guild_id, role_id, action, tier_id, dungeon_template_id\n         FROM permissions\n         WHERE guild_id = $1\n         ORDER BY action, role_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 1,
+        "name": "guild_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "role_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "action",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "tier_id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 5,
+        "name": "dungeon_template_id",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "bcd897de5933484b245bbb1c449f4c33a86807b6dd89cd35dfee614b05094c25"
+}
