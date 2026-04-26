@@ -266,77 +266,85 @@ a future change, not a launch-day one.
 
 ## Step 5 — GitHub Actions CI/CD
 
-Trigger: push to `main`. Action: SSH to the VPS as a dedicated deploy
-user, run `./deploy.sh`. Builds happen *on the VPS* (the Docker layer
-cache there is what matters); Actions just orchestrates.
+Trigger: push to `main`. Pipeline:
+1. Build + lint + test on a GitHub-hosted runner (`SQLX_OFFLINE=true`,
+   no DB needed).
+2. SSH to the VPS as the `starship` user and run `deploy.sh`.
+3. Post deploy-start / deploy-done / deploy-failed notifications to a
+   Discord channel via webhook.
 
-### 5.1 VPS side
+The workflow lives at
+[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml). Builds
+happen *on the VPS* under Docker (the Compose layer cache is what
+matters for fast redeploys); Actions just orchestrates.
+
+### 5.1 VPS side — deploy key
+
+Generate a dedicated SSH key for GitHub Actions on the VPS. Authorise it
+to run *only* `deploy.sh`, so the key is useless if leaked.
+
 ```bash
-# on the VPS, as starship user
+# on the VPS, as the starship user
 ssh-keygen -t ed25519 -C "github-actions" -f ~/.ssh/gh_deploy -N ""
-cat ~/.ssh/gh_deploy.pub >> ~/.ssh/authorized_keys
-cat ~/.ssh/gh_deploy           # copy this private key into GH Secrets
 ```
 
-Restrict the deploy key to running only `deploy.sh` by prefixing the
-`authorized_keys` line:
+Edit `~/.ssh/authorized_keys` and add the deploy key as a new line,
+prefixed with the lockdown options:
+
 ```
-command="cd /home/starship/Starship && ./deploy.sh",no-port-forwarding,no-X11-forwarding,no-agent-forwarding ssh-ed25519 AAAA... github-actions
+command="/home/starship/Starship/deploy.sh",no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty ssh-ed25519 AAAA…<paste contents of ~/.ssh/gh_deploy.pub>… github-actions
 ```
-That makes the key useless if leaked — it can only run the deploy
-script, not get a shell.
 
-### 5.2 GitHub side
-Repo → Settings → Secrets and variables → Actions. Add:
-- `VPS_HOST` — the IP or hostname.
-- `VPS_USER` — `starship`.
-- `VPS_SSH_KEY` — the private key from above (multi-line value).
-- `VPS_KNOWN_HOSTS` — output of `ssh-keyscan <vps-host>` so we don't
-  bypass host-key checking.
+The `command=` directive overrides whatever the SSH client tries to
+run. Even an interactive `ssh` invocation runs only `deploy.sh` and
+exits.
 
-### 5.3 Workflow file
-`.github/workflows/deploy.yml`:
-```yaml
-name: deploy
-on:
-  push:
-    branches: [main]
-  workflow_dispatch:
+Then dump the private key for GH Secrets, and the host fingerprint for
+known-hosts pinning:
 
-concurrency:
-  group: deploy-prod
-  cancel-in-progress: false
-
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo fmt --check
-      - run: cargo clippy --all-targets -- -D warnings
-      # cargo test needs a postgres for sqlx — defer until we want it.
-      # - run: cargo test
-
-  deploy:
-    needs: test
-    runs-on: ubuntu-latest
-    steps:
-      - name: Configure SSH
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          echo "${{ secrets.VPS_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
-      - name: Trigger deploy
-        run: ssh ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}
+```bash
+cat ~/.ssh/gh_deploy            # private key — paste into VPS_SSH_KEY
+ssh-keyscan -t ed25519 $(hostname -I | awk '{print $1}')   # paste into VPS_KNOWN_HOSTS
 ```
-Because of the `command="..."` restriction in `authorized_keys`, the
-empty `ssh` invocation runs `deploy.sh` server-side. No `cd`, no shell
-injection surface.
 
-### 5.4 Migration concern
+### 5.2 Discord webhook
+
+Pick (or create) a channel for deploy notifications. In Discord:
+**Channel Settings → Integrations → Webhooks → New Webhook**, give it a
+name (e.g. `Starship Deploys`), copy the webhook URL.
+
+The URL is the secret — anyone with it can post to that channel as
+that webhook. Treat it like a token. Rotate via the same UI if it leaks.
+
+### 5.3 GitHub secrets
+
+Repo → Settings → Secrets and variables → Actions → New repository
+secret. Add:
+
+| Secret | Value |
+|--------|-------|
+| `VPS_HOST` | VPS IP or hostname |
+| `VPS_USER` | `starship` |
+| `VPS_SSH_KEY` | full contents of `~/.ssh/gh_deploy` (private key, multi-line) |
+| `VPS_KNOWN_HOSTS` | `ssh-keyscan` output from 5.1 |
+| `DISCORD_DEPLOY_WEBHOOK_URL` | from 5.2 (optional — workflow no-ops the notify steps if empty) |
+
+### 5.4 Verify
+
+Push a no-op commit (or use the **Actions** tab → **deploy** workflow →
+**Run workflow** button). Watch the run; you should see, in order:
+
+- `:construction: Deploying ABC1234 to prod (bot will restart in ~30s)…`
+  in the Discord channel.
+- The workflow's `Trigger deploy` step succeeding (it'll show the
+  deploy.sh output streamed back).
+- `:white_check_mark: Deployed ABC1234 to prod — bot is back up`.
+
+Failure (build error, SSH timeout, etc.) sends a `:x:` message with a
+direct link to the failed run.
+
+### 5.5 Migration concern
+
 `sqlx::migrate!` runs on bot startup, so the deploy is a single
 `docker compose up -d --build` and forward-only migrations are
 self-applying. Backwards-incompatible schema changes (drop a column the
