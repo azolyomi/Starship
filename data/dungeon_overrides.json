@@ -106,9 +106,9 @@
         "sort_order": 3
       },
       {
-        "name": "status_stun",
+        "name": "status_stunned",
         "display_name": "Stun",
-        "emoji": "status_stun",
+        "emoji": "status_stunned",
         "sort_order": 4
       }
     ]
