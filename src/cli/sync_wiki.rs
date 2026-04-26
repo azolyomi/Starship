@@ -73,9 +73,26 @@ static SEL_ANY_TABLE_ROW: Lazy<Selector> =
 
 const REALMEYE_BASE: &str = "https://www.realmeye.com";
 const DUNGEONS_PATH: &str = "/wiki/dungeons";
+const CLASSES_PATH: &str = "/wiki/classes";
+const STATUS_EFFECTS_PATH: &str = "/wiki/status-effects";
 
 // Discord emoji constraints.
 const EMOJI_MAX_SIDE: u32 = 128;
+
+// ---------------------------------------------------------------------------
+// Catalogue (classes / status effects) scraping.
+//
+// These pages don't contribute to wiki_dump.json — they only populate
+// `bot_emoji` so the operator can reference logical names like
+// `class_wizard` or `status_paralyzed` from `data/dungeon_overrides.json`.
+// They are never auto-attached to a dungeon's reactions.
+// ---------------------------------------------------------------------------
+
+/// Every `<a>` on a page, used by both catalogue scrapers. Cheaper than
+/// re-parsing the same selector twice and lets the parsers share filtering
+/// logic.
+static SEL_ANY_ANCHOR: Lazy<Selector> =
+    Lazy::new(|| Selector::parse("a").expect("static selector"));
 
 // ---------------------------------------------------------------------------
 // Dungeon-level filtering. Applied after `scrape_dungeon_list` pulls the
@@ -143,6 +160,17 @@ struct DropItem {
     /// RealmEye link to the item's own wiki page. Source for the bag-tier
     /// classification (parsed from the "Loot Bag" table row).
     item_wiki_path: Option<String>,
+}
+
+/// One entry from a catalogue page (class or status effect). The logical
+/// name is the prefixed slug we store in `bot_emoji` (`class_wizard`,
+/// `status_paralyzed`, …); display name is the human-readable label
+/// pulled from the img alt; img URL is the absolute image URL ready for
+/// download.
+struct CatalogueEmoji {
+    logical_name: String,
+    display_name: String,
+    img_url: String,
 }
 
 /// Result of fetching an item's wiki page for bag-tier classification.
@@ -549,6 +577,38 @@ pub async fn run(dry_run: bool, purge: bool) -> Result<()> {
         dump.dungeons.push(dump_dungeon);
     }
 
+    // ---------------------------------------------------------------------
+    // Catalogue scrapes. These populate `bot_emoji` only — they're not
+    // appended to `dump`, so `templates::load_and_seed` never auto-attaches
+    // them to a dungeon's reactions. The operator references them by
+    // logical name from `data/dungeon_overrides.json` (e.g. `class_warrior`,
+    // `status_paralyzed`) when a specific dungeon needs them.
+    // ---------------------------------------------------------------------
+    upload_catalogue(
+        "classes",
+        "class",
+        scrape_classes(&client).await,
+        &client,
+        &emoji_api,
+        &mut existing,
+        pool.as_ref(),
+        dry_run,
+        &mut summary,
+    )
+    .await?;
+    upload_catalogue(
+        "status effects",
+        "status_effect",
+        scrape_status_effects(&client).await,
+        &client,
+        &emoji_api,
+        &mut existing,
+        pool.as_ref(),
+        dry_run,
+        &mut summary,
+    )
+    .await?;
+
     if !dry_run {
         dump.save()?;
         info!("wrote wiki dump → data/wiki_dump.json");
@@ -619,6 +679,76 @@ async fn upload_if_new(
     // back to uploading to a guild emoji server and set source_guild_id.
 
     Ok(UploadOutcome::Uploaded(result.0, result.1))
+}
+
+/// Upload a catalogue (classes / status effects) and write `bot_emoji`
+/// rows. `scrape_result` is taken by value so the caller can pass an
+/// already-awaited `Result` — a scrape failure is logged and swallowed
+/// (we'd rather complete the rest of the run than abort sync-wiki over a
+/// secondary index).
+#[allow(clippy::too_many_arguments)]
+async fn upload_catalogue(
+    label: &str,
+    category: &'static str,
+    scrape_result: Result<Vec<CatalogueEmoji>>,
+    http: &Client,
+    api: &ApplicationEmojiClient,
+    existing: &mut std::collections::HashMap<String, (u64, bool)>,
+    pool: Option<&sqlx::PgPool>,
+    dry_run: bool,
+    summary: &mut DrySummary,
+) -> Result<()> {
+    let entries = match scrape_result {
+        Ok(v) => v,
+        Err(e) => {
+            warn!("failed to scrape {label}: {e:#}");
+            return Ok(());
+        }
+    };
+    info!("scraped {} {label} entries", entries.len());
+
+    for entry in &entries {
+        let dname = discord_name(&entry.logical_name);
+        match upload_if_new(
+            http,
+            api,
+            existing,
+            &dname,
+            &entry.img_url,
+            dry_run,
+            summary,
+        )
+        .await
+        {
+            Ok(UploadOutcome::Existing(emoji_id, animated))
+            | Ok(UploadOutcome::Uploaded(emoji_id, animated)) => {
+                if let Some(pool) = pool {
+                    db::emoji::upsert(
+                        pool,
+                        &entry.logical_name,
+                        emoji_id as i64,
+                        &dname,
+                        animated,
+                        None,
+                        Some(category),
+                        Some(&entry.img_url),
+                        None,
+                    )
+                    .await?;
+                }
+            }
+            Ok(UploadOutcome::WouldUpload) => {
+                info!(
+                    "[dry-run] would upsert bot_emoji name={} category={category} ({})",
+                    entry.logical_name, entry.display_name
+                );
+                summary.would_upsert_emoji += 1;
+            }
+            Err(e) => warn!("{label} emoji {dname}: {e:#}"),
+        }
+    }
+
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -1037,6 +1167,144 @@ async fn scrape_item_page(client: &Client, item_path: &str) -> Result<ItemBagInf
 }
 
 // ---------------------------------------------------------------------------
+// Catalogue scrapers (classes + status effects).
+//
+// Both pages render their entries as `<a><img alt="…" src="…"></a>` pairs.
+// They differ in two ways:
+//
+// - **Classes** link out to `/wiki/<class>` (one-word lowercase slugs); we
+//   take the slug from the URL so we don't accidentally pick up sidebar
+//   wiki links (e.g. `/wiki/Special:Recent`) that happen to have an img.
+// - **Status effects** link to in-page anchors `#<status>`; the alt text is
+//   the canonical label, and we slug from it via `slug_from_display`.
+//
+// Neither list is added to `wiki_dump.json` — these emojis exist only in
+// `bot_emoji` so the operator can name them from `dungeon_overrides.json`.
+// ---------------------------------------------------------------------------
+
+async fn scrape_classes(client: &Client) -> Result<Vec<CatalogueEmoji>> {
+    let url = format!("{}{}", REALMEYE_BASE, CLASSES_PATH);
+    let html = client
+        .get(&url)
+        .send()
+        .await
+        .with_context(|| format!("fetching {url}"))?
+        .text()
+        .await?;
+    Ok(parse_class_entries(&html))
+}
+
+async fn scrape_status_effects(client: &Client) -> Result<Vec<CatalogueEmoji>> {
+    let url = format!("{}{}", REALMEYE_BASE, STATUS_EFFECTS_PATH);
+    let html = client
+        .get(&url)
+        .send()
+        .await
+        .with_context(|| format!("fetching {url}"))?
+        .text()
+        .await?;
+    Ok(parse_status_effect_entries(&html))
+}
+
+/// Pull every `<a href="/wiki/<slug>"><img alt="…" src="…"></a>` from the
+/// classes index where `<slug>` is purely lowercase ASCII letters. The
+/// lowercase-only filter is the cheap way to ignore namespaced wiki pages
+/// (`/wiki/Special:Foo`, `/wiki/User:Bar`) and section anchors with
+/// hyphens or colons that aren't class entries.
+fn parse_class_entries(html: &str) -> Vec<CatalogueEmoji> {
+    let doc = Html::parse_document(html);
+    let mut out = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+
+    for anchor in doc.select(&SEL_ANY_ANCHOR) {
+        let href = match anchor.value().attr("href") {
+            Some(h) => h,
+            None => continue,
+        };
+        let slug = match href.strip_prefix("/wiki/") {
+            Some(s) => s,
+            None => continue,
+        };
+        if slug.is_empty() || !slug.chars().all(|c| c.is_ascii_lowercase()) {
+            continue;
+        }
+        let img = match anchor.select(&SEL_ANY_IMG).next() {
+            Some(i) => i,
+            None => continue,
+        };
+        let alt = img.value().attr("alt").unwrap_or("").trim();
+        if alt.is_empty() {
+            continue;
+        }
+        let img_url = match img.value().attr("src") {
+            Some(s) => absolute_url(s),
+            None => continue,
+        };
+
+        let logical_name = format!("class_{slug}");
+        if !seen.insert(logical_name.clone()) {
+            continue;
+        }
+        out.push(CatalogueEmoji {
+            logical_name,
+            display_name: alt.to_string(),
+            img_url,
+        });
+    }
+
+    out
+}
+
+/// Pull every `<a href="#…"><img alt="…" src="…"></a>` from the status
+/// effects index. The href anchor itself is unused — we slug from the alt
+/// text, which is the canonical status name (e.g. "Lethal Strike" →
+/// `status_lethal_strike`). Anchors without an img child are the textual
+/// "No Icon" entries the bot can't render, so they're skipped.
+fn parse_status_effect_entries(html: &str) -> Vec<CatalogueEmoji> {
+    let doc = Html::parse_document(html);
+    let mut out = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+
+    for anchor in doc.select(&SEL_ANY_ANCHOR) {
+        let href = match anchor.value().attr("href") {
+            Some(h) => h,
+            None => continue,
+        };
+        if !href.starts_with('#') {
+            continue;
+        }
+        let img = match anchor.select(&SEL_ANY_IMG).next() {
+            Some(i) => i,
+            None => continue,
+        };
+        let alt = img.value().attr("alt").unwrap_or("").trim();
+        if alt.is_empty() {
+            continue;
+        }
+        let img_url = match img.value().attr("src") {
+            Some(s) => absolute_url(s),
+            None => continue,
+        };
+
+        let slug = slug_from_display(alt);
+        if slug.is_empty() {
+            continue;
+        }
+        let logical_name = format!("status_{slug}");
+        if !seen.insert(logical_name.clone()) {
+            continue;
+        }
+        out.push(CatalogueEmoji {
+            logical_name,
+            display_name: alt.to_string(),
+            img_url,
+        });
+    }
+
+    out
+}
+
+// ---------------------------------------------------------------------------
 // Image helpers.
 // ---------------------------------------------------------------------------
 
@@ -1164,7 +1432,8 @@ async fn purge_all(emoji_api: &ApplicationEmojiClient, pool: Option<&sqlx::PgPoo
 #[cfg(test)]
 mod tests {
     use super::{
-        extract_drops_section, keep_dungeon_sections, parse_drop_items, slug_from_display,
+        extract_drops_section, keep_dungeon_sections, parse_class_entries, parse_drop_items,
+        parse_status_effect_entries, slug_from_display,
     };
 
     #[test]
@@ -1323,5 +1592,63 @@ mod tests {
         );
         assert!(!kept.contains("EVENT_ROW_DROP"), "event leaked: {kept}");
         assert!(!kept.contains("OTHER_ROW_DROP"), "other leaked: {kept}");
+    }
+
+    #[test]
+    fn classes_parser_keeps_class_anchors_only() {
+        // Mirrors RealmEye's /wiki/classes layout (2026-04): one anchor per
+        // class with a `/wiki/<lowercase>` href and a child img bearing the
+        // class name as alt. Sidebar/namespaced links and bare anchors
+        // without imgs must be ignored. Duplicates collapse on logical
+        // name.
+        let html = r##"
+            <a href="/wiki/Special:Recent">Recent changes</a>
+            <a href="/wiki/wizard"><img src="/s/wiz.png" alt="Wizard"></a>
+            <a href="/wiki/priest"><img src="/s/pri.png" alt="Priest"></a>
+            <a href="/wiki/wizard"><img src="/s/wiz.png" alt="Wizard"></a>
+            <a href="/wiki/main_page"><img src="/s/m.png" alt="Main Page"></a>
+            <a href="/wiki/knight"><img src="/s/kt.png" alt="Knight"></a>
+            <a href="/wiki/no-img-class"></a>
+        "##;
+        let entries = parse_class_entries(html);
+        let names: Vec<&str> = entries.iter().map(|e| e.logical_name.as_str()).collect();
+        // `main_page` has an underscore so it fails the lowercase-letters-only
+        // filter and is excluded. Recent changes anchor has no img and is
+        // dropped. Duplicate Wizard collapses to one row.
+        assert_eq!(names, &["class_wizard", "class_priest", "class_knight"]);
+        let wiz = &entries[0];
+        assert_eq!(wiz.display_name, "Wizard");
+        assert_eq!(wiz.img_url, "https://www.realmeye.com/s/wiz.png");
+    }
+
+    #[test]
+    fn status_parser_keeps_anchored_imgs_only() {
+        // Mirrors /wiki/status-effects: each icon is an `<a href="#name">`
+        // whose only child is the icon img. The "No Icon" entries are
+        // bare text anchors without imgs — they must not be picked up,
+        // since the bot can't render an emoji without a sprite.
+        let html = r##"
+            <h2>Positive Status Effects</h2>
+            <a href="#armored"><img src="/s/arm.png" alt="Armored"></a>
+            <a href="#lethal-strike"><img src="/s/ls.png" alt="Lethal Strike"></a>
+            <h2>Negative Status Effects</h2>
+            <a href="#paralyzed"><img src="/s/par.png" alt="Paralyzed"></a>
+            <a href="#paralyzed"><img src="/s/par.png" alt="Paralyzed"></a>
+            <h2>No Icon</h2>
+            <a href="#stasis">Stasis</a>
+            <a href="/wiki/elsewhere"><img src="/s/x.png" alt="Elsewhere"></a>
+        "##;
+        let entries = parse_status_effect_entries(html);
+        let names: Vec<&str> = entries.iter().map(|e| e.logical_name.as_str()).collect();
+        // External `/wiki/` anchor is rejected; "No Icon" textual anchor
+        // is rejected; multi-word alt slugs to underscored form;
+        // duplicates collapse.
+        assert_eq!(
+            names,
+            &["status_armored", "status_lethal_strike", "status_paralyzed"]
+        );
+        let ls = &entries[1];
+        assert_eq!(ls.display_name, "Lethal Strike");
+        assert_eq!(ls.img_url, "https://www.realmeye.com/s/ls.png");
     }
 }

@@ -145,6 +145,11 @@ async fn missing_reactions(
 
     let mut missing = Vec::new();
     for required in reactions_list {
+        // num_required <= 0 means the reaction renders + is clickable but
+        // does not gate /start (e.g. an optional key on a low-key dungeon).
+        if required.num_required <= 0 {
+            continue;
+        }
         let Some(required_rt) = emoji_rt(&required.emoji, emoji_map) else {
             // Emoji not resolvable (logical name never uploaded). Don't block
             // the raid on something the bot couldn't render in the first

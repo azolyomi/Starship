@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-04-24T23:37:34.175183406Z",
+  "generated_at": "2026-04-26T00:03:48.762235101Z",
   "dungeons": [
     {
       "name": "pirate_cave",
@@ -387,10 +387,6 @@
         {
           "logical_name": "sprite_star_pet_skin",
           "img_url": "https://www.realmeye.com/s/a/img/wiki/i/AhV9pPA.png"
-        },
-        {
-          "logical_name": "celestial_forest_blueprint",
-          "img_url": "https://www.realmeye.com/s/a/img/wiki/i/vM87n8D.png"
         },
         {
           "logical_name": "tarot_card_pack",

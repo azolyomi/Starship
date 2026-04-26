@@ -34,7 +34,25 @@
       }
     ]
   },
+  "lost_halls": {
+    "display_name": "MBC Skip",
+    "reactions": [
+      {
+        "name": "interest",
+        "display_name": "Joining",
+        "emoji": "✅",
+        "sort_order": 0
+      },
+      {
+        "name": "lost_halls_key",
+        "display_name": "Lost Halls Key",
+        "emoji": "key_lost_halls",
+        "sort_order": 1
+      }
+    ]
+  },
   "the_void": {
+    "display_name": "Void",
     "requires_vc": false,
     "reactions": [
       {
@@ -62,6 +80,25 @@
     "display_name": "Fullskip Void",
     "message_title": "Fullskip Void Headcount",
     "requires_vc": true
+  },
+  "void_remnant": {
+    "extends": "the_void",
+    "display_name": "Void Remnant",
+    "reactions": [
+      {
+        "name": "interest",
+        "display_name": "Joining",
+        "emoji": "✅",
+        "sort_order": 0
+      },
+      {
+        "name": "key",
+        "display_name": "Key",
+        "emoji": "🔑",
+        "num_required": 0,
+        "sort_order": 1
+      }
+    ]
   },
   "cultist_hideout": {
     "requires_vc": false,
