@@ -46,6 +46,44 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           echo "${{ secrets.VPS_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
 
+      # Build the commit context once, reuse from each notify step.
+      # github.event.commits is populated on push events; empty for
+      # workflow_dispatch — both cases produce a sensible message.
+      # Caps the displayed list at 5 commits to stay well under
+      # Discord's 2000-char limit, with a "...and N more" tail.
+      - name: Build commit context
+        id: ctx
+        run: |
+          SHORT_SHA=$(echo "${GITHUB_SHA}" | cut -c1-7)
+          COMMIT_COUNT=$(jq -r '.commits | length // 0' "$GITHUB_EVENT_PATH")
+
+          if [ "$COMMIT_COUNT" -gt 0 ]; then
+            COMMITS_BLOCK=$(jq -r '
+              .commits
+              | .[0:5]
+              | map("> " + (.message | split("\n")[0]))
+              | join("\n")
+            ' "$GITHUB_EVENT_PATH")
+            if [ "$COMMIT_COUNT" -gt 5 ]; then
+              COMMITS_BLOCK="${COMMITS_BLOCK}"$'\n'"> …and $((COMMIT_COUNT - 5)) more"
+            fi
+            COUNT_SUFFIX=""
+            if [ "$COMMIT_COUNT" -gt 1 ]; then
+              COUNT_SUFFIX=" (${COMMIT_COUNT} commits)"
+            fi
+          else
+            COMMITS_BLOCK=""
+            COUNT_SUFFIX=" (manual)"
+          fi
+
+          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "count_suffix=${COUNT_SUFFIX}" >> "$GITHUB_OUTPUT"
+          {
+            echo "commits_block<<COMMITS_EOF"
+            echo "$COMMITS_BLOCK"
+            echo "COMMITS_EOF"
+          } >> "$GITHUB_OUTPUT"
+
       # Webhook posts return a Message object when ?wait=true is
       # appended; we capture (channel_id, message_id) and follow up
       # with a Crosspost call so the message gets published to any
@@ -59,12 +97,18 @@ jobs:
         env:
           WEBHOOK: ${{ secrets.DISCORD_DEPLOY_WEBHOOK_URL }}
           BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          HEADER: ":construction: Deploying `${{ steps.ctx.outputs.short_sha }}`${{ steps.ctx.outputs.count_suffix }} to prod (bot will restart in ~30s)…"
+          COMMITS: ${{ steps.ctx.outputs.commits_block }}
         run: |
           [ -z "$WEBHOOK" ] && exit 0
-          SHORT_SHA=$(echo "${GITHUB_SHA}" | cut -c1-7)
+          if [ -n "$COMMITS" ]; then
+            CONTENT=$(printf '%s\n%s' "$HEADER" "$COMMITS")
+          else
+            CONTENT="$HEADER"
+          fi
+          PAYLOAD=$(jq -n --arg c "$CONTENT" '{content: $c}')
           BODY=$(curl -fsSL -H "Content-Type: application/json" \
-            -d "{\"content\": \":construction: Deploying \`${SHORT_SHA}\` to prod (bot will restart in ~30s)…\"}" \
-            "${WEBHOOK}?wait=true")
+            -d "$PAYLOAD" "${WEBHOOK}?wait=true")
           if [ -n "$BOT_TOKEN" ]; then
             MID=$(echo "$BODY" | jq -r .id)
             CID=$(echo "$BODY" | jq -r .channel_id)
@@ -86,12 +130,18 @@ jobs:
         env:
           WEBHOOK: ${{ secrets.DISCORD_DEPLOY_WEBHOOK_URL }}
           BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          HEADER: ":white_check_mark: Deployed `${{ steps.ctx.outputs.short_sha }}`${{ steps.ctx.outputs.count_suffix }} to prod — bot is back up"
+          COMMITS: ${{ steps.ctx.outputs.commits_block }}
         run: |
           [ -z "$WEBHOOK" ] && exit 0
-          SHORT_SHA=$(echo "${GITHUB_SHA}" | cut -c1-7)
+          if [ -n "$COMMITS" ]; then
+            CONTENT=$(printf '%s\n%s' "$HEADER" "$COMMITS")
+          else
+            CONTENT="$HEADER"
+          fi
+          PAYLOAD=$(jq -n --arg c "$CONTENT" '{content: $c}')
           BODY=$(curl -fsSL -H "Content-Type: application/json" \
-            -d "{\"content\": \":white_check_mark: Deployed \`${SHORT_SHA}\` to prod — bot is back up\"}" \
-            "${WEBHOOK}?wait=true")
+            -d "$PAYLOAD" "${WEBHOOK}?wait=true")
           if [ -n "$BOT_TOKEN" ]; then
             MID=$(echo "$BODY" | jq -r .id)
             CID=$(echo "$BODY" | jq -r .channel_id)
@@ -106,12 +156,18 @@ jobs:
         env:
           WEBHOOK: ${{ secrets.DISCORD_DEPLOY_WEBHOOK_URL }}
           BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          HEADER: ":x: Deploy of `${{ steps.ctx.outputs.short_sha }}`${{ steps.ctx.outputs.count_suffix }} to prod FAILED — see <https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}>"
+          COMMITS: ${{ steps.ctx.outputs.commits_block }}
         run: |
           [ -z "$WEBHOOK" ] && exit 0
-          SHORT_SHA=$(echo "${GITHUB_SHA}" | cut -c1-7)
+          if [ -n "$COMMITS" ]; then
+            CONTENT=$(printf '%s\n%s' "$HEADER" "$COMMITS")
+          else
+            CONTENT="$HEADER"
+          fi
+          PAYLOAD=$(jq -n --arg c "$CONTENT" '{content: $c}')
           BODY=$(curl -fsSL -H "Content-Type: application/json" \
-            -d "{\"content\": \":x: Deploy of \`${SHORT_SHA}\` to prod FAILED — see <https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}>\"}" \
-            "${WEBHOOK}?wait=true")
+            -d "$PAYLOAD" "${WEBHOOK}?wait=true")
           if [ -n "$BOT_TOKEN" ]; then
             MID=$(echo "$BODY" | jq -r .id)
             CID=$(echo "$BODY" | jq -r .channel_id)
