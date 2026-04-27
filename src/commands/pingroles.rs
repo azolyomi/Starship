@@ -72,7 +72,7 @@ pub async fn pingroles(_ctx: BotContext<'_>) -> Result<(), BotError> {
     slash_command,
     guild_only,
     rename = "pingroles-admin",
-    subcommands("set_", "unset", "create"),
+    subcommands("set_", "unset", "create", "here"),
     subcommand_required,
     default_member_permissions = "MANAGE_GUILD"
 )]
@@ -538,6 +538,37 @@ pub async fn create(
         "Created (or reused) <@&{}> and bound it as the notification role for **{}**. \
          Users can now run `/pingroles` to subscribe.",
         role_id, template.display_name,
+    )))
+    .await?;
+    Ok(())
+}
+
+/// Toggle the @here ping for one dungeon. Default on. Bound role still pings.
+#[poise::command(slash_command, guild_only)]
+pub async fn here(
+    ctx: BotContext<'_>,
+    #[description = "Dungeon to configure"]
+    #[autocomplete = "autocomplete_dungeon"]
+    dungeon: String,
+    #[description = "Ping @here on headcount/run start? Default: on"] enabled: bool,
+) -> Result<(), BotError> {
+    perm_svc::require(ctx, Action::ConfigureGuild, None, None).await?;
+
+    let guild_id = guild_id_i64(ctx);
+    let pool = &ctx.data().db;
+
+    let Some(template) = db::dungeon::get_by_name(pool, guild_id, &dungeon).await? else {
+        ctx.send(ephemeral(format!("Unknown dungeon `{dungeon}`.")))
+            .await?;
+        return Ok(());
+    };
+
+    db::dungeon::set_ping_here(pool, guild_id, &template.name, enabled).await?;
+
+    let state = if enabled { "on" } else { "off" };
+    ctx.send(ephemeral(format!(
+        "@here ping for **{}** is now **{state}**.",
+        template.display_name,
     )))
     .await?;
     Ok(())

@@ -276,6 +276,7 @@ pub async fn set_notification_role(
 ) -> Result<()> {
     match role_id {
         Some(role) => {
+            // Upsert role; preserve any existing ping_here override.
             sqlx::query(
                 r#"
                 INSERT INTO dungeon_notification_roles (guild_id, dungeon_name, role_id)
@@ -291,8 +292,28 @@ pub async fn set_notification_role(
             .await?;
         }
         None => {
+            // Clearing the role: NULL the role_id so the row sticks around
+            // if there's a ping_here override to remember; then delete the
+            // row if every column has reverted to its default. Two queries
+            // are simpler than a CTE here and the ordering is harmless —
+            // worst case the DELETE is a no-op.
             sqlx::query(
-                "DELETE FROM dungeon_notification_roles WHERE guild_id = $1 AND dungeon_name = $2",
+                r#"
+                UPDATE dungeon_notification_roles
+                SET role_id = NULL
+                WHERE guild_id = $1 AND dungeon_name = $2
+                "#,
+            )
+            .bind(guild_id)
+            .bind(dungeon_name)
+            .execute(pool)
+            .await?;
+            sqlx::query(
+                r#"
+                DELETE FROM dungeon_notification_roles
+                WHERE guild_id = $1 AND dungeon_name = $2
+                  AND role_id IS NULL AND ping_here = TRUE
+                "#,
             )
             .bind(guild_id)
             .bind(dungeon_name)
@@ -303,30 +324,82 @@ pub async fn set_notification_role(
     Ok(())
 }
 
-/// Look up the notification role ID bound to a dungeon in this guild, if any.
-pub async fn get_notification_role(
+/// Set the per-dungeon `@here` ping toggle. Default (no row, or
+/// `ping_here = TRUE`) is to ping `@here` alongside the notification
+/// role. Setting `false` suppresses the `@here` for this dungeon only.
+pub async fn set_ping_here(
     pool: &PgPool,
     guild_id: i64,
     dungeon_name: &str,
-) -> Result<Option<i64>> {
-    let row: Option<(i64,)> = sqlx::query_as(
-        "SELECT role_id FROM dungeon_notification_roles WHERE guild_id = $1 AND dungeon_name = $2",
+    ping_here: bool,
+) -> Result<()> {
+    // Upsert ping_here; preserve any existing role binding.
+    sqlx::query(
+        r#"
+        INSERT INTO dungeon_notification_roles (guild_id, dungeon_name, ping_here)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (guild_id, dungeon_name)
+        DO UPDATE SET ping_here = EXCLUDED.ping_here
+        "#,
+    )
+    .bind(guild_id)
+    .bind(dungeon_name)
+    .bind(ping_here)
+    .execute(pool)
+    .await?;
+    // If we're back to all-defaults (no role, ping_here=TRUE), drop the
+    // row so the table doesn't accumulate dead config.
+    sqlx::query(
+        r#"
+        DELETE FROM dungeon_notification_roles
+        WHERE guild_id = $1 AND dungeon_name = $2
+          AND role_id IS NULL AND ping_here = TRUE
+        "#,
+    )
+    .bind(guild_id)
+    .bind(dungeon_name)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Look up the notification settings for a dungeon: `(role_id, ping_here)`.
+/// Default when no row exists is `(None, true)` — no role bound, `@here`
+/// pinged on every raid.
+pub async fn get_notification_settings(
+    pool: &PgPool,
+    guild_id: i64,
+    dungeon_name: &str,
+) -> Result<(Option<i64>, bool)> {
+    let row: Option<(Option<i64>, bool)> = sqlx::query_as(
+        r#"
+        SELECT role_id, ping_here
+        FROM dungeon_notification_roles
+        WHERE guild_id = $1 AND dungeon_name = $2
+        "#,
     )
     .bind(guild_id)
     .bind(dungeon_name)
     .fetch_optional(pool)
     .await?;
-    Ok(row.map(|(r,)| r))
+    Ok(row.unwrap_or((None, true)))
 }
 
 /// Every (dungeon_name → role_id) binding in this guild. Used by the
 /// `/pingroles` self-service picker to render the subscription list.
+/// Rows that exist only to remember a `ping_here` override (with
+/// `role_id IS NULL`) are filtered out — there's nothing for users to
+/// subscribe to.
 pub async fn list_notification_roles(
     pool: &PgPool,
     guild_id: i64,
 ) -> Result<std::collections::HashMap<String, i64>> {
     let rows: Vec<(String, i64)> = sqlx::query_as(
-        "SELECT dungeon_name, role_id FROM dungeon_notification_roles WHERE guild_id = $1",
+        r#"
+        SELECT dungeon_name, role_id
+        FROM dungeon_notification_roles
+        WHERE guild_id = $1 AND role_id IS NOT NULL
+        "#,
     )
     .bind(guild_id)
     .fetch_all(pool)

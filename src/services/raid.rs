@@ -17,24 +17,29 @@ pub enum StartHeadcountOutcome {
     SlotInUse(SlotClaim),
 }
 
-/// Prefix the headcount/run message with `@here` plus the dungeon's
-/// notification role (if any). Discord doesn't render `@here` from a bot
-/// unless `allowed_mentions` opts in via [`allow_here_and_role`].
-fn ping_content(notification_role_id: Option<i64>) -> String {
-    match notification_role_id {
-        Some(rid) => format!("@here <@&{rid}>"),
-        None => "@here".to_string(),
+/// Prefix the headcount/run message with `@here` and/or the dungeon's
+/// notification role, gated by the per-dungeon `ping_here` toggle and
+/// the presence of a bound role. Discord doesn't render `@here` from a
+/// bot unless `allowed_mentions` opts in via [`allow_here_and_role`].
+fn ping_content(notification_role_id: Option<i64>, ping_here: bool) -> String {
+    match (ping_here, notification_role_id) {
+        (true, Some(rid)) => format!("@here <@&{rid}>"),
+        (true, None) => "@here".to_string(),
+        (false, Some(rid)) => format!("<@&{rid}>"),
+        (false, None) => String::new(),
     }
 }
 
 /// Bot mentions are silent by default — Discord only fires pings for
-/// mention types listed in `allowed_mentions`. We always allow `@here`
-/// (no `@everyone` flag set, but `everyone(true)` covers both per
-/// Discord's API: it controls the `everyone` parse type which gates
-/// `@here` and `@everyone` together) plus the specific notification
-/// role if one is configured.
-fn allow_here_and_role(notification_role_id: Option<i64>) -> serenity::CreateAllowedMentions {
-    let mut allowed = serenity::CreateAllowedMentions::new().everyone(true);
+/// mention types listed in `allowed_mentions`. `everyone(true)` controls
+/// the `everyone` parse type which gates `@here` and `@everyone`
+/// together. We only enable that flag when the dungeon has `ping_here`
+/// on; rolemention is opt-in per role.
+fn allow_here_and_role(
+    notification_role_id: Option<i64>,
+    ping_here: bool,
+) -> serenity::CreateAllowedMentions {
+    let mut allowed = serenity::CreateAllowedMentions::new().everyone(ping_here);
     if let Some(rid) = notification_role_id {
         allowed = allowed.roles(vec![serenity::RoleId::new(rid as u64)]);
     }
@@ -179,12 +184,13 @@ pub async fn start_headcount_inner(
         &threshold,
     );
 
-    let role_id = db::dungeon::get_notification_role(pool, guild_id, &template.name).await?;
+    let (role_id, ping_here) =
+        db::dungeon::get_notification_settings(pool, guild_id, &template.name).await?;
     let create = serenity::CreateMessage::new()
         .add_embed(embed)
         .components(components)
-        .content(ping_content(role_id))
-        .allowed_mentions(allow_here_and_role(role_id));
+        .content(ping_content(role_id, ping_here))
+        .allowed_mentions(allow_here_and_role(role_id, ping_here));
 
     let channel = serenity::ChannelId::new(channel_id as u64);
     let msg = channel.send_message(serenity_ctx, create).await?;
@@ -261,12 +267,13 @@ pub async fn finalize_run_post_create(
 
     let (embed, components) = embeds::run::build(run, template, &emoji_map, &bag_tiers, &threshold);
 
-    let role_id = db::dungeon::get_notification_role(pool, run.guild_id, &template.name).await?;
+    let (role_id, ping_here) =
+        db::dungeon::get_notification_settings(pool, run.guild_id, &template.name).await?;
     let create = serenity::CreateMessage::new()
         .add_embed(embed)
         .components(components)
-        .content(ping_content(role_id))
-        .allowed_mentions(allow_here_and_role(role_id));
+        .content(ping_content(role_id, ping_here))
+        .allowed_mentions(allow_here_and_role(role_id, ping_here));
 
     let channel = serenity::ChannelId::new(raid_channel_id as u64);
     let msg = channel.send_message(serenity_ctx, create).await?;
