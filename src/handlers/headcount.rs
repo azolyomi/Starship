@@ -330,35 +330,41 @@ async fn handle_confirm_start(
         return Ok(());
     };
 
-    // Organizer gate — reconstruct from the modal's member since we don't
-    // have a ComponentInteraction shape here.
-    let caller_id = modal.user.id.get() as i64;
-    let (perms, roles) = match modal.member.as_ref() {
-        Some(m) => (
-            m.permissions,
-            m.roles.iter().map(|r| r.get() as i64).collect(),
-        ),
-        None => (None, Vec::new()),
-    };
-    let ok = services::permission::can_organize(
+    // Organizer gate — modal-aware path that refreshes the caller's role
+    // list against the live guild member API. Modal tokens are valid for
+    // 15 minutes after open and `modal.member` is gateway-cached from
+    // open time, so a role revoked while the modal is held would
+    // otherwise pass on stale data.
+    match services::permission::can_organize_from_modal(
+        ctx,
         &data.db,
         hc.guild_id,
-        caller_id,
-        perms,
-        &roles,
+        modal,
         hc.leader_user_id,
         Some(hc.tier_id),
         Some(hc.dungeon_template_id),
     )
-    .await?;
-    if !ok {
-        modal
-            .create_response(
-                ctx,
-                ephemeral_msg("Only the raid leader or users with **ManageRuns** can do that."),
-            )
-            .await?;
-        return Ok(());
+    .await?
+    {
+        Some(true) => {}
+        Some(false) => {
+            modal
+                .create_response(
+                    ctx,
+                    ephemeral_msg("Only the raid leader or users with **ManageRuns** can do that."),
+                )
+                .await?;
+            return Ok(());
+        }
+        None => {
+            modal
+                .create_response(
+                    ctx,
+                    ephemeral_msg("You're no longer a member of this server."),
+                )
+                .await?;
+            return Ok(());
+        }
     }
 
     let template = db::dungeon::get_by_id(&data.db, hc.dungeon_template_id)
@@ -398,13 +404,17 @@ async fn handle_confirm_start(
     // / Discord admin) also bypass the floor — `check_can_convert` skips
     // the count comparison for trusted operators.
     if hc.is_self_organized {
+        // None (caller left the guild) → treat as not-organizer so the
+        // anti-troll min-reactors floor stays enforced.
         let is_org = services::permission::is_organizer_from_modal(
+            ctx,
             &data.db,
             hc.guild_id,
             modal,
             Some(hc.tier_id),
         )
-        .await?;
+        .await?
+        .unwrap_or(false);
         let count = match services::reactions::count_distinct_non_bot_reactors(
             &ctx.http,
             serenity::ChannelId::new(hc.channel_id as u64),

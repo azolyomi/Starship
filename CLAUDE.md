@@ -92,6 +92,27 @@ one costs compounding tech debt.
   than after a handoff.
 - Prefer editing `LAUNCH.md` and this file over spawning new docs.
 
+## Commits (IMPORTANT)
+
+Commit subjects are **shown to bot users** in Discord deploy notifications
+(see `.github/workflows/deploy.yml` and the Crosspost publishing), so
+scope each commit to the smallest unit a user would actually care to
+hear about — not the smallest unit of code change.
+
+- Group by *user-perceivable feature*, not by file or function. A new
+  knob, a new behavior, a new command → its own commit.
+- A handful of unrelated small fixes (panic guards, doc tweaks,
+  compensating deletes, internal renames) lump together under a single
+  "stability and fixes" commit unless one of them is itself a notable
+  user-facing change.
+- One large change can carry incidental small fixes in the same area —
+  don't split a one-line tweak in the same function into its own commit
+  if it rides naturally with a bigger change there.
+- Write subjects for humans who don't read the code: focus on what
+  changes for the user, not the mechanism. Good: "Auto-cancel idle
+  headcounts after 20m". Bad: "Refactor sweep_idle_runs into shared
+  task". Subjects ≤ 70 chars; the body carries the why.
+
 # Agent Guidelines for Rust Code Quality
 
 This document provides guidelines for maintaining high-quality Rust code. These rules MUST be followed by all AI coding agents and contributors.

@@ -490,10 +490,17 @@ async fn handle_start(
 
     // Organizer bypass: caller has ManageRuns / superadmin / Discord admin.
     // Bypasses the per-user cap and post-cancel cooldown but not the slot
-    // lock or tier-disabled checks.
-    let is_org =
-        services::permission::is_organizer_from_modal(pool, tier.guild_id, modal, Some(tier.id))
-            .await?;
+    // lock or tier-disabled checks. None (caller left the guild) → treat
+    // as not-organizer so the anti-troll gates stay enforced.
+    let is_org = services::permission::is_organizer_from_modal(
+        ctx,
+        pool,
+        tier.guild_id,
+        modal,
+        Some(tier.id),
+    )
+    .await?
+    .unwrap_or(false);
 
     // Anti-troll gate. Runs *outside* the tx because it does its own
     // best-effort sweep of stale claims (which itself opens a tx) and

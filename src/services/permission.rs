@@ -331,19 +331,75 @@ pub async fn is_organizer(
 
 /// Convenience wrapper around [`is_organizer`] for `ModalInteraction`
 /// callers (modal submissions don't carry a `ComponentInteraction` shape).
+///
+/// Refreshes the caller's roles via a live [`GuildId::member`] fetch
+/// rather than trusting `modal.member`. Discord modal tokens stay valid
+/// for 15 minutes after open; the gateway-cached `modal.member` reflects
+/// state at *open time*, so a role revoked while the modal is held would
+/// still pass a permission check otherwise. A 404 on the fetch (user
+/// left the guild) is reported as `Ok(None)`, and callers should deny.
 pub async fn is_organizer_from_modal(
+    ctx: &serenity::Context,
     pool: &PgPool,
     guild_id: i64,
     modal: &serenity::ModalInteraction,
     tier_id: Option<i32>,
-) -> Result<bool> {
-    let caller_id = modal.user.id.get() as i64;
-    let (perms, roles) = match modal.member.as_ref() {
-        Some(m) => (
-            m.permissions,
-            m.roles.iter().map(|r| r.get() as i64).collect(),
-        ),
-        None => (None, Vec::new()),
+) -> Result<Option<bool>> {
+    let Some((perms, roles)) = fresh_modal_member_meta(ctx, modal, guild_id).await? else {
+        return Ok(None);
     };
-    is_organizer(pool, guild_id, caller_id, perms, &roles, tier_id).await
+    let caller_id = modal.user.id.get() as i64;
+    let ok = is_organizer(pool, guild_id, caller_id, perms, &roles, tier_id).await?;
+    Ok(Some(ok))
+}
+
+/// `can_organize` counterpart for modal submissions. Same fresh-fetch
+/// behavior as [`is_organizer_from_modal`]; returns `Ok(None)` when the
+/// caller has left the guild (deny).
+pub async fn can_organize_from_modal(
+    ctx: &serenity::Context,
+    pool: &PgPool,
+    guild_id: i64,
+    modal: &serenity::ModalInteraction,
+    leader_user_id: i64,
+    tier_id: Option<i32>,
+    dungeon_template_id: Option<i32>,
+) -> Result<Option<bool>> {
+    let Some((perms, roles)) = fresh_modal_member_meta(ctx, modal, guild_id).await? else {
+        return Ok(None);
+    };
+    let caller_id = modal.user.id.get() as i64;
+    let ok = can_organize(
+        pool,
+        guild_id,
+        caller_id,
+        perms,
+        &roles,
+        leader_user_id,
+        tier_id,
+        dungeon_template_id,
+    )
+    .await?;
+    Ok(Some(ok))
+}
+
+/// Authoritative role-list lookup for a modal submission. Keeps the
+/// (rarely-changing) Discord-native perms from the cached `modal.member`
+/// and refreshes the role list — that's the field that drives custom
+/// `ManageRuns` grants, and the one that's most likely to change during
+/// the modal's open window. Returns `Ok(None)` on 404 (user gone).
+async fn fresh_modal_member_meta(
+    ctx: &serenity::Context,
+    modal: &serenity::ModalInteraction,
+    guild_id: i64,
+) -> Result<Option<(Option<serenity::Permissions>, Vec<i64>)>> {
+    let g = serenity::GuildId::new(guild_id as u64);
+    let member = match g.member(&ctx.http, modal.user.id).await {
+        Ok(m) => m,
+        Err(e) if crate::services::channels::is_not_found(&e) => return Ok(None),
+        Err(e) => return Err(e.into()),
+    };
+    let perms = modal.member.as_ref().and_then(|m| m.permissions);
+    let roles = member.roles.iter().map(|r| r.get() as i64).collect();
+    Ok(Some((perms, roles)))
 }

@@ -194,7 +194,34 @@ pub async fn start_headcount_inner(
 
     let channel = serenity::ChannelId::new(channel_id as u64);
     let msg = channel.send_message(serenity_ctx, create).await?;
-    db::headcount::set_message_id(pool, hc.id, msg.id.get() as i64).await?;
+    if let Err(e) = db::headcount::set_message_id(pool, hc.id, msg.id.get() as i64).await {
+        // The HC row is committed but its message_id is still 0, and the
+        // Discord message exists. The boot sweep would later delete the
+        // row (correct) but the message would persist as a confusing
+        // ghost: clicking its buttons no-ops, reactions go nowhere.
+        // Compensate by deleting the message we just posted so DB and
+        // Discord state are aligned again. If the delete also fails,
+        // there's nothing more to do — log loudly and surface the
+        // original error.
+        if let Err(del_err) = msg.delete(&serenity_ctx.http).await {
+            tracing::error!(
+                set_id_error = ?e,
+                delete_error = ?del_err,
+                hc_id = hc.id,
+                message_id = msg.id.get(),
+                "set_message_id failed AND compensating delete failed; \
+                 ghost HC message left in channel until manual cleanup",
+            );
+        } else {
+            tracing::warn!(
+                set_id_error = ?e,
+                hc_id = hc.id,
+                message_id = msg.id.get(),
+                "set_message_id failed; compensating delete succeeded",
+            );
+        }
+        return Err(e);
+    }
 
     let resolved: Vec<serenity::ReactionType> = reactions_list
         .iter()
@@ -277,7 +304,30 @@ pub async fn finalize_run_post_create(
 
     let channel = serenity::ChannelId::new(raid_channel_id as u64);
     let msg = channel.send_message(serenity_ctx, create).await?;
-    db::run::set_message_id(pool, run.id, msg.id.get() as i64).await?;
+    if let Err(e) = db::run::set_message_id(pool, run.id, msg.id.get() as i64).await {
+        // Same compensation as `start_headcount_inner`: the run row is
+        // already committed with `message_id = 0`, so the boot sweep
+        // would delete it. Without this, the just-posted message
+        // becomes an orphan no-op. Delete it so DB and Discord agree.
+        if let Err(del_err) = msg.delete(&serenity_ctx.http).await {
+            tracing::error!(
+                set_id_error = ?e,
+                delete_error = ?del_err,
+                run_id = run.id,
+                message_id = msg.id.get(),
+                "set_message_id failed AND compensating delete failed; \
+                 ghost run message left in channel until manual cleanup",
+            );
+        } else {
+            tracing::warn!(
+                set_id_error = ?e,
+                run_id = run.id,
+                message_id = msg.id.get(),
+                "set_message_id failed; compensating delete succeeded",
+            );
+        }
+        return Err(e);
+    }
     run.message_id = msg.id.get() as i64;
 
     Ok(())

@@ -105,10 +105,13 @@ async fn load_active(
 }
 
 /// Rebuild the public run message from the current DB state. Used after the
-/// location, party, or leader changes. The DB write is the canonical state
-/// — if the channel or message has since been deleted in Discord, the
-/// re-render is best-effort: warn and let the orphan sweep clean up the
-/// run row on the next bot restart.
+/// location, party, or leader changes.
+///
+/// If the message has been deleted out-of-band (admin cleanup, channel
+/// purge), the run is unmanageable from Discord's side — its buttons no
+/// longer exist. Fast-path through `end_run` to release the slot claim,
+/// drop the temp VC, and write the audit log immediately, instead of
+/// leaving a zombie row + VC for the next 24h idle sweep / boot sweep.
 async fn rebuild_and_edit_message(
     ctx: &serenity::Context,
     data: &BotData,
@@ -138,9 +141,19 @@ async fn rebuild_and_edit_message(
                 run_id = run.id,
                 channel_id = run.channel_id,
                 message_id = run.message_id,
-                "run message gone (404) — DB state still authoritative; \
-                 will be cleaned up by orphan sweep on next restart",
+                "run message gone (404) on edit; auto-ending run to release \
+                 slot claim and clean up VC immediately",
             );
+            // `end_run` will try to edit the (now-gone) message to its ended
+            // state and 404 again — best-effort, it'll log and continue.
+            // Pass `None` for ended_by so the audit log credits the bot.
+            if let Err(end_err) = services::raid::end_run(ctx, pool, run, None).await {
+                tracing::warn!(
+                    error = ?end_err,
+                    run_id = run.id,
+                    "auto-end after 404 failed; orphan sweep will clean up on next restart",
+                );
+            }
             return Ok(());
         }
         return Err(e.into());
@@ -282,27 +295,23 @@ fn extract_input(modal: &serenity::ModalInteraction, custom_id: &str) -> Option<
 }
 
 /// Modal submissions don't carry the same `ComponentInteraction` shape that
-/// `can_organize_from_interaction` expects, so we reconstruct the gate from
-/// the modal's member instead.
+/// `can_organize_from_interaction` expects, so we delegate to the
+/// modal-aware helper which refreshes the caller's role list against the
+/// live guild member API (closes the 15-minute stale-token window).
+///
+/// Returns `Ok(None)` when the caller is no longer a member of the guild;
+/// callers should treat that as a denial.
 async fn modal_caller_is_organizer(
+    ctx: &serenity::Context,
     pool: &sqlx::PgPool,
     modal: &serenity::ModalInteraction,
     run: &Run,
-) -> Result<bool, BotError> {
-    let caller_id = modal.user.id.get() as i64;
-    let (perms, roles) = match modal.member.as_ref() {
-        Some(m) => (
-            m.permissions,
-            m.roles.iter().map(|r| r.get() as i64).collect(),
-        ),
-        None => (None, Vec::new()),
-    };
-    Ok(services::permission::can_organize(
+) -> Result<Option<bool>, BotError> {
+    Ok(services::permission::can_organize_from_modal(
+        ctx,
         pool,
         run.guild_id,
-        caller_id,
-        perms,
-        &roles,
+        modal,
         run.leader_user_id,
         Some(run.tier_id),
         Some(run.dungeon_template_id),
@@ -322,14 +331,26 @@ async fn handle_loc_submit(
             .await?;
         return Ok(());
     };
-    if !modal_caller_is_organizer(&data.db, modal, &run).await? {
-        modal
-            .create_response(
-                ctx,
-                ephemeral_msg("Only the raid leader or users with **ManageRuns** can do that."),
-            )
-            .await?;
-        return Ok(());
+    match modal_caller_is_organizer(ctx, &data.db, modal, &run).await? {
+        Some(true) => {}
+        Some(false) => {
+            modal
+                .create_response(
+                    ctx,
+                    ephemeral_msg("Only the raid leader or users with **ManageRuns** can do that."),
+                )
+                .await?;
+            return Ok(());
+        }
+        None => {
+            modal
+                .create_response(
+                    ctx,
+                    ephemeral_msg("You're no longer a member of this server."),
+                )
+                .await?;
+            return Ok(());
+        }
     }
 
     let raw = extract_input(modal, "location").unwrap_or_default();
@@ -356,9 +377,13 @@ async fn handle_loc_submit(
         )
         .await?;
 
-    let refreshed = db::run::get(&data.db, run_id)
-        .await?
-        .expect("run existed a moment ago");
+    // Run may have been ended (concurrent End click, idle sweeper) between
+    // the UPDATE above and this re-read. The user's ephemeral has already
+    // posted, so swallow the rebuild — the public message is in its ended
+    // state and there's nothing to refresh.
+    let Some(refreshed) = db::run::get(&data.db, run_id).await? else {
+        return Ok(());
+    };
     rebuild_and_edit_message(ctx, data, &refreshed).await?;
     Ok(())
 }
@@ -375,14 +400,26 @@ async fn handle_party_submit(
             .await?;
         return Ok(());
     };
-    if !modal_caller_is_organizer(&data.db, modal, &run).await? {
-        modal
-            .create_response(
-                ctx,
-                ephemeral_msg("Only the raid leader or users with **ManageRuns** can do that."),
-            )
-            .await?;
-        return Ok(());
+    match modal_caller_is_organizer(ctx, &data.db, modal, &run).await? {
+        Some(true) => {}
+        Some(false) => {
+            modal
+                .create_response(
+                    ctx,
+                    ephemeral_msg("Only the raid leader or users with **ManageRuns** can do that."),
+                )
+                .await?;
+            return Ok(());
+        }
+        None => {
+            modal
+                .create_response(
+                    ctx,
+                    ephemeral_msg("You're no longer a member of this server."),
+                )
+                .await?;
+            return Ok(());
+        }
     }
 
     let raw = extract_input(modal, "party").unwrap_or_default();
@@ -409,9 +446,9 @@ async fn handle_party_submit(
         )
         .await?;
 
-    let refreshed = db::run::get(&data.db, run_id)
-        .await?
-        .expect("run existed a moment ago");
+    let Some(refreshed) = db::run::get(&data.db, run_id).await? else {
+        return Ok(());
+    };
     rebuild_and_edit_message(ctx, data, &refreshed).await?;
     Ok(())
 }
@@ -496,9 +533,21 @@ async fn handle_transfer_submit(
     }
     tx.commit().await?;
 
-    let refreshed = db::run::get(&data.db, run_id)
-        .await?
-        .expect("run existed a moment ago");
+    // Run may have been ended concurrently between the transfer commit and
+    // this re-read. Skip the rebuild + listing refresh — there's nothing
+    // left to display, and end_run already handled the public message.
+    let Some(refreshed) = db::run::get(&data.db, run_id).await? else {
+        mci.create_response(
+            ctx,
+            CreateInteractionResponse::UpdateMessage(
+                CreateInteractionResponseMessage::new()
+                    .content("This run has ended.")
+                    .components(vec![]),
+            ),
+        )
+        .await?;
+        return Ok(());
+    };
     rebuild_and_edit_message(ctx, data, &refreshed).await?;
 
     // Refresh listing if self-organize, so the leader column updates.
