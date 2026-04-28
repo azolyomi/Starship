@@ -53,10 +53,19 @@ use crate::services::{self_organize_listing, voice};
 /// can land later if guilds want different policies.
 pub const RUN_IDLE_HOURS: i64 = 24;
 
-/// How often [`spawn_idle_run_sweeper`] wakes up. Trades cleanup
-/// latency for query rate; 10 minutes means a run goes stale ≤ 10m
-/// after crossing the 24h mark.
-const SWEEP_INTERVAL: std::time::Duration = std::time::Duration::from_secs(600);
+/// How long a headcount can sit before the sweeper auto-cancels it.
+/// Much shorter than [`RUN_IDLE_HOURS`] because an HC that hasn't
+/// converted is usually abandoned, and a self-organized HC that's still
+/// alive holds a slot claim that blocks both the leader and anyone else
+/// from starting the same raid. 20 minutes covers normal "gathering
+/// keys" gaps without letting a forgotten HC brick the slot.
+pub const HC_IDLE_MINUTES: i64 = 20;
+
+/// How often [`spawn_idle_sweeper`] wakes up. Trades cleanup latency for
+/// query rate; 5 minutes means a run/HC goes stale ≤ 5m after crossing
+/// its respective idle threshold (matters more for the 20-minute HC
+/// timeout than for the 24-hour run timeout).
+const SWEEP_INTERVAL: std::time::Duration = std::time::Duration::from_secs(300);
 
 #[tracing::instrument(name = "orphan_sweep", skip_all)]
 pub async fn run(ctx: &serenity::Context, pool: &PgPool) -> Result<()> {
@@ -507,22 +516,171 @@ async fn sweep_idle_runs(ctx: &serenity::Context, pool: &PgPool) -> usize {
     ended
 }
 
-/// Spawn the periodic idle-run sweeper. Runs forever until the bot
-/// process exits — the task aborts cleanly when the runtime drops.
+/// Auto-cancel headcounts older than [`HC_IDLE_HOURS`]: release any slot
+/// claim, delete the row, and edit the public message to its
+/// timed-out state. Best-effort on the message edit and listing refresh
+/// — a stale message is annoying but the slot release is what matters.
+///
+/// Skips HCs with `message_id == 0`: those are the brief window between
+/// `INSERT` and `set_message_id` in [`super::raid::start_headcount_inner`]
+/// and belong to the boot sweep, not this one. (Sweeping them here would
+/// race with a live HC creation that's just about to land its UPDATE.)
+///
+/// Returns the number of HCs cancelled this pass.
+async fn sweep_idle_headcounts(ctx: &serenity::Context, pool: &PgPool) -> usize {
+    let cutoff = chrono::Utc::now() - chrono::Duration::minutes(HC_IDLE_MINUTES);
+    let stale = match db::headcount::list_created_before(pool, cutoff).await {
+        Ok(hs) => hs,
+        Err(e) => {
+            warn!(error = ?e, "idle-hc sweep: list query failed");
+            return 0;
+        }
+    };
+
+    let mut cancelled = 0usize;
+    let mut tiers_to_refresh: std::collections::HashSet<i32> = std::collections::HashSet::new();
+
+    for hc in stale {
+        if hc.message_id == 0 {
+            continue;
+        }
+
+        let mut tx = match pool.begin().await {
+            Ok(t) => t,
+            Err(e) => {
+                warn!(error = ?e, hc_id = hc.id, "idle-hc sweep: begin tx failed");
+                continue;
+            }
+        };
+        if let Err(e) = db::self_organize::claim_release_by_headcount(&mut tx, hc.id).await {
+            warn!(error = ?e, hc_id = hc.id, "idle-hc sweep: claim release failed");
+            let _ = tx.rollback().await;
+            continue;
+        }
+        match db::headcount::delete_tx(&mut tx, hc.id).await {
+            Ok(true) => {}
+            Ok(false) => {
+                let _ = tx.rollback().await;
+                continue;
+            }
+            Err(e) => {
+                warn!(error = ?e, hc_id = hc.id, "idle-hc sweep: delete failed");
+                let _ = tx.rollback().await;
+                continue;
+            }
+        }
+        if let Err(e) = tx.commit().await {
+            warn!(error = ?e, hc_id = hc.id, "idle-hc sweep: commit failed");
+            continue;
+        }
+
+        cancelled += 1;
+        info!(
+            hc_id = hc.id,
+            guild_id = hc.guild_id,
+            age_minutes = (chrono::Utc::now() - hc.created_at).num_minutes(),
+            "auto-cancelled idle headcount",
+        );
+
+        edit_timed_out_hc_message(ctx, pool, &hc).await;
+        tiers_to_refresh.insert(hc.tier_id);
+    }
+
+    for tier_id in tiers_to_refresh {
+        match db::tier::get_by_id(pool, tier_id).await {
+            Ok(Some(tier)) if tier.enable_self_organization => {
+                if let Err(e) = self_organize_listing::refresh_listing(ctx, pool, &tier).await {
+                    warn!(
+                        error = ?e,
+                        tier_id,
+                        "failed to refresh self-organize listing after idle HC sweep",
+                    );
+                }
+            }
+            Ok(_) => {}
+            Err(e) => warn!(error = ?e, tier_id, "failed to load tier for listing refresh"),
+        }
+    }
+
+    cancelled
+}
+
+/// Best-effort edit of a timed-out HC's public message to its closed
+/// state. Failures (template missing, message deleted, Discord 5xx) log
+/// and continue — the DB row is gone, that's the canonical state.
+async fn edit_timed_out_hc_message(
+    ctx: &serenity::Context,
+    pool: &PgPool,
+    hc: &crate::db::models::Headcount,
+) {
+    let template = match db::dungeon::get_by_id(pool, hc.dungeon_template_id).await {
+        Ok(Some(t)) => t,
+        Ok(None) => {
+            warn!(
+                hc_id = hc.id,
+                template_id = hc.dungeon_template_id,
+                "template missing for timed-out HC; skipping message edit",
+            );
+            return;
+        }
+        Err(e) => {
+            warn!(error = ?e, hc_id = hc.id, "failed to load template for timed-out HC");
+            return;
+        }
+    };
+    let emoji_map = db::emoji::get_all_as_map(pool).await.unwrap_or_default();
+    let closed_embed = crate::embeds::headcount::build_closed(
+        &template,
+        &emoji_map,
+        &format!("Headcount timed out after {HC_IDLE_MINUTES}m of inactivity."),
+        true,
+    );
+    if let Err(e) = ChannelId::new(hc.channel_id as u64)
+        .edit_message(
+            &ctx.http,
+            MessageId::new(hc.message_id as u64),
+            serenity::EditMessage::new()
+                .add_embed(closed_embed)
+                .components(vec![]),
+        )
+        .await
+    {
+        warn!(
+            error = ?e,
+            hc_id = hc.id,
+            channel_id = hc.channel_id,
+            message_id = hc.message_id,
+            "failed to edit timed-out HC message",
+        );
+    }
+}
+
+/// Spawn the periodic idle sweeper for both runs and headcounts. Runs
+/// forever until the bot process exits — the task aborts cleanly when
+/// the runtime drops.
 ///
 /// Skips the immediate first tick so the boot orphan_sweep gets to
 /// settle DB state before this loop starts polling.
-pub fn spawn_idle_run_sweeper(ctx: serenity::Context, pool: PgPool) {
+pub fn spawn_idle_sweeper(ctx: serenity::Context, pool: PgPool) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(SWEEP_INTERVAL);
+        // Default `Burst` would fire queued ticks back-to-back if a pass
+        // overruns the interval. `Delay` schedules the next tick relative
+        // to when the previous one finished, guaranteeing ≥SWEEP_INTERVAL
+        // of quiet between passes regardless of pass duration.
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         // First tick fires immediately by default; skip it so we don't
         // race the boot orphan sweep.
         interval.tick().await;
         loop {
             interval.tick().await;
-            let ended = sweep_idle_runs(&ctx, &pool).await;
-            if ended > 0 {
-                info!(ended, "idle-run sweep pass complete");
+            let ended_runs = sweep_idle_runs(&ctx, &pool).await;
+            let cancelled_hcs = sweep_idle_headcounts(&ctx, &pool).await;
+            if ended_runs > 0 || cancelled_hcs > 0 {
+                info!(
+                    ended_runs,
+                    cancelled_hcs, "idle sweep pass complete with cleanups",
+                );
             }
         }
     });

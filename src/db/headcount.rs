@@ -112,3 +112,17 @@ pub async fn list_all(pool: &PgPool) -> Result<Vec<Headcount>> {
         .await?;
     Ok(rows)
 }
+
+/// Headcounts whose `created_at` is older than `cutoff` — used by the
+/// periodic idle-timeout sweep to find HCs that the leader forgot to
+/// convert or cancel. Mirrors `db::run::list_created_before`.
+pub async fn list_created_before(
+    pool: &PgPool,
+    cutoff: chrono::DateTime<chrono::Utc>,
+) -> Result<Vec<Headcount>> {
+    let rows = sqlx::query_as::<_, Headcount>("SELECT * FROM headcounts WHERE created_at < $1")
+        .bind(cutoff)
+        .fetch_all(pool)
+        .await?;
+    Ok(rows)
+}
