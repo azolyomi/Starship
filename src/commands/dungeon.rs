@@ -156,58 +156,100 @@ pub async fn create(
     Ok(())
 }
 
-/// Edit a custom dungeon template. Only server-specific templates can be edited here.
+async fn autocomplete_edit_target<'a>(
+    ctx: BotContext<'_>,
+    partial: &'a str,
+) -> impl Iterator<Item = serenity::AutocompleteChoice> + 'a {
+    let guild_id = match ctx.guild_id() {
+        Some(id) => id.get() as i64,
+        None => return Vec::new().into_iter(),
+    };
+    let needle = partial.to_lowercase();
+    db::list_for_guild(&ctx.data().db, guild_id)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter(move |d| {
+            d.display_name.to_lowercase().contains(&needle)
+                || d.name.to_lowercase().contains(&needle)
+        })
+        .map(|d| serenity::AutocompleteChoice::new(d.display_name, d.name))
+        .collect::<Vec<_>>()
+        .into_iter()
+}
+
+/// Edit a dungeon template's reactions, tier attachment, and text fields.
+///
+/// Globals are seed-managed (overrides.json) and shouldn't mutate
+/// per-guild, so editing one auto-forks it into a guild-specific copy
+/// first; a one-line note in the ephemeral surfaces the fork. The
+/// ephemeral is the same one `/dungeon create` opens after its modal.
 #[poise::command(slash_command, guild_only)]
 pub async fn edit(
     ctx: BotContext<'_>,
-    #[description = "Internal name of the template to edit"] name: String,
-    #[description = "New display name"] display_name: Option<String>,
-    #[description = "New logical emoji name"] emoji: Option<String>,
-    #[description = "New embed color as hex, e.g. FF4500"] color: Option<String>,
-    #[description = "New headcount description"] description: Option<String>,
-    #[description = "Change VC raid requirement"] requires_vc: Option<bool>,
+    #[description = "Dungeon to edit"]
+    #[autocomplete = "autocomplete_edit_target"]
+    name: String,
 ) -> Result<(), BotError> {
     let guild_id = guild_id_i64(ctx);
     let pool = &ctx.data().db;
 
-    let color_int = match color.as_deref() {
-        Some(s) => {
-            let hex = s.trim_start_matches('#');
-            match i64::from_str_radix(hex, 16) {
-                Ok(v) if v <= 0xFFFFFF => Some(v as i32),
-                _ => {
-                    ctx.say("Color must be a valid hex color like `FF4500`.")
-                        .await?;
-                    return Ok(());
-                }
-            }
-        }
-        None => None,
+    let Some(target) = db::get_by_name(pool, guild_id, &name).await? else {
+        ctx.send(
+            poise::CreateReply::default()
+                .content(format!(
+                    "No dungeon named `{name}` found. Try the autocomplete list."
+                ))
+                .ephemeral(true),
+        )
+        .await?;
+        return Ok(());
     };
 
-    let updated = db::update_guild_template(
-        pool,
-        guild_id,
-        &name,
-        display_name.as_deref(),
-        emoji.as_deref(),
-        color_int,
-        None,
-        description.as_deref(),
-        requires_vc,
-    )
-    .await?;
-
-    if updated {
-        ctx.say(format!("Updated template `{}`.", name)).await?;
+    let (template_id, intro_note) = if target.guild_id.is_none() {
+        // Global: fork before letting the user mutate it.
+        let count = db::count_guild_templates(pool, guild_id).await?;
+        if count >= limits::CUSTOM_DUNGEONS_PER_GUILD {
+            ctx.send(
+                poise::CreateReply::default()
+                    .content(format!(
+                        "Editing a global forks it into a guild-specific copy, but this server is \
+                         already at the {}-dungeon cap. Delete an unused custom dungeon with \
+                         `/dungeon delete` first.",
+                        limits::CUSTOM_DUNGEONS_PER_GUILD
+                    ))
+                    .ephemeral(true),
+            )
+            .await?;
+            return Ok(());
+        }
+        let new_id = db::clone_global_to_guild(pool, target.id, guild_id).await?;
+        (
+            new_id,
+            Some(format!(
+                "Forked global `{}` into a guild-specific copy. Edits below apply only to this \
+                 server's copy; the global stays untouched.",
+                target.name
+            )),
+        )
     } else {
-        ctx.say(format!(
-            "No server-specific template named `{}` found. You can only edit templates created with `/dungeon create`.",
-            name
-        ))
-        .await?;
-    }
+        (target.id, None)
+    };
 
+    let app_ctx = match ctx {
+        poise::Context::Application(app) => app,
+        poise::Context::Prefix(_) => {
+            ctx.say("/dungeon edit can only be used as a slash command.")
+                .await?;
+            return Ok(());
+        }
+    };
+    let response =
+        dungeon_edit::build_edit_response(pool, template_id, intro_note.as_deref()).await?;
+    app_ctx
+        .interaction
+        .create_response(ctx.http(), CreateInteractionResponse::Message(response))
+        .await?;
     Ok(())
 }
 

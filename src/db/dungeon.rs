@@ -311,8 +311,6 @@ pub async fn count_guild_templates(pool: &PgPool, guild_id: i64) -> Result<i64> 
     Ok(count)
 }
 
-// Used by /dungeon edit in the follow-up commit.
-#[allow(dead_code)]
 /// Fork a global template into a guild-specific copy, atomically.
 ///
 /// INSERT-SELECT a new `dungeon_templates` row with `guild_id` swapped
