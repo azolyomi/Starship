@@ -213,6 +213,14 @@ impl Effective {
 /// the native unicode key emoji rather than the wiki's per-dungeon key
 /// sprite — keys are visually identical across dungeons in-game and the
 /// native emoji renders without needing the bot's emoji budget.
+///
+/// The key row is non-gating (`num_required: 0`): it renders + is clickable
+/// for tracking who has one, but `/start` does not wait for a reactor.
+/// Almost every keyed dungeon in the game also spawns naturally, so
+/// requiring a key reactor before starting blocks legitimate runs. The
+/// handful of items that genuinely gate a start (void's vial, o3's runes
+/// and incantation) are configured per-dungeon in `dungeon_overrides.json`
+/// with `num_required: 1`.
 fn default_reactions(has_key: bool) -> Vec<OverrideReaction> {
     let mut out = vec![OverrideReaction {
         name: "interest".into(),
@@ -227,7 +235,7 @@ fn default_reactions(has_key: bool) -> Vec<OverrideReaction> {
             name: "key".into(),
             display_name: "Key".into(),
             emoji: "🔑".into(),
-            num_required: 1,
+            num_required: 0,
             requires_confirmation: false,
             sort_order: 1,
         });
