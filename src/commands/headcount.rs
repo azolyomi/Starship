@@ -18,7 +18,11 @@ async fn autocomplete_dungeon<'a>(
         None => return Vec::new().into_iter(),
     };
     let needle = partial.to_lowercase();
-    db::dungeon::list_for_guild(&ctx.data().db, guild_id)
+    // Show the union of dungeons visible in at least one of this guild's
+    // tiers — the tier arg isn't bound yet at autocomplete time, so we
+    // can't filter to a specific tier. Post-resolution check rejects
+    // dungeons that aren't visible in the tier the user actually picks.
+    db::tier::list_visible_dungeons_any_tier(&ctx.data().db, guild_id)
         .await
         .unwrap_or_default()
         .into_iter()
@@ -112,6 +116,19 @@ pub async fn headcount(
             }
         }
     };
+
+    // Visibility check: globals can be soft-disabled per-tier, and
+    // guild-specifics need an explicit tier_dungeons attachment. Reject
+    // before the perm check so the user gets a precise diagnostic.
+    if !db::tier::is_dungeon_visible(pool, resolved_tier.id, template.id, guild_id).await? {
+        ctx.send(ephemeral(format!(
+            "**{}** isn't enabled for tier **{}**. \
+             Ask a server admin to run `/tier add-dungeon` first.",
+            template.display_name, resolved_tier.name
+        )))
+        .await?;
+        return Ok(());
+    }
 
     // Permission check (after we know the tier + template).
     perm_svc::require(

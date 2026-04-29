@@ -271,10 +271,9 @@ async fn do_quick_setup(ctx: BotContext<'_>) -> Result<()> {
         None => {
             let created = db::tier::create(pool, guild_id, "Main", None).await?;
             db::tier::update(pool, created.id, None, None, Some(runs_id.get() as i64)).await?;
-            // Attach every global dungeon so `/headcount` works out of the box.
-            for d in db::dungeon::list_for_guild(pool, guild_id).await? {
-                db::tier::add_dungeon(pool, created.id, d.id).await?;
-            }
+            // Globals are implicitly visible to every tier — no bulk-attach
+            // step needed. /tier add-dungeon now toggles per-tier disables
+            // for globals and per-tier attachments for guild-specifics.
             created.id
         }
     };
@@ -736,7 +735,7 @@ async fn summary_view(ctx: BotContext<'_>) -> Result<CreateEmbed> {
         .map(|c| format!("<#{c}>"))
         .unwrap_or_else(|| "_not set_".to_string());
 
-    let dungeon_count = db::tier::list_dungeons(&ctx.data().db, first.id)
+    let dungeon_count = db::tier::list_visible_dungeons(&ctx.data().db, first.id, guild_id)
         .await?
         .len();
 
@@ -904,11 +903,8 @@ async fn section_first_tier(
                         let created = db::tier::create(pool, guild_id, "Main", None).await?;
                         db::tier::update(pool, created.id, None, None, Some(runs.get() as i64))
                             .await?;
-                        // Magical default: attach every globally-available
-                        // dungeon so `/headcount` works out of the box.
-                        for d in &global_dungeons {
-                            db::tier::add_dungeon(pool, created.id, d.id).await?;
-                        }
+                        // Globals are implicitly visible to every tier —
+                        // no bulk-attach loop needed.
                         created.id
                     }
                 };

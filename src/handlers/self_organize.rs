@@ -251,24 +251,13 @@ async fn render_picker_page(
     tier: &Tier,
     page: usize,
 ) -> Result<Option<PickerPage>, BotError> {
-    let template_ids = db::tier::list_dungeons(pool, tier.id).await?;
-    if template_ids.is_empty() {
+    // Globals are implicit + minus tier-specific disables; guild-specifics
+    // are explicit via `tier_dungeons`. The DB ordering is by display_name
+    // already, so no client-side sort is needed.
+    let templates = db::tier::list_visible_dungeons(pool, tier.id, tier.guild_id).await?;
+    if templates.is_empty() {
         return Ok(None);
     }
-
-    // Resolve every template up-front so we can sort by display_name
-    // before paginating. Templates that no longer exist are dropped.
-    // Tier sizes are bounded by guild dungeon count (~60 currently); the
-    // N+1 lookups here are cheap and keep the alternative join out of
-    // scope.
-    let mut templates: Vec<crate::db::models::DungeonTemplate> =
-        Vec::with_capacity(template_ids.len());
-    for tid in &template_ids {
-        if let Some(t) = db::dungeon::get_by_id(pool, *tid).await? {
-            templates.push(t);
-        }
-    }
-    templates.sort_by_key(|t| t.display_name.to_lowercase());
 
     let total_pages = templates.len().div_ceil(PICKER_PAGE_SIZE).max(1);
     let page = page.min(total_pages - 1);

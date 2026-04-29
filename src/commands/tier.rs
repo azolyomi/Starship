@@ -330,16 +330,27 @@ pub async fn add_dungeon(
         }
     };
 
-    let added = db::tier::add_dungeon(pool, t.id, d.id).await?;
-    if added {
-        ctx.say(format!(
+    let changed = db::tier::add_dungeon(pool, t.id, &d).await?;
+    let is_global = d.guild_id.is_none();
+    let msg = match (changed, is_global) {
+        (true, true) => format!(
+            "Re-enabled **{}** for tier **{}**.",
+            d.display_name, t.name
+        ),
+        (true, false) => format!(
             "Added **{}** to tier **{}**.",
             d.display_name, t.name
-        ))
-        .await?;
-    } else {
-        ctx.say("That dungeon is already in this tier.").await?;
-    }
+        ),
+        (false, true) => format!(
+            "**{}** is already enabled for tier **{}**.",
+            d.display_name, t.name
+        ),
+        (false, false) => format!(
+            "**{}** is already attached to tier **{}**.",
+            d.display_name, t.name
+        ),
+    };
+    ctx.say(msg).await?;
 
     Ok(())
 }
@@ -376,16 +387,28 @@ pub async fn remove_dungeon(
         }
     };
 
-    let removed = db::tier::remove_dungeon(pool, t.id, d.id).await?;
-    if removed {
-        ctx.say(format!(
+    let changed = db::tier::remove_dungeon(pool, t.id, &d).await?;
+    let is_global = d.guild_id.is_none();
+    let msg = match (changed, is_global) {
+        (true, true) => format!(
+            "Disabled **{}** for tier **{}**. Re-enable any time with \
+             `/tier add-dungeon`.",
+            d.display_name, t.name
+        ),
+        (true, false) => format!(
             "Removed **{}** from tier **{}**.",
             d.display_name, t.name
-        ))
-        .await?;
-    } else {
-        ctx.say("That dungeon was not in this tier.").await?;
-    }
+        ),
+        (false, true) => format!(
+            "**{}** is already disabled for tier **{}**.",
+            d.display_name, t.name
+        ),
+        (false, false) => format!(
+            "**{}** is not attached to tier **{}**.",
+            d.display_name, t.name
+        ),
+    };
+    ctx.say(msg).await?;
 
     Ok(())
 }
