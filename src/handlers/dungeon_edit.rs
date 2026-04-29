@@ -400,6 +400,23 @@ async fn handle_reactions_submit(
     let ComponentInteractionDataKind::StringSelect { values } = &mci.data.kind else {
         return Ok(());
     };
+
+    // Defence in depth: the edit ephemeral is only ever rendered with a
+    // guild-specific template_id (create INSERTs one, edit forks globals
+    // before opening). A stale custom_id from a pre-fork session pointing
+    // at a global would mutate the global's reactions — refuse instead.
+    let Some(template) = db::dungeon::get_by_id(&data.db, template_id).await? else {
+        return Ok(());
+    };
+    if template.guild_id.is_none() {
+        mci.create_response(
+            ctx,
+            ephemeral("This ephemeral is stale — re-run `/dungeon edit` to fork the global."),
+        )
+        .await?;
+        return Ok(());
+    }
+
     let new_set: HashSet<&str> = values.iter().map(|s| s.as_str()).collect();
 
     let current = db::dungeon::get_reactions(&data.db, template_id).await?;
@@ -950,6 +967,21 @@ async fn handle_tune_submit(
             .await?;
         return Ok(());
     };
+
+    // Defence in depth: refuse to mutate reactions that belong to a
+    // global template. The edit ephemeral forks globals before exposing
+    // any tuning UI, so a stale reaction_id pointing at a global means
+    // the user is on an out-of-date ephemeral.
+    let parent = db::dungeon::get_by_id(&data.db, reaction.dungeon_template_id).await?;
+    if parent.as_ref().and_then(|p| p.guild_id).is_none() {
+        modal
+            .create_response(
+                ctx,
+                ephemeral("This ephemeral is stale — re-run `/dungeon edit` to fork the global."),
+            )
+            .await?;
+        return Ok(());
+    }
 
     let display_name = extract_input(modal, "display_name").unwrap_or_default();
     let display_name = display_name.trim();

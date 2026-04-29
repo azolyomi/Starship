@@ -3,6 +3,8 @@ use serenity::CreateInteractionResponse;
 
 use crate::db::dungeon as db;
 use crate::handlers::dungeon_edit;
+use crate::services::permission as perm_svc;
+use crate::services::permission::Action;
 use crate::{guild_id_i64, limits, BotContext, BotError};
 
 /// Manage dungeon templates for this server.
@@ -107,6 +109,8 @@ pub async fn create(
     #[autocomplete = "autocomplete_inherit"]
     inherit: Option<String>,
 ) -> Result<(), BotError> {
+    perm_svc::require(ctx, Action::ManageDungeons, None, None).await?;
+
     let guild_id = guild_id_i64(ctx);
     let pool = &ctx.data().db;
 
@@ -191,6 +195,8 @@ pub async fn edit(
     #[autocomplete = "autocomplete_edit_target"]
     name: String,
 ) -> Result<(), BotError> {
+    perm_svc::require(ctx, Action::ManageDungeons, None, None).await?;
+
     let guild_id = guild_id_i64(ctx);
     let pool = &ctx.data().db;
 
@@ -259,6 +265,8 @@ pub async fn delete(
     ctx: BotContext<'_>,
     #[description = "Internal name of the template to delete"] name: String,
 ) -> Result<(), BotError> {
+    perm_svc::require(ctx, Action::ManageDungeons, None, None).await?;
+
     let guild_id = guild_id_i64(ctx);
     let pool = &ctx.data().db;
 
