@@ -101,7 +101,7 @@ pub struct BagTier {
     pub default_emoji: String,
 }
 
-#[derive(Debug, sqlx::FromRow)]
+#[derive(Debug, Clone, sqlx::FromRow)]
 pub struct BotEmoji {
     pub id: i32,
     pub logical_name: String,

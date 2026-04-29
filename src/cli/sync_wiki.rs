@@ -19,6 +19,7 @@ use crate::config::Config;
 use crate::db;
 use crate::db::emoji::ApplicationEmojiClient;
 use crate::templates::{WikiDump, WikiDungeon, WikiEmoji};
+use crate::util::text::slug_from_display;
 
 // ---------------------------------------------------------------------------
 // Selector constants — update these if RealmEye changes their HTML.
@@ -1332,26 +1333,6 @@ async fn download_and_resize(client: &Client, url: &str) -> Result<Vec<u8>> {
 // Utilities.
 // ---------------------------------------------------------------------------
 
-/// Normalise a display name to a logical slug. Apostrophes are *stripped*
-/// (not replaced with underscores) so "Oryx's Sanctuary" collapses cleanly
-/// to "oryxs_sanctuary" rather than "oryx_s_sanctuary" — the old behaviour
-/// produced spurious single-letter segments that broke emoji name lookups.
-fn slug_from_display(name: &str) -> String {
-    let stripped: String = name
-        .chars()
-        .filter(|c| *c != '\'' && *c != '\u{2019}')
-        .collect();
-    stripped
-        .to_lowercase()
-        .chars()
-        .map(|c| if c.is_alphanumeric() { c } else { '_' })
-        .collect::<String>()
-        .split('_')
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>()
-        .join("_")
-}
-
 /// Convert a logical name to a Discord-safe emoji name (alphanumeric + underscore,
 /// max 32 chars, must start with alphanumeric).
 fn discord_name(logical: &str) -> String {
@@ -1433,7 +1414,7 @@ async fn purge_all(emoji_api: &ApplicationEmojiClient, pool: Option<&sqlx::PgPoo
 mod tests {
     use super::{
         extract_drops_section, keep_dungeon_sections, parse_class_entries, parse_drop_items,
-        parse_status_effect_entries, slug_from_display,
+        parse_status_effect_entries,
     };
 
     #[test]
@@ -1460,31 +1441,6 @@ mod tests {
             "boss drops missing: {extracted}"
         );
         assert!(!extracted.contains("log"), "history leaked: {extracted}");
-    }
-
-    #[test]
-    fn slug_strips_straight_apostrophe() {
-        assert_eq!(slug_from_display("Oryx's Sanctuary"), "oryxs_sanctuary");
-        assert_eq!(slug_from_display("Pirate's Cave"), "pirates_cave");
-    }
-
-    #[test]
-    fn slug_strips_curly_apostrophe() {
-        assert_eq!(
-            slug_from_display("Oryx\u{2019}s Sanctuary"),
-            "oryxs_sanctuary"
-        );
-    }
-
-    #[test]
-    fn slug_basic_whitespace_and_punct() {
-        assert_eq!(slug_from_display("Snake Pit"), "snake_pit");
-        assert_eq!(slug_from_display("D.O.G. Realm"), "d_o_g_realm");
-    }
-
-    #[test]
-    fn slug_collapses_multiple_separators() {
-        assert_eq!(slug_from_display("  Lost   Halls  "), "lost_halls");
     }
 
     #[test]

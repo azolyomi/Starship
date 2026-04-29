@@ -32,5 +32,8 @@ pub async fn handle(
     if id.starts_with("verify:") {
         return super::verify::handle_modal(ctx, modal, data).await;
     }
+    if id.starts_with("de:") {
+        return super::dungeon_edit::handle_modal(ctx, modal, data).await;
+    }
     Ok(())
 }

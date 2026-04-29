@@ -83,44 +83,6 @@ pub async fn get_reactions(pool: &PgPool, template_id: i32) -> Result<Vec<Dungeo
     Ok(rows)
 }
 
-pub struct NewTemplate<'a> {
-    pub name: &'a str,
-    pub display_name: &'a str,
-    pub emoji: Option<&'a str>,
-    pub color: Option<i32>,
-    pub message_title: Option<&'a str>,
-    pub message_description: Option<&'a str>,
-    pub requires_vc: bool,
-}
-
-/// Create a guild-specific template override.
-pub async fn insert_guild_template(
-    pool: &PgPool,
-    guild_id: i64,
-    t: &NewTemplate<'_>,
-) -> Result<i32> {
-    let id: i32 = sqlx::query_scalar(
-        r#"
-        INSERT INTO dungeon_templates
-            (guild_id, name, display_name, emoji, color,
-             message_title, message_description, requires_vc)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-        RETURNING id
-        "#,
-    )
-    .bind(guild_id)
-    .bind(t.name)
-    .bind(t.display_name)
-    .bind(t.emoji)
-    .bind(t.color)
-    .bind(t.message_title)
-    .bind(t.message_description)
-    .bind(t.requires_vc)
-    .fetch_one(pool)
-    .await?;
-    Ok(id)
-}
-
 /// Update a guild-specific template; returns false if the row doesn't belong to this guild.
 // Phase D will lift the patch fields into a dedicated `TemplatePatch` struct
 // alongside the snowflake-newtype migration.
@@ -220,6 +182,192 @@ pub async fn upsert_global_template(
     .fetch_one(pool)
     .await?;
     Ok(id)
+}
+
+/// Parameters for [`create_guild_template_with_inherit`]. Optional
+/// fields are user-supplied modal inputs; when an inherit-from source
+/// is set, the source's value is the fallback for fields the user didn't
+/// provide. Fields that aren't user-editable in the create modal
+/// (`emoji`, `requires_vc`, `thumbnail_url`, `showcase_emoji`,
+/// `message_title`) always come from the source when present.
+pub struct CreateGuildTemplateParams<'a> {
+    pub guild_id: i64,
+    pub name: &'a str,
+    pub display_name: &'a str,
+    pub description: Option<&'a str>,
+    pub color: Option<i32>,
+    pub inherit_from: Option<i32>,
+}
+
+/// INSERT a new guild-specific dungeon template, optionally seeded from
+/// an inherit-from source. Atomically copies the source's reactions
+/// when one is set. Returns the new template id.
+pub async fn create_guild_template_with_inherit(
+    pool: &PgPool,
+    params: CreateGuildTemplateParams<'_>,
+) -> Result<i32> {
+    let mut tx = pool.begin().await?;
+
+    let new_id: i32 = match params.inherit_from {
+        Some(source_id) => {
+            // INSERT-SELECT from the source so we pick up `emoji`,
+            // `requires_vc`, `message_title`, `thumbnail_url`,
+            // `showcase_emoji`, and `image_url` without an extra round
+            // trip. User-supplied fields override their counterparts;
+            // `description` and `color` fall through to source values
+            // when None.
+            sqlx::query_scalar(
+                r#"
+                INSERT INTO dungeon_templates
+                    (guild_id, name, display_name, emoji, color,
+                     message_title, message_description, requires_vc,
+                     showcase_emoji, thumbnail_url, image_url)
+                SELECT $1, $2, $3, emoji,
+                       COALESCE($4, color),
+                       message_title,
+                       COALESCE($5, message_description),
+                       requires_vc,
+                       showcase_emoji, thumbnail_url, image_url
+                FROM dungeon_templates
+                WHERE id = $6
+                RETURNING id
+                "#,
+            )
+            .bind(params.guild_id)
+            .bind(params.name)
+            .bind(params.display_name)
+            .bind(params.color)
+            .bind(params.description)
+            .bind(source_id)
+            .fetch_one(&mut *tx)
+            .await?
+        }
+        None => sqlx::query_scalar(
+            r#"
+            INSERT INTO dungeon_templates
+                (guild_id, name, display_name, color,
+                 message_description, requires_vc)
+            VALUES ($1, $2, $3, $4, $5, FALSE)
+            RETURNING id
+            "#,
+        )
+        .bind(params.guild_id)
+        .bind(params.name)
+        .bind(params.display_name)
+        .bind(params.color)
+        .bind(params.description)
+        .fetch_one(&mut *tx)
+        .await?,
+    };
+
+    if let Some(source_id) = params.inherit_from {
+        sqlx::query(
+            r#"
+            INSERT INTO dungeon_reactions
+                (dungeon_template_id, name, display_name, emoji,
+                 num_required, requires_confirmation, sort_order)
+            SELECT $1, name, display_name, emoji,
+                   num_required, requires_confirmation, sort_order
+            FROM dungeon_reactions
+            WHERE dungeon_template_id = $2
+            "#,
+        )
+        .bind(new_id)
+        .bind(source_id)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    // Always-on interest reaction. ON CONFLICT preserves any inherited
+    // tuning when the source template already had one (which globals do
+    // by default).
+    sqlx::query(
+        r#"
+        INSERT INTO dungeon_reactions
+            (dungeon_template_id, name, display_name, emoji,
+             num_required, requires_confirmation, sort_order)
+        VALUES ($1, 'interest', 'Joining', '✅', 1, FALSE, 0)
+        ON CONFLICT (dungeon_template_id, name) DO NOTHING
+        "#,
+    )
+    .bind(new_id)
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+    Ok(new_id)
+}
+
+/// Count of guild-specific templates for a guild. Used by `/dungeon
+/// create` to enforce the per-guild cap (`limits::CUSTOM_DUNGEONS_PER_GUILD`)
+/// without first listing every row.
+pub async fn count_guild_templates(pool: &PgPool, guild_id: i64) -> Result<i64> {
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM dungeon_templates WHERE guild_id = $1",
+    )
+    .bind(guild_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(count)
+}
+
+// Used by /dungeon edit in the follow-up commit.
+#[allow(dead_code)]
+/// Fork a global template into a guild-specific copy, atomically.
+///
+/// INSERT-SELECT a new `dungeon_templates` row with `guild_id` swapped
+/// from NULL to `target_guild_id`, then copy every `dungeon_reactions`
+/// row for the source under the new template id. Returns the new
+/// template id.
+///
+/// Used by `/dungeon edit` when an admin tries to edit a global: globals
+/// are seed-managed (overrides.json) and shouldn't be mutated per-guild.
+/// Forking gives the guild a private copy they can tune freely while the
+/// original global stays canonical.
+pub async fn clone_global_to_guild(
+    pool: &PgPool,
+    source_id: i32,
+    target_guild_id: i64,
+) -> Result<i32> {
+    let mut tx = pool.begin().await?;
+
+    let new_id: i32 = sqlx::query_scalar(
+        r#"
+        INSERT INTO dungeon_templates
+            (guild_id, name, display_name, emoji, color,
+             message_title, message_description, requires_vc,
+             showcase_emoji, thumbnail_url, image_url)
+        SELECT $1, name, display_name, emoji, color,
+               message_title, message_description, requires_vc,
+               showcase_emoji, thumbnail_url, image_url
+        FROM dungeon_templates
+        WHERE id = $2
+        RETURNING id
+        "#,
+    )
+    .bind(target_guild_id)
+    .bind(source_id)
+    .fetch_one(&mut *tx)
+    .await?;
+
+    sqlx::query(
+        r#"
+        INSERT INTO dungeon_reactions
+            (dungeon_template_id, name, display_name, emoji,
+             num_required, requires_confirmation, sort_order)
+        SELECT $1, name, display_name, emoji,
+               num_required, requires_confirmation, sort_order
+        FROM dungeon_reactions
+        WHERE dungeon_template_id = $2
+        "#,
+    )
+    .bind(new_id)
+    .bind(source_id)
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+    Ok(new_id)
 }
 
 /// Names of every global dungeon template (`guild_id IS NULL`).
@@ -405,6 +553,70 @@ pub async fn list_notification_roles(
     .fetch_all(pool)
     .await?;
     Ok(rows.into_iter().collect())
+}
+
+/// Fetch a single reaction by primary key. Used by the per-reaction
+/// tuning modal to pre-fill current values.
+pub async fn get_reaction(pool: &PgPool, reaction_id: i32) -> Result<Option<DungeonReaction>> {
+    let row = sqlx::query_as::<_, DungeonReaction>(
+        r#"
+        SELECT id, dungeon_template_id, name, display_name, emoji,
+               num_required, requires_confirmation, sort_order
+        FROM dungeon_reactions WHERE id = $1
+        "#,
+    )
+    .bind(reaction_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row)
+}
+
+/// Apply a tuning update to a reaction. The caller is expected to have
+/// already validated lengths against `limits::REACTION_DISPLAY_NAME_MAX`.
+pub async fn update_reaction(
+    pool: &PgPool,
+    reaction_id: i32,
+    display_name: &str,
+    num_required: i32,
+    sort_order: i32,
+    requires_confirmation: bool,
+) -> Result<()> {
+    sqlx::query(
+        r#"
+        UPDATE dungeon_reactions SET
+            display_name          = $2,
+            num_required          = $3,
+            sort_order            = $4,
+            requires_confirmation = $5
+        WHERE id = $1
+        "#,
+    )
+    .bind(reaction_id)
+    .bind(display_name)
+    .bind(num_required)
+    .bind(sort_order)
+    .bind(requires_confirmation)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Delete a single reaction from a template by its logical name.
+/// Returns true iff a row was deleted. Used by `/dungeon edit`'s
+/// per-category multi-select when an admin deselects a reaction.
+pub async fn delete_reaction_by_name(
+    pool: &PgPool,
+    template_id: i32,
+    name: &str,
+) -> Result<bool> {
+    let result = sqlx::query(
+        "DELETE FROM dungeon_reactions WHERE dungeon_template_id = $1 AND name = $2",
+    )
+    .bind(template_id)
+    .bind(name)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
 }
 
 /// Upsert a reaction for a template (used by sync-wiki).

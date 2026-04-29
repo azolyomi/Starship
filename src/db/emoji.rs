@@ -80,6 +80,30 @@ pub async fn get_all(pool: &PgPool) -> Result<Vec<BotEmoji>> {
     Ok(rows)
 }
 
+/// Every emoji whose `category` matches one of the supplied strings,
+/// ordered first by category (in the order supplied) then alphabetically.
+/// Used by `/dungeon edit`'s reaction multi-selects to populate per-
+/// category options.
+pub async fn list_by_categories(
+    pool: &PgPool,
+    categories: &[&str],
+) -> Result<Vec<BotEmoji>> {
+    let owned: Vec<String> = categories.iter().map(|c| c.to_string()).collect();
+    let rows = sqlx::query_as::<_, BotEmoji>(
+        r#"
+        SELECT id, logical_name, discord_emoji_id, name_on_discord, animated,
+               source_guild_id, category, realmeye_url, uploaded_at, bag_tier
+        FROM bot_emoji
+        WHERE category = ANY($1)
+        ORDER BY category, logical_name
+        "#,
+    )
+    .bind(&owned)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
 /// Delete every row in bot_emoji. Used by `sync-wiki --purge` to clear stale
 /// mappings after an emoji set has been wiped on the Discord side.
 pub async fn truncate(pool: &PgPool) -> Result<()> {

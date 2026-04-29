@@ -1,7 +1,9 @@
 use poise::serenity_prelude as serenity;
+use serenity::CreateInteractionResponse;
 
 use crate::db::dungeon as db;
-use crate::{guild_id_i64, BotContext, BotError};
+use crate::handlers::dungeon_edit;
+use crate::{guild_id_i64, limits, BotContext, BotError};
 
 /// Manage dungeon templates for this server.
 #[poise::command(
@@ -69,70 +71,88 @@ pub async fn list(
     Ok(())
 }
 
+async fn autocomplete_inherit<'a>(
+    ctx: BotContext<'_>,
+    partial: &'a str,
+) -> impl Iterator<Item = serenity::AutocompleteChoice> + 'a {
+    let guild_id = match ctx.guild_id() {
+        Some(id) => id.get() as i64,
+        None => return Vec::new().into_iter(),
+    };
+    let needle = partial.to_lowercase();
+    db::list_for_guild(&ctx.data().db, guild_id)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter(move |d| {
+            d.display_name.to_lowercase().contains(&needle)
+                || d.name.to_lowercase().contains(&needle)
+        })
+        .map(|d| serenity::AutocompleteChoice::new(d.display_name, d.name))
+        .collect::<Vec<_>>()
+        .into_iter()
+}
+
 /// Create a custom dungeon template for this server.
+///
+/// Opens an interactive modal for the display name + description + color,
+/// then a follow-up ephemeral with controls for reactions, tiers, and
+/// the requires-VC flag. The optional `inherit` arg autofills the new
+/// template's scalars and reactions from another dungeon — handy for
+/// "I want my own version of Lost Halls with one extra reaction".
 #[poise::command(slash_command, guild_only)]
 pub async fn create(
     ctx: BotContext<'_>,
-    #[description = "Internal name (snake_case, unique per server)"] name: String,
-    #[description = "Display name shown in embeds"] display_name: String,
-    #[description = "Logical emoji name (from bot_emoji table)"] emoji: Option<String>,
-    #[description = "Embed color as hex, e.g. FF4500"] color: Option<String>,
-    #[description = "Headcount embed description"] description: Option<String>,
-    #[description = "Whether this is a voice-channel raid"] requires_vc: Option<bool>,
+    #[description = "Existing dungeon to autofill from (optional)"]
+    #[autocomplete = "autocomplete_inherit"]
+    inherit: Option<String>,
 ) -> Result<(), BotError> {
     let guild_id = guild_id_i64(ctx);
     let pool = &ctx.data().db;
 
-    // Basic name validation: lowercase alphanumeric + underscore only.
-    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-        ctx.say("Name must be lowercase alphanumeric with underscores only (e.g. `my_dungeon`).")
-            .await?;
+    // Cap check before opening the modal so a fully-loaded server gets a
+    // clear rejection instead of typing into a form for no reason.
+    let count = db::count_guild_templates(pool, guild_id).await?;
+    if count >= limits::CUSTOM_DUNGEONS_PER_GUILD {
+        ctx.send(
+            poise::CreateReply::default()
+                .content(format!(
+                    "This server is at the cap of {} custom dungeons. \
+                     Delete one with `/dungeon delete` before creating another.",
+                    limits::CUSTOM_DUNGEONS_PER_GUILD
+                ))
+                .ephemeral(true),
+        )
+        .await?;
         return Ok(());
     }
 
-    let color_int = match color.as_deref() {
-        Some(s) => {
-            let hex = s.trim_start_matches('#');
-            match i64::from_str_radix(hex, 16) {
-                Ok(v) if v <= 0xFFFFFF => Some(v as i32),
-                _ => {
-                    ctx.say("Color must be a valid hex color like `FF4500`.")
-                        .await?;
-                    return Ok(());
-                }
-            }
-        }
+    let inherit_template = match inherit.as_deref() {
+        Some(name) => db::get_by_name(pool, guild_id, name).await?,
         None => None,
     };
 
-    let t = db::NewTemplate {
-        name: &name,
-        display_name: &display_name,
-        emoji: emoji.as_deref(),
-        color: color_int,
-        message_title: Some(&display_name),
-        message_description: description.as_deref(),
-        requires_vc: requires_vc.unwrap_or(false),
+    // Modals can only be sent in response to a non-deferred interaction.
+    // Reach into the application context to get the raw command
+    // interaction; poise has no helper for "respond with modal".
+    let app_ctx = match ctx {
+        poise::Context::Application(app) => app,
+        poise::Context::Prefix(_) => {
+            ctx.say("/dungeon create can only be used as a slash command.")
+                .await?;
+            return Ok(());
+        }
     };
 
-    match db::insert_guild_template(pool, guild_id, &t).await {
-        Ok(_) => {
-            ctx.say(format!(
-                "Created dungeon template `{}` — use `/dungeon edit` to refine it.",
-                name
-            ))
-            .await?;
-        }
-        Err(e) if e.to_string().contains("unique") || e.to_string().contains("duplicate") => {
-            ctx.say(format!(
-                "A template named `{}` already exists for this server.",
-                name
-            ))
-            .await?;
-        }
-        Err(e) => return Err(e.into()),
-    }
-
+    app_ctx
+        .interaction
+        .create_response(
+            ctx.http(),
+            CreateInteractionResponse::Modal(dungeon_edit::build_create_modal(
+                inherit_template.as_ref(),
+            )),
+        )
+        .await?;
     Ok(())
 }
 

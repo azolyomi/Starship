@@ -33,5 +33,8 @@ pub async fn handle(
     if id.starts_with("verify:") {
         return super::verify::handle_component(ctx, mci, data).await;
     }
+    if id.starts_with("de:") {
+        return super::dungeon_edit::handle_component(ctx, mci, data).await;
+    }
     Ok(())
 }
