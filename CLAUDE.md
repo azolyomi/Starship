@@ -146,6 +146,15 @@ hear about — not the smallest unit of code change.
   changes for the user, not the mechanism. Good: "Auto-cancel idle
   headcounts after 20m". Bad: "Refactor sweep_idle_runs into shared
   task". Subjects ≤ 70 chars; the body carries the why.
+- For changes with no user-facing footprint (CLAUDE.md edits, CI
+  tweaks, internal-only docs, build-script tweaks), prefix the subject
+  with `[internal]`. The deploy workflow strips `[internal]`-prefixed
+  commits from the Discord notification, so users never see the noise.
+  Use this **only** when the commit ships nothing for users — when in
+  doubt, write a user-facing subject and bundle the internal change in
+  with it. A push that contains only `[internal]` commits still
+  triggers a deploy notification (the bot restarts either way), but
+  the body shows "(internal changes only)" instead of the commit list.
 
 # Agent Guidelines for Rust Code Quality
 

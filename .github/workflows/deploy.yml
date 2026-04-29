@@ -51,25 +51,42 @@ jobs:
       # workflow_dispatch — both cases produce a sensible message.
       # Caps the displayed list at 5 commits to stay well under
       # Discord's 2000-char limit, with a "...and N more" tail.
+      #
+      # Commits whose subject begins with `[internal]` are dropped:
+      # those describe Claude / CI / dev-doc changes that aren't
+      # user-facing. The convention is documented in CLAUDE.md under
+      # the Commits section.
       - name: Build commit context
         id: ctx
         run: |
           SHORT_SHA=$(echo "${GITHUB_SHA}" | cut -c1-7)
-          COMMIT_COUNT=$(jq -r '.commits | length // 0' "$GITHUB_EVENT_PATH")
+          RAW_COUNT=$(jq -r '.commits | length // 0' "$GITHUB_EVENT_PATH")
 
-          if [ "$COMMIT_COUNT" -gt 0 ]; then
-            COMMITS_BLOCK=$(jq -r '
+          if [ "$RAW_COUNT" -gt 0 ]; then
+            FILTERED=$(jq '
               .commits
-              | .[0:5]
-              | map("> " + (.message | split("\n")[0]))
-              | join("\n")
+              | map(select((.message | split("\n")[0] | startswith("[internal]")) | not))
             ' "$GITHUB_EVENT_PATH")
-            if [ "$COMMIT_COUNT" -gt 5 ]; then
-              COMMITS_BLOCK="${COMMITS_BLOCK}"$'\n'"> …and $((COMMIT_COUNT - 5)) more"
-            fi
-            COUNT_SUFFIX=""
-            if [ "$COMMIT_COUNT" -gt 1 ]; then
-              COUNT_SUFFIX=" (${COMMIT_COUNT} commits)"
+            COMMIT_COUNT=$(echo "$FILTERED" | jq 'length')
+
+            if [ "$COMMIT_COUNT" -gt 0 ]; then
+              COMMITS_BLOCK=$(echo "$FILTERED" | jq -r '
+                .[0:5]
+                | map("> " + (.message | split("\n")[0]))
+                | join("\n")
+              ')
+              if [ "$COMMIT_COUNT" -gt 5 ]; then
+                COMMITS_BLOCK="${COMMITS_BLOCK}"$'\n'"> …and $((COMMIT_COUNT - 5)) more"
+              fi
+              COUNT_SUFFIX=""
+              if [ "$COMMIT_COUNT" -gt 1 ]; then
+                COUNT_SUFFIX=" (${COMMIT_COUNT} commits)"
+              fi
+            else
+              # Push contained only [internal] commits — bot still
+              # restarts, so post a stub instead of skipping.
+              COMMITS_BLOCK=""
+              COUNT_SUFFIX=" (internal changes only)"
             fi
           else
             COMMITS_BLOCK=""
