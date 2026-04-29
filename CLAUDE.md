@@ -83,6 +83,40 @@ the user has chosen to defer it — but that choice belongs to the user,
 not to Claude. Surfacing a diagnosis is free; applying a shortcut without
 one costs compounding tech debt.
 
+## Grill before implementing (IMPORTANT)
+
+For any feature request, bugfix, or behavior change beyond a trivial,
+unambiguous edit (typo, literal value the user spelled out, obvious
+off-by-one), do **not** start writing code. First read the relevant code
+to understand the current behavior, then ask the user a single batched
+list of concrete numbered questions covering, at minimum:
+
+- **Scope**: defaults vs specific cases. Does the change apply globally,
+  or only in named situations? What's the full set of cases the rule
+  should cover, and what's the full set it should *not*?
+- **Edge cases & exceptions**: list every flow / dungeon / config /
+  branch that *looks* similar to the requested change so the user can
+  confirm whether each is in or out of scope. Don't make the user
+  remember the exceptions — surface them.
+- **Mechanism & location**: where does the change belong (default,
+  override file, schema, runtime check, new flag)? Lay out the
+  alternatives with their tradeoffs; don't pick silently.
+- **Hidden consequences**: data migration, restart behavior, downstream
+  UX, log output, deploy notification wording, anything a user would
+  notice that the request didn't mention.
+- **Escape hatches**: should the leader / admin be able to opt in or
+  out of the new behavior? Per-guild? Per-dungeon? Or hardcoded?
+
+Questions must be specific and grounded in code you've already read.
+If a question is vague enough that "whatever you think" is a valid
+answer, it isn't grilling — read more code first. Cite file paths and
+line numbers when a question references existing behavior so the user
+can check your premise quickly.
+
+Then **wait for answers** before coding. The user will sometimes
+explicitly waive this ("just do it", "small change, go") — honor that,
+but otherwise default to grilling.
+
 ## Workflow
 
 - Feature branches only — never commit directly to `main` without user
