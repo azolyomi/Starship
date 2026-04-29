@@ -333,14 +333,8 @@ pub async fn add_dungeon(
     let changed = db::tier::add_dungeon(pool, t.id, &d).await?;
     let is_global = d.guild_id.is_none();
     let msg = match (changed, is_global) {
-        (true, true) => format!(
-            "Re-enabled **{}** for tier **{}**.",
-            d.display_name, t.name
-        ),
-        (true, false) => format!(
-            "Added **{}** to tier **{}**.",
-            d.display_name, t.name
-        ),
+        (true, true) => format!("Re-enabled **{}** for tier **{}**.", d.display_name, t.name),
+        (true, false) => format!("Added **{}** to tier **{}**.", d.display_name, t.name),
         (false, true) => format!(
             "**{}** is already enabled for tier **{}**.",
             d.display_name, t.name
@@ -395,10 +389,7 @@ pub async fn remove_dungeon(
              `/tier add-dungeon`.",
             d.display_name, t.name
         ),
-        (true, false) => format!(
-            "Removed **{}** from tier **{}**.",
-            d.display_name, t.name
-        ),
+        (true, false) => format!("Removed **{}** from tier **{}**.", d.display_name, t.name),
         (false, true) => format!(
             "**{}** is already disabled for tier **{}**.",
             d.display_name, t.name

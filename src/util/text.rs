@@ -14,7 +14,10 @@ pub fn snake_to_title(s: &str) -> String {
         .map(|p| {
             let mut chars = p.chars();
             match chars.next() {
-                Some(c) => c.to_uppercase().chain(chars.flat_map(|c| c.to_lowercase())).collect::<String>(),
+                Some(c) => c
+                    .to_uppercase()
+                    .chain(chars.flat_map(|c| c.to_lowercase()))
+                    .collect::<String>(),
                 None => String::new(),
             }
         })
@@ -54,7 +57,10 @@ mod tests {
     fn snake_to_title_handles_common_cases() {
         assert_eq!(snake_to_title("lost_halls_key"), "Lost Halls Key");
         assert_eq!(snake_to_title("class_wizard"), "Class Wizard");
-        assert_eq!(snake_to_title("vial_of_pure_darkness"), "Vial Of Pure Darkness");
+        assert_eq!(
+            snake_to_title("vial_of_pure_darkness"),
+            "Vial Of Pure Darkness"
+        );
         assert_eq!(snake_to_title(""), "");
         assert_eq!(snake_to_title("__a__b__"), "A B");
     }
@@ -67,7 +73,10 @@ mod tests {
 
     #[test]
     fn slug_strips_curly_apostrophe() {
-        assert_eq!(slug_from_display("Oryx\u{2019}s Sanctuary"), "oryxs_sanctuary");
+        assert_eq!(
+            slug_from_display("Oryx\u{2019}s Sanctuary"),
+            "oryxs_sanctuary"
+        );
     }
 
     #[test]

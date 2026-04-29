@@ -301,11 +301,7 @@ pub async fn is_dungeon_visible(
 
 /// Insert into `tier_dungeon_disables` (idempotent). Hides a global from
 /// a tier. Returns true iff a row was newly inserted.
-pub async fn disable_global_dungeon(
-    pool: &PgPool,
-    tier_id: i32,
-    template_id: i32,
-) -> Result<bool> {
+pub async fn disable_global_dungeon(pool: &PgPool, tier_id: i32, template_id: i32) -> Result<bool> {
     let result = sqlx::query(
         "INSERT INTO tier_dungeon_disables (tier_id, dungeon_template_id)
          VALUES ($1, $2) ON CONFLICT DO NOTHING",
@@ -319,11 +315,7 @@ pub async fn disable_global_dungeon(
 
 /// Delete from `tier_dungeon_disables`. Re-shows a previously-hidden
 /// global. Returns true iff a row was actually deleted.
-pub async fn enable_global_dungeon(
-    pool: &PgPool,
-    tier_id: i32,
-    template_id: i32,
-) -> Result<bool> {
+pub async fn enable_global_dungeon(pool: &PgPool, tier_id: i32, template_id: i32) -> Result<bool> {
     let result = sqlx::query(
         "DELETE FROM tier_dungeon_disables WHERE tier_id = $1 AND dungeon_template_id = $2",
     )
@@ -336,11 +328,7 @@ pub async fn enable_global_dungeon(
 
 /// Insert into `tier_dungeons` (idempotent). Attaches a guild-specific
 /// dungeon to a tier. Returns true iff a row was newly inserted.
-pub async fn attach_guild_dungeon(
-    pool: &PgPool,
-    tier_id: i32,
-    template_id: i32,
-) -> Result<bool> {
+pub async fn attach_guild_dungeon(pool: &PgPool, tier_id: i32, template_id: i32) -> Result<bool> {
     let result = sqlx::query(
         "INSERT INTO tier_dungeons (tier_id, dungeon_template_id)
          VALUES ($1, $2) ON CONFLICT DO NOTHING",
@@ -354,29 +342,20 @@ pub async fn attach_guild_dungeon(
 
 /// Delete from `tier_dungeons`. Hard-detaches a guild-specific dungeon.
 /// Returns true iff a row was actually deleted.
-pub async fn detach_guild_dungeon(
-    pool: &PgPool,
-    tier_id: i32,
-    template_id: i32,
-) -> Result<bool> {
-    let result = sqlx::query(
-        "DELETE FROM tier_dungeons WHERE tier_id = $1 AND dungeon_template_id = $2",
-    )
-    .bind(tier_id)
-    .bind(template_id)
-    .execute(pool)
-    .await?;
+pub async fn detach_guild_dungeon(pool: &PgPool, tier_id: i32, template_id: i32) -> Result<bool> {
+    let result =
+        sqlx::query("DELETE FROM tier_dungeons WHERE tier_id = $1 AND dungeon_template_id = $2")
+            .bind(tier_id)
+            .bind(template_id)
+            .execute(pool)
+            .await?;
     Ok(result.rows_affected() > 0)
 }
 
 /// Add a dungeon to a tier, dispatching by the template's `guild_id`:
 /// globals call [`enable_global_dungeon`], guild-specifics call
 /// [`attach_guild_dungeon`]. Returns true iff a state change occurred.
-pub async fn add_dungeon(
-    pool: &PgPool,
-    tier_id: i32,
-    template: &DungeonTemplate,
-) -> Result<bool> {
+pub async fn add_dungeon(pool: &PgPool, tier_id: i32, template: &DungeonTemplate) -> Result<bool> {
     if template.guild_id.is_none() {
         enable_global_dungeon(pool, tier_id, template.id).await
     } else {

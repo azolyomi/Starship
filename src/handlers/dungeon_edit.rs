@@ -170,11 +170,15 @@ pub fn build_create_modal(inherit_source: Option<&DungeonTemplate>) -> CreateMod
                 .max_length(limits::DISPLAY_NAME_MAX as u16),
         ),
         CreateActionRow::InputText(
-            CreateInputText::new(InputTextStyle::Paragraph, "Description (optional)", "description")
-                .placeholder("Shown in the headcount embed")
-                .value(preset_description)
-                .required(false)
-                .max_length(limits::DESCRIPTION_MAX as u16),
+            CreateInputText::new(
+                InputTextStyle::Paragraph,
+                "Description (optional)",
+                "description",
+            )
+            .placeholder("Shown in the headcount embed")
+            .value(preset_description)
+            .required(false)
+            .max_length(limits::DESCRIPTION_MAX as u16),
         ),
         CreateActionRow::InputText(
             CreateInputText::new(InputTextStyle::Short, "Embed color hex (optional)", "color")
@@ -225,7 +229,10 @@ async fn render_edit_view(
     let emoji_map = db::emoji::get_all_as_map(pool).await?;
     let category_emojis = db::emoji::list_by_categories(
         pool,
-        &REACTION_CATEGORIES.iter().map(|(c, _)| *c).collect::<Vec<_>>(),
+        &REACTION_CATEGORIES
+            .iter()
+            .map(|(c, _)| *c)
+            .collect::<Vec<_>>(),
     )
     .await?;
     let by_category = group_by_category(&category_emojis);
@@ -457,12 +464,7 @@ async fn handle_reactions_submit(
 
     // Added: in new_set but not currently a reaction.
     let current_names: HashSet<&str> = current.iter().map(|r| r.name.as_str()).collect();
-    let next_sort_order = current
-        .iter()
-        .map(|r| r.sort_order)
-        .max()
-        .unwrap_or(0)
-        + 1;
+    let next_sort_order = current.iter().map(|r| r.sort_order).max().unwrap_or(0) + 1;
     let mut sort_offset = 0;
     for value in values {
         if current_names.contains(value.as_str()) {
@@ -669,7 +671,10 @@ async fn handle_tune_pick(
     };
     let modal = CreateModal::new(
         format!("de:tunesubmit:{reaction_id}"),
-        format!("Tune reaction: {}", truncate_for_button(&reaction.display_name)),
+        format!(
+            "Tune reaction: {}",
+            truncate_for_button(&reaction.display_name)
+        ),
     )
     .components(vec![
         CreateActionRow::InputText(
@@ -700,7 +705,14 @@ async fn handle_tune_pick(
                 "Requires confirmation? (y/n)",
                 "requires_confirmation",
             )
-            .value(if reaction.requires_confirmation { "y" } else { "n" }.to_string())
+            .value(
+                if reaction.requires_confirmation {
+                    "y"
+                } else {
+                    "n"
+                }
+                .to_string(),
+            )
             .required(true)
             .max_length(3),
         ),
@@ -858,9 +870,7 @@ async fn handle_create_submit(
     )
     .await?;
 
-    let intro = format!(
-        "Created `{slug}`. Tune reactions, tiers, and text fields below."
-    );
+    let intro = format!("Created `{slug}`. Tune reactions, tiers, and text fields below.");
     let resp = build_edit_response(&data.db, new_id, Some(&intro)).await?;
     modal
         .create_response(ctx, CreateInteractionResponse::Message(resp))
@@ -1032,10 +1042,7 @@ async fn handle_tune_submit(
         "n" | "no" | "false" | "0" => false,
         _ => {
             modal
-                .create_response(
-                    ctx,
-                    ephemeral("`requires_confirmation` must be `y`/`n`."),
-                )
+                .create_response(ctx, ephemeral("`requires_confirmation` must be `y`/`n`."))
                 .await?;
             return Ok(());
         }
@@ -1127,4 +1134,3 @@ fn truncate_for_button(s: &str) -> String {
         s.chars().take(63).collect::<String>() + "…"
     }
 }
-

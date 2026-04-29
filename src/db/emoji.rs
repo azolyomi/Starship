@@ -84,10 +84,7 @@ pub async fn get_all(pool: &PgPool) -> Result<Vec<BotEmoji>> {
 /// ordered first by category (in the order supplied) then alphabetically.
 /// Used by `/dungeon edit`'s reaction multi-selects to populate per-
 /// category options.
-pub async fn list_by_categories(
-    pool: &PgPool,
-    categories: &[&str],
-) -> Result<Vec<BotEmoji>> {
+pub async fn list_by_categories(pool: &PgPool, categories: &[&str]) -> Result<Vec<BotEmoji>> {
     let owned: Vec<String> = categories.iter().map(|c| c.to_string()).collect();
     let rows = sqlx::query_as::<_, BotEmoji>(
         r#"

@@ -242,22 +242,24 @@ pub async fn create_guild_template_with_inherit(
             .fetch_one(&mut *tx)
             .await?
         }
-        None => sqlx::query_scalar(
-            r#"
+        None => {
+            sqlx::query_scalar(
+                r#"
             INSERT INTO dungeon_templates
                 (guild_id, name, display_name, color,
                  message_description, requires_vc)
             VALUES ($1, $2, $3, $4, $5, FALSE)
             RETURNING id
             "#,
-        )
-        .bind(params.guild_id)
-        .bind(params.name)
-        .bind(params.display_name)
-        .bind(params.color)
-        .bind(params.description)
-        .fetch_one(&mut *tx)
-        .await?,
+            )
+            .bind(params.guild_id)
+            .bind(params.name)
+            .bind(params.display_name)
+            .bind(params.color)
+            .bind(params.description)
+            .fetch_one(&mut *tx)
+            .await?
+        }
     };
 
     if let Some(source_id) = params.inherit_from {
@@ -302,12 +304,11 @@ pub async fn create_guild_template_with_inherit(
 /// create` to enforce the per-guild cap (`limits::CUSTOM_DUNGEONS_PER_GUILD`)
 /// without first listing every row.
 pub async fn count_guild_templates(pool: &PgPool, guild_id: i64) -> Result<i64> {
-    let count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM dungeon_templates WHERE guild_id = $1",
-    )
-    .bind(guild_id)
-    .fetch_one(pool)
-    .await?;
+    let count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM dungeon_templates WHERE guild_id = $1")
+            .bind(guild_id)
+            .fetch_one(pool)
+            .await?;
     Ok(count)
 }
 
@@ -602,18 +603,13 @@ pub async fn update_reaction(
 /// Delete a single reaction from a template by its logical name.
 /// Returns true iff a row was deleted. Used by `/dungeon edit`'s
 /// per-category multi-select when an admin deselects a reaction.
-pub async fn delete_reaction_by_name(
-    pool: &PgPool,
-    template_id: i32,
-    name: &str,
-) -> Result<bool> {
-    let result = sqlx::query(
-        "DELETE FROM dungeon_reactions WHERE dungeon_template_id = $1 AND name = $2",
-    )
-    .bind(template_id)
-    .bind(name)
-    .execute(pool)
-    .await?;
+pub async fn delete_reaction_by_name(pool: &PgPool, template_id: i32, name: &str) -> Result<bool> {
+    let result =
+        sqlx::query("DELETE FROM dungeon_reactions WHERE dungeon_template_id = $1 AND name = $2")
+            .bind(template_id)
+            .bind(name)
+            .execute(pool)
+            .await?;
     Ok(result.rows_affected() > 0)
 }
 
