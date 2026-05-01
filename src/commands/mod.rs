@@ -16,6 +16,7 @@ pub fn all() -> Vec<poise::Command<BotData, BotError>> {
         config::config(),
         dungeon::dungeon(),
         headcount::headcount(),
+        headcount::hc(),
         permission::permission(),
         tier::tier(),
         pingroles::pingroles(),

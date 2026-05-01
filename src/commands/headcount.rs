@@ -57,7 +57,20 @@ fn ephemeral(msg: impl Into<String>) -> CreateReply {
     CreateReply::default().content(msg).ephemeral(true)
 }
 
-/// Start a headcount for a dungeon.
+/// Build the `/hc` slash command — a shorter alias of `/headcount` that
+/// lands on the same handler. Two registrations of one Command would
+/// collide on `identifying_name` (which is what poise uses to pair an
+/// interaction back to its command); cloning + retitling keeps each
+/// registration distinct without duplicating the handler body.
+pub fn hc() -> poise::Command<crate::BotData, crate::BotError> {
+    let mut cmd = headcount();
+    cmd.name = "hc".to_string();
+    cmd.qualified_name = "hc".to_string();
+    cmd.identifying_name = "hc".to_string();
+    cmd
+}
+
+/// Start a headcount for a dungeon. Reachable as `/headcount` or `/hc`.
 #[poise::command(slash_command, guild_only)]
 pub async fn headcount(
     ctx: BotContext<'_>,
