@@ -26,8 +26,8 @@ pub async fn handle(
     if id.starts_with("hc:") {
         return super::headcount::handle_modal(ctx, modal, data).await;
     }
-    if id.starts_with("so:") {
-        return super::self_organize::handle_modal(ctx, modal, data).await;
+    if id.starts_with("srui:") {
+        return super::start_run_ui::handle_modal(ctx, modal, data).await;
     }
     if id.starts_with("verify:") {
         return super::verify::handle_modal(ctx, modal, data).await;

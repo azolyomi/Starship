@@ -5,8 +5,8 @@ pub mod headcount;
 pub mod loot;
 pub mod models;
 pub mod permission;
+pub mod raid_gates;
 pub mod run;
-pub mod self_organize;
 pub mod tier;
 pub mod verification;
 

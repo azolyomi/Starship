@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE tiers SET self_organize_listing_message_id = $1 WHERE id = $2",
+  "query": "UPDATE tiers SET start_run_ui_button_message_id = $1 WHERE id = $2",
   "describe": {
     "columns": [],
     "parameters": {
@@ -11,5 +11,5 @@
     },
     "nullable": []
   },
-  "hash": "503f8f80576384191f0d3d09034b72faf703afaedc1527e6f7f63dfab895cdf6"
+  "hash": "74c2ab7ace99ad5d8983dcc97431ed4fca9bcea7b845889fb49c3c68d1f10bcd"
 }

@@ -1,7 +1,7 @@
-//! Sticky-message lifecycle for the self-organize feature.
+//! Sticky-message lifecycle for the start-run UI.
 //!
-//! Every self-organize-enabled tier has *two* sticky messages in its
-//! configured channel:
+//! Every tier with `enable_start_run_ui = TRUE` has *two* sticky messages
+//! in its configured channel:
 //!
 //! 1. A **button message** with a single "Start a run" button. This
 //!    message is never edited — it's posted once and the message ID is
@@ -28,7 +28,7 @@ use poise::serenity_prelude as serenity;
 use sqlx::PgPool;
 
 use crate::db;
-use crate::db::models::{BotEmoji, SlotClaim, Tier};
+use crate::db::models::{BotEmoji, DungeonTemplate, Tier};
 use crate::embeds::headcount::emoji_str;
 use crate::services::channels::is_not_found;
 
@@ -41,7 +41,7 @@ const LISTING_MAX_ROWS: usize = 25;
 /// custom_id of the sticky button. Encodes the tier so a single
 /// dispatcher can route clicks across all tiers.
 fn button_custom_id(tier_id: i32) -> String {
-    format!("so:btn:{tier_id}")
+    format!("srui:btn:{tier_id}")
 }
 
 /// Build the sticky "Start a run" message. Async so it can render the
@@ -62,23 +62,24 @@ async fn build_button_message(pool: &PgPool, tier: &Tier) -> serenity::CreateMes
         "{bag} **What this does**\n\
          Open a **headcount** so other people can react to join your dungeon. \
          When enough people have signed up, click **Start Run** on the headcount \
-         to convert it into a live raid.\n\
+         to convert it into a live raid. The slash command `/hc` does the same \
+         thing if you'd rather type than click.\n\
          \n\
          \u{1F465} **Who can use it**\n\
-         _Anyone_ who can see this channel — no leader role required. \
-         Trusted leaders (with the **Raid Leader** role, or `ManageRuns` permission) \
-         bypass the per-user cap, post-cancel cooldown, and minimum-reactor floor.\n\
+         Anyone with the **Start Headcount** permission. Trusted operators \
+         (admins / `ManageRuns`) bypass the per-user cap, post-cancel cooldown, \
+         and minimum-reactor floor.\n\
          \n\
          \u{2699}\u{FE0F} **House rules**\n\
-         \u{2022} One raid per (tier, dungeon) at a time\n\
-         \u{2022} One self-organized raid per leader at a time\n\
+         \u{2022} One headcount per (tier, dungeon) at a time\n\
+         \u{2022} One active raid per leader at a time\n\
          \u{2022} Idle headcounts auto-cancel after **{idle} minutes**\n\
          \u{2022} A short cooldown applies after you cancel your own headcount\n\
          \u{2022} A headcount needs at least **{min} reactor(s)** before it can convert\n\
          \n\
          _Live raids appear in the **Status** message below._",
-        idle = tier.self_organize_idle_minutes,
-        min = tier.self_organize_min_reactors,
+        idle = tier.hc_idle_minutes,
+        min = tier.hc_min_reactors,
     );
 
     let embed = serenity::CreateEmbed::default()
@@ -104,12 +105,12 @@ pub async fn ensure_button_message(
     pool: &PgPool,
     tier: &Tier,
 ) -> Result<()> {
-    let Some(channel_id) = tier.self_organize_channel_id else {
+    let Some(channel_id) = tier.start_run_ui_channel_id else {
         return Ok(());
     };
     let channel = serenity::ChannelId::new(channel_id as u64);
 
-    if let Some(message_id) = tier.self_organize_button_message_id {
+    if let Some(message_id) = tier.start_run_ui_button_message_id {
         let message = serenity::MessageId::new(message_id as u64);
         match channel.message(&serenity_ctx.http, message).await {
             Ok(_) => return Ok(()),
@@ -118,7 +119,7 @@ pub async fn ensure_button_message(
                     tier_id = tier.id,
                     channel_id,
                     message_id,
-                    "self-organize button message 404; reposting",
+                    "start-run-UI button message 404; reposting",
                 );
             }
             Err(e) => {
@@ -126,7 +127,7 @@ pub async fn ensure_button_message(
                     error = ?e,
                     tier_id = tier.id,
                     channel_id,
-                    "self-organize button probe failed; leaving as-is",
+                    "start-run-UI button probe failed; leaving as-is",
                 );
                 return Ok(());
             }
@@ -136,7 +137,7 @@ pub async fn ensure_button_message(
     let msg = channel
         .send_message(&serenity_ctx.http, build_button_message(pool, tier).await)
         .await?;
-    db::tier::set_self_organize_button_message(pool, tier.id, Some(msg.id.get() as i64)).await?;
+    db::tier::set_start_run_ui_button_message(pool, tier.id, Some(msg.id.get() as i64)).await?;
     Ok(())
 }
 
@@ -147,12 +148,12 @@ pub async fn ensure_listing_message(
     pool: &PgPool,
     tier: &Tier,
 ) -> Result<()> {
-    let Some(channel_id) = tier.self_organize_channel_id else {
+    let Some(channel_id) = tier.start_run_ui_channel_id else {
         return Ok(());
     };
     let channel = serenity::ChannelId::new(channel_id as u64);
 
-    if let Some(message_id) = tier.self_organize_listing_message_id {
+    if let Some(message_id) = tier.start_run_ui_listing_message_id {
         let message = serenity::MessageId::new(message_id as u64);
         match channel.message(&serenity_ctx.http, message).await {
             Ok(_) => return Ok(()),
@@ -161,7 +162,7 @@ pub async fn ensure_listing_message(
                     tier_id = tier.id,
                     channel_id,
                     message_id,
-                    "self-organize listing message 404; reposting",
+                    "start-run-UI listing message 404; reposting",
                 );
             }
             Err(e) => {
@@ -169,7 +170,7 @@ pub async fn ensure_listing_message(
                     error = ?e,
                     tier_id = tier.id,
                     channel_id,
-                    "self-organize listing probe failed; leaving as-is",
+                    "start-run-UI listing probe failed; leaving as-is",
                 );
                 return Ok(());
             }
@@ -183,13 +184,13 @@ pub async fn ensure_listing_message(
             serenity::CreateMessage::new().add_embed(embed),
         )
         .await?;
-    db::tier::set_self_organize_listing_message(pool, tier.id, Some(msg.id.get() as i64)).await?;
+    db::tier::set_start_run_ui_listing_message(pool, tier.id, Some(msg.id.get() as i64)).await?;
     Ok(())
 }
 
 /// Best-effort delete of both sticky messages in Discord and clear
 /// their stored IDs in the DB. Called when a tier is toggled out of
-/// self-organize so the channel doesn't keep a dead button around.
+/// start-run UI so the channel doesn't keep a dead button around.
 ///
 /// Failures (404, 403, network) are logged and swallowed: the DB IDs
 /// are cleared regardless so a subsequent re-enable always reposts
@@ -199,11 +200,11 @@ pub async fn teardown_messages(
     pool: &PgPool,
     tier: &Tier,
 ) -> Result<()> {
-    if let Some(channel_id) = tier.self_organize_channel_id {
+    if let Some(channel_id) = tier.start_run_ui_channel_id {
         let channel = serenity::ChannelId::new(channel_id as u64);
         for (label, msg_id_opt) in [
-            ("button", tier.self_organize_button_message_id),
-            ("listing", tier.self_organize_listing_message_id),
+            ("button", tier.start_run_ui_button_message_id),
+            ("listing", tier.start_run_ui_listing_message_id),
         ] {
             let Some(msg_id) = msg_id_opt else { continue };
             if let Err(e) = channel
@@ -216,14 +217,14 @@ pub async fn teardown_messages(
                         tier_id = tier.id,
                         message_kind = label,
                         message_id = msg_id,
-                        "failed to delete self-organize sticky message during teardown",
+                        "failed to delete sticky message during teardown",
                     );
                 }
             }
         }
     }
-    db::tier::set_self_organize_button_message(pool, tier.id, None).await?;
-    db::tier::set_self_organize_listing_message(pool, tier.id, None).await?;
+    db::tier::set_start_run_ui_button_message(pool, tier.id, None).await?;
+    db::tier::set_start_run_ui_listing_message(pool, tier.id, None).await?;
     Ok(())
 }
 
@@ -235,10 +236,10 @@ pub async fn refresh_listing(
     pool: &PgPool,
     tier: &Tier,
 ) -> Result<()> {
-    let Some(channel_id) = tier.self_organize_channel_id else {
+    let Some(channel_id) = tier.start_run_ui_channel_id else {
         return Ok(());
     };
-    let Some(message_id) = tier.self_organize_listing_message_id else {
+    let Some(message_id) = tier.start_run_ui_listing_message_id else {
         // Never installed; nothing to refresh.
         return Ok(());
     };
@@ -264,7 +265,7 @@ pub async fn refresh_listing(
                 message_id = message_id,
                 "listing message 404; clearing and reposting",
             );
-            db::tier::set_self_organize_listing_message(pool, tier.id, None).await?;
+            db::tier::set_start_run_ui_listing_message(pool, tier.id, None).await?;
             // Re-load the tier so `ensure_listing_message` sees the
             // cleared field — a stale `tier` reference would still hold
             // the bad message_id.
@@ -285,32 +286,48 @@ pub async fn refresh_listing(
 }
 
 async fn render_listing_embed(pool: &PgPool, tier: &Tier) -> Result<serenity::CreateEmbed> {
-    let claims = db::self_organize::claim_list_for_guild(pool, tier.guild_id).await?;
+    let headcounts_raw = db::headcount::list_for_tier(pool, tier.id).await?;
+    let runs_raw = db::run::list_for_tier(pool, tier.id).await?;
     let emoji_map = db::emoji::get_all_as_map(pool).await?;
-    let stale_after = Duration::minutes(tier.self_organize_idle_minutes as i64);
+    let stale_after = Duration::minutes(tier.hc_idle_minutes as i64);
     let now = Utc::now();
 
-    let mut headcounts: Vec<ListingRow> = Vec::new();
-    let mut runs: Vec<ListingRow> = Vec::new();
-    for claim in claims.into_iter().filter(|c| c.tier_id == tier.id) {
-        if let Some(row) = build_row(pool, &claim, now, stale_after, &emoji_map).await? {
-            match row.kind {
-                ListingKind::Headcount => headcounts.push(row),
-                ListingKind::Run => runs.push(row),
-            }
+    let mut headcount_rows: Vec<ListingRow> = Vec::with_capacity(headcounts_raw.len());
+    for hc in headcounts_raw {
+        // Hide stale HCs from the listing: they'll get swept the next
+        // time someone clicks for the same slot, but visually the
+        // listing should already treat them as gone.
+        if now - hc.created_at >= stale_after {
+            continue;
         }
+        let template = db::dungeon::get_by_id(pool, hc.dungeon_template_id).await?;
+        headcount_rows.push(ListingRow {
+            leader_user_id: hc.leader_user_id,
+            dungeon_display: dungeon_display(template.as_ref(), hc.dungeon_template_id),
+            dungeon_emoji_rendered: dungeon_emoji_rendered(template.as_ref(), &emoji_map),
+            kind: ListingKind::Headcount,
+            acquired_at: hc.created_at,
+        });
     }
 
-    // Newest at the top so users see what's just been opened.
-    headcounts.sort_by_key(|r| std::cmp::Reverse(r.acquired_at));
-    runs.sort_by_key(|r| std::cmp::Reverse(r.acquired_at));
+    let mut run_rows: Vec<ListingRow> = Vec::with_capacity(runs_raw.len());
+    for run in runs_raw {
+        let template = db::dungeon::get_by_id(pool, run.dungeon_template_id).await?;
+        run_rows.push(ListingRow {
+            leader_user_id: run.leader_user_id,
+            dungeon_display: dungeon_display(template.as_ref(), run.dungeon_template_id),
+            dungeon_emoji_rendered: dungeon_emoji_rendered(template.as_ref(), &emoji_map),
+            kind: ListingKind::Run,
+            acquired_at: run.created_at,
+        });
+    }
 
     let title = format!("Status \u{2022} {}", tier.name);
-    let body = format_status_body(&headcounts, &runs, now);
+    let body = format_status_body(&headcount_rows, &run_rows, now);
 
     let footer_text = format!(
         "Click \"Start a run\" to open your own. Idle headcounts auto-cancel after {}m.",
-        tier.self_organize_idle_minutes,
+        tier.hc_idle_minutes,
     );
 
     Ok(serenity::CreateEmbed::default()
@@ -318,6 +335,23 @@ async fn render_listing_embed(pool: &PgPool, tier: &Tier) -> Result<serenity::Cr
         .description(body)
         .footer(serenity::CreateEmbedFooter::new(footer_text))
         .color(0x57F287))
+}
+
+fn dungeon_display(template: Option<&DungeonTemplate>, fallback_id: i32) -> String {
+    match template {
+        Some(t) => t.display_name.clone(),
+        None => format!("dungeon #{fallback_id}"),
+    }
+}
+
+fn dungeon_emoji_rendered(
+    template: Option<&DungeonTemplate>,
+    emoji_map: &HashMap<String, BotEmoji>,
+) -> String {
+    template
+        .and_then(|t| t.emoji.as_deref())
+        .map(|name| emoji_str(name, emoji_map))
+        .unwrap_or_default()
 }
 
 /// Render the two-section body. Each section caps at `LISTING_MAX_ROWS`
@@ -377,15 +411,15 @@ enum ListingKind {
     Run,
 }
 
-/// One pre-formatted listing row. We resolve the dungeon template name
-/// per-claim because a guild may have only a handful of live raids and
-/// the per-row query keeps the rendering code straight-line.
+/// One pre-formatted listing row. Resolved from either a headcount or a
+/// run; the underlying data store is collapsed to a uniform shape here.
 struct ListingRow {
     leader_user_id: i64,
     dungeon_display: String,
     /// Pre-rendered Discord-emoji string (`<:name:id>`, a unicode literal,
     /// or empty if the template has no emoji or it isn't resolvable).
     dungeon_emoji_rendered: String,
+    #[allow(dead_code)] // reserved for future per-kind formatting; kept for symmetry
     kind: ListingKind,
     acquired_at: DateTime<Utc>,
 }
@@ -403,57 +437,4 @@ impl ListingRow {
             self.dungeon_display, self.leader_user_id, age_min,
         )
     }
-}
-
-/// Build a listing row from a claim, returning `None` if the row should
-/// be hidden (linked HC is older than the idle window — visually treated
-/// as gone even though the actual sweep happens lazily on next click).
-async fn build_row(
-    pool: &PgPool,
-    claim: &SlotClaim,
-    now: DateTime<Utc>,
-    stale_after: Duration,
-    emoji_map: &HashMap<String, BotEmoji>,
-) -> Result<Option<ListingRow>> {
-    let template = db::dungeon::get_by_id(pool, claim.dungeon_template_id).await?;
-    let (dungeon_display, dungeon_emoji_rendered) = match template.as_ref() {
-        Some(t) => (
-            t.display_name.clone(),
-            t.emoji
-                .as_deref()
-                .map(|name| emoji_str(name, emoji_map))
-                .unwrap_or_default(),
-        ),
-        None => (
-            format!("dungeon #{}", claim.dungeon_template_id),
-            String::new(),
-        ),
-    };
-
-    let (kind, acquired_at) = if let Some(hc_id) = claim.headcount_id {
-        let Some(hc) = db::headcount::get(pool, hc_id).await? else {
-            // Dangling claim — orphan sweep will reconcile. Skip it.
-            return Ok(None);
-        };
-        if now - hc.created_at >= stale_after {
-            return Ok(None);
-        }
-        (ListingKind::Headcount, hc.created_at)
-    } else if let Some(run_id) = claim.run_id {
-        let Some(run) = db::run::get(pool, run_id).await? else {
-            return Ok(None);
-        };
-        (ListingKind::Run, run.created_at)
-    } else {
-        // Should be unreachable per the table CHECK, but defence in depth.
-        return Ok(None);
-    };
-
-    Ok(Some(ListingRow {
-        leader_user_id: claim.leader_user_id,
-        dungeon_display,
-        dungeon_emoji_rendered,
-        kind,
-        acquired_at,
-    }))
 }

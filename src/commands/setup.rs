@@ -12,7 +12,7 @@ use serenity::{
 };
 
 use crate::db::models::Tier;
-use crate::services::{permission, self_organize_listing};
+use crate::services::{permission, start_run_ui_listing};
 use crate::{db, guild_id_i64, require_guild_id, BotContext, BotError};
 
 /// How long to wait for a click before the wizard expires.
@@ -161,7 +161,7 @@ fn intro_view() -> (CreateEmbed, Vec<CreateActionRow>) {
              **Quick setup** — one click, sensible defaults:\n\
              • Creates a **Raids** category with a single `main-runs` \
                channel (headcounts and runs both live there)\n\
-             • Creates `#🚀self-organize` with a sticky **Start a run** \
+             • Creates `#🚀start-a-run` with a sticky **Start a run** \
                button so anyone can spin up a raid\n\
              • Creates `#🚀starship-log` for audit events\n\
              • Creates a **Raid Leader** role with raid-management \
@@ -247,16 +247,16 @@ async fn do_quick_setup(ctx: BotContext<'_>) -> Result<()> {
 
     // Single runs channel under a Raids category (R3: no more split
     // headcount / raid channels). Also returns the category so we can
-    // place the self-organize channel alongside.
+    // place the start-run UI channel alongside.
     let (raids_category_id, runs_id) = create_default_channels(ctx, "Main").await?;
 
     // Log channel — emoji-prefixed name, fallback to plain if Discord
     // rejects the leading rocket glyph.
     let log_id = find_or_create_log_channel(ctx).await?;
 
-    // Self-organize channel — sticky button + active raids listing live
+    // Start-run UI channel — sticky button + active raids listing live
     // here. Lives under the Raids category alongside the runs channel.
-    let so_channel_id = find_or_create_self_organize_channel(ctx, raids_category_id).await?;
+    let so_channel_id = find_or_create_start_run_ui_channel(ctx, raids_category_id).await?;
 
     // Main tier.
     let existing_main = db::tier::list(pool, guild_id)
@@ -278,11 +278,11 @@ async fn do_quick_setup(ctx: BotContext<'_>) -> Result<()> {
         }
     };
 
-    // Self-organize: enable the tier with the freshly-created channel and
+    // Start-run UI: enable the tier with the freshly-created channel and
     // server defaults for idle / cooldown / min-reactors. Sticky messages
     // get installed below — best-effort so a transient Discord blip
     // doesn't fail the whole quick setup.
-    db::tier::update_self_organize(
+    db::tier::update_start_run_ui(
         pool,
         tier_id,
         Some(true),
@@ -314,9 +314,9 @@ async fn do_quick_setup(ctx: BotContext<'_>) -> Result<()> {
 
     db::guild::mark_setup_complete(pool, guild_id, true).await?;
 
-    // Install the self-organize stickies after every other DB write has
+    // Install the start-run UI stickies after every other DB write has
     // landed. install_stickies_best_effort logs and continues on failure
-    // — the operator can repost from /setup → Self-organize → Repost
+    // — the operator can repost from /setup → Start-run UI → Repost
     // stickies if Discord refused the post.
     install_stickies_best_effort(ctx.serenity_context(), pool, tier_id).await;
 
@@ -592,8 +592,8 @@ async fn dashboard_view(ctx: BotContext<'_>) -> Result<(CreateEmbed, Vec<CreateA
                 .runs_channel_id
                 .map(|c| format!("<#{c}>"))
                 .unwrap_or_else(|| "_no runs channel_".to_string());
-            let so_chip = if t.enable_self_organization {
-                " · self-organize ✅"
+            let so_chip = if t.enable_start_run_ui {
+                " · start-run UI ✅"
             } else {
                 ""
             };
@@ -739,10 +739,10 @@ async fn summary_view(ctx: BotContext<'_>) -> Result<CreateEmbed> {
         .await?
         .len();
 
-    let so_block = if first.enable_self_organization {
-        match first.self_organize_channel_id {
+    let so_block = if first.enable_start_run_ui {
+        match first.start_run_ui_channel_id {
             Some(c) => format!(
-                "\nSelf-organize is **enabled** — anyone can start a raid \
+                "\nStart-run UI is **enabled** — anyone can start a raid \
                  from <#{c}>.\n",
             ),
             None => String::new(),
@@ -759,12 +759,12 @@ async fn summary_view(ctx: BotContext<'_>) -> Result<CreateEmbed> {
          {so_block}\
          \n\
          **Try it out**\n\
-         • Click **Start a run** in the self-organize channel (if enabled).\n\
+         • Click **Start a run** in the start-run UI channel (if enabled).\n\
          • Or run `/headcount <dungeon>` to start gathering raiders.\n\
          • Run `/pingroles` to subscribe to dungeon notifications.\n\
          \n\
          **Manage later**\n\
-         • `/setup` → **Setup tier** → **Configure self-organize** — \
+         • `/setup` → **Setup tier** → **Configure start-run UI** — \
            tune knobs, repost stickies, switch tiers\n\
          • `/tier` — add more tiers, change channels, assign access roles\n\
          • `/permission` — let specific roles run headcounts and runs\n\
@@ -875,7 +875,7 @@ async fn section_first_tier(
                 }
             }
             "setup:tier:so" => {
-                // Hand off to the self-organize sub-view (it has its own
+                // Hand off to the start-run UI sub-view (it has its own
                 // click loop and "Back" returns to the dashboard). Only
                 // reachable when the tier exists in the DB — the button
                 // is disabled before first save.
@@ -884,7 +884,7 @@ async fn section_first_tier(
                 // dashboard loop resumes awaiting clicks; otherwise this
                 // tier-section loop would race the dashboard loop on the
                 // same message.
-                section_self_organize(ctx, &mci).await?;
+                section_start_run_ui(ctx, &mci).await?;
                 return Ok(());
             }
             "setup:tier:save" => {
@@ -1048,17 +1048,15 @@ fn tier_view(
                 .style(ButtonStyle::Primary),
         );
     }
-    // Configure self-organize: only meaningful once the tier exists in
+    // Configure start-run UI: only meaningful once the tier exists in
     // the DB (the SO knobs live on the tier row). Shown disabled before
     // first save so the user knows where to find SO config without
     // needing to discover it elsewhere.
-    let so_enabled = existing
-        .map(|t| t.enable_self_organization)
-        .unwrap_or(false);
+    let so_enabled = existing.map(|t| t.enable_start_run_ui).unwrap_or(false);
     let so_label = if so_enabled {
-        "Configure self-organize ✅"
+        "Configure start-run UI ✅"
     } else {
-        "Configure self-organize"
+        "Configure start-run UI"
     };
     buttons.push(
         CreateButton::new("setup:tier:so")
@@ -1502,7 +1500,7 @@ async fn handle_verify_auto(ctx: BotContext<'_>, mci: &ComponentInteraction) -> 
 }
 
 // ---------------------------------------------------------------------------
-// Section: self-organize
+// Section: start-run UI
 // ---------------------------------------------------------------------------
 
 /// Idle / cooldown / min-reactor presets shown in the section's StringSelects.
@@ -1535,7 +1533,7 @@ const SO_MIN_REACTORS_PRESETS: &[(i32, &str)] = &[
     (8, "8"),
 ];
 
-/// Which sub-view of the self-organize section is currently rendered.
+/// Which sub-view of the start-run UI section is currently rendered.
 /// Multi-tier guilds enter the section on `Picker`; single-tier guilds
 /// skip straight to `Config`.
 #[derive(Clone, Copy)]
@@ -1544,7 +1542,7 @@ enum SoView {
     Config,
 }
 
-async fn section_self_organize(
+async fn section_start_run_ui(
     ctx: BotContext<'_>,
     trigger: &ComponentInteraction,
 ) -> Result<(), BotError> {
@@ -1556,14 +1554,14 @@ async fn section_self_organize(
     // lands on the in-use config rather than a freshly-picked default.
     let Some(initial_tier) = tiers
         .iter()
-        .find(|t| t.enable_self_organization)
+        .find(|t| t.enable_start_run_ui)
         .or_else(|| tiers.first())
         .cloned()
     else {
         respond_plain(
             ctx,
             trigger,
-            "Set up the first tier before configuring self-organize.",
+            "Set up the first tier before configuring start-run UI.",
         )
         .await?;
         return Ok(());
@@ -1576,7 +1574,7 @@ async fn section_self_organize(
         SoView::Picker
     };
 
-    let (embed, components) = render_so_view(&tiers, &initial_tier, view);
+    let (embed, components) = render_start_run_ui_view(&tiers, &initial_tier, view);
     respond_with_view(ctx, trigger, embed, components).await?;
 
     let msg_id = trigger.message.id;
@@ -1606,7 +1604,7 @@ async fn section_self_organize(
             }
             "setup:so:switch" => {
                 view = SoView::Picker;
-                let (embed, components) = render_so_view(&tiers, &tier, view);
+                let (embed, components) = render_start_run_ui_view(&tiers, &tier, view);
                 respond_with_view(ctx, &mci, embed, components).await?;
             }
             "setup:so:tierpick" => {
@@ -1617,23 +1615,22 @@ async fn section_self_organize(
                 let new_tier = current_tier(pool, current_tier_id)
                     .await?
                     .unwrap_or(tier.clone());
-                let (embed, components) = render_so_view(&tiers, &new_tier, view);
+                let (embed, components) = render_start_run_ui_view(&tiers, &new_tier, view);
                 respond_with_view(ctx, &mci, embed, components).await?;
             }
             "setup:so:channel" => {
                 if let ComponentInteractionDataKind::ChannelSelect { values } = &mci.data.kind {
                     let new_channel: Option<i64> = values.first().map(|c| c.get() as i64);
-                    let prior_channel = tier.self_organize_channel_id;
+                    let prior_channel = tier.start_run_ui_channel_id;
                     // Channel changed: tear down the stickies in the old
                     // channel before clearing IDs. teardown_messages handles
                     // the delete + null-out atomically per row.
                     if new_channel != prior_channel
-                        && (tier.self_organize_button_message_id.is_some()
-                            || tier.self_organize_listing_message_id.is_some())
+                        && (tier.start_run_ui_button_message_id.is_some()
+                            || tier.start_run_ui_listing_message_id.is_some())
                     {
                         if let Err(e) =
-                            self_organize_listing::teardown_messages(serenity_ctx, pool, &tier)
-                                .await
+                            start_run_ui_listing::teardown_messages(serenity_ctx, pool, &tier).await
                         {
                             tracing::warn!(
                                 error = ?e,
@@ -1642,7 +1639,7 @@ async fn section_self_organize(
                             );
                         }
                     }
-                    db::tier::update_self_organize(
+                    db::tier::update_start_run_ui(
                         pool,
                         tier.id,
                         None,
@@ -1654,49 +1651,49 @@ async fn section_self_organize(
                     .await?;
                 }
                 let refreshed = current_tier(pool, tier.id).await?.unwrap_or(tier.clone());
-                let (embed, components) = render_so_view(&tiers, &refreshed, view);
+                let (embed, components) = render_start_run_ui_view(&tiers, &refreshed, view);
                 respond_with_view(ctx, &mci, embed, components).await?;
             }
             "setup:so:idle" => {
                 let value = parse_select_i32(&mci.data.kind);
                 if value.is_some() {
-                    db::tier::update_self_organize(pool, tier.id, None, None, value, None, None)
+                    db::tier::update_start_run_ui(pool, tier.id, None, None, value, None, None)
                         .await?;
                 }
                 let refreshed = current_tier(pool, tier.id).await?.unwrap_or(tier.clone());
-                let (embed, components) = render_so_view(&tiers, &refreshed, view);
+                let (embed, components) = render_start_run_ui_view(&tiers, &refreshed, view);
                 respond_with_view(ctx, &mci, embed, components).await?;
             }
             "setup:so:cooldown" => {
                 let value = parse_select_i32(&mci.data.kind);
                 if value.is_some() {
-                    db::tier::update_self_organize(pool, tier.id, None, None, None, value, None)
+                    db::tier::update_start_run_ui(pool, tier.id, None, None, None, value, None)
                         .await?;
                 }
                 let refreshed = current_tier(pool, tier.id).await?.unwrap_or(tier.clone());
-                let (embed, components) = render_so_view(&tiers, &refreshed, view);
+                let (embed, components) = render_start_run_ui_view(&tiers, &refreshed, view);
                 respond_with_view(ctx, &mci, embed, components).await?;
             }
             "setup:so:min" => {
                 let value = parse_select_i32(&mci.data.kind);
                 if value.is_some() {
-                    db::tier::update_self_organize(pool, tier.id, None, None, None, None, value)
+                    db::tier::update_start_run_ui(pool, tier.id, None, None, None, None, value)
                         .await?;
                 }
                 let refreshed = current_tier(pool, tier.id).await?.unwrap_or(tier.clone());
-                let (embed, components) = render_so_view(&tiers, &refreshed, view);
+                let (embed, components) = render_start_run_ui_view(&tiers, &refreshed, view);
                 respond_with_view(ctx, &mci, embed, components).await?;
             }
             "setup:so:toggle" => {
                 let live = current_tier(pool, tier.id).await?.unwrap_or(tier.clone());
-                let want_enable = !live.enable_self_organization;
+                let want_enable = !live.enable_start_run_ui;
 
-                if want_enable && live.self_organize_channel_id.is_none() {
+                if want_enable && live.start_run_ui_channel_id.is_none() {
                     mci.create_response(
                         ctx.http(),
                         CreateInteractionResponse::Message(
                             CreateInteractionResponseMessage::new()
-                                .content("Pick a channel before enabling self-organize.")
+                                .content("Pick a channel before enabling start-run UI.")
                                 .ephemeral(true),
                         ),
                     )
@@ -1709,7 +1706,7 @@ async fn section_self_organize(
                     // racing click in the small window between flag-flip and
                     // delete still hits a sticky owned by an enabled tier.
                     if let Err(e) =
-                        self_organize_listing::teardown_messages(serenity_ctx, pool, &live).await
+                        start_run_ui_listing::teardown_messages(serenity_ctx, pool, &live).await
                     {
                         tracing::warn!(
                             error = ?e,
@@ -1719,7 +1716,7 @@ async fn section_self_organize(
                     }
                 }
 
-                db::tier::update_self_organize(
+                db::tier::update_start_run_ui(
                     pool,
                     tier.id,
                     Some(want_enable),
@@ -1735,24 +1732,24 @@ async fn section_self_organize(
                 }
 
                 let refreshed = current_tier(pool, tier.id).await?.unwrap_or(tier.clone());
-                let (embed, components) = render_so_view(&tiers, &refreshed, view);
+                let (embed, components) = render_start_run_ui_view(&tiers, &refreshed, view);
                 respond_with_view(ctx, &mci, embed, components).await?;
             }
             "setup:so:repost" => {
                 let live = current_tier(pool, tier.id).await?.unwrap_or(tier.clone());
-                if !live.enable_self_organization {
+                if !live.enable_start_run_ui {
                     mci.create_response(
                         ctx.http(),
                         CreateInteractionResponse::Message(
                             CreateInteractionResponseMessage::new()
-                                .content("Self-organize is disabled — enable it to post stickies.")
+                                .content("Start-run UI is disabled — enable it to post stickies.")
                                 .ephemeral(true),
                         ),
                     )
                     .await?;
                     continue;
                 }
-                if live.self_organize_channel_id.is_none() {
+                if live.start_run_ui_channel_id.is_none() {
                     mci.create_response(
                         ctx.http(),
                         CreateInteractionResponse::Message(
@@ -1768,7 +1765,7 @@ async fn section_self_organize(
                 // manually deleted one or both stickies and wants fresh ones
                 // without restarting the bot.
                 if let Err(e) =
-                    self_organize_listing::teardown_messages(serenity_ctx, pool, &live).await
+                    start_run_ui_listing::teardown_messages(serenity_ctx, pool, &live).await
                 {
                     tracing::warn!(
                         error = ?e,
@@ -1779,7 +1776,7 @@ async fn section_self_organize(
                 install_stickies_best_effort(serenity_ctx, pool, tier.id).await;
 
                 let refreshed = current_tier(pool, tier.id).await?.unwrap_or(tier.clone());
-                let (embed, components) = render_so_view(&tiers, &refreshed, view);
+                let (embed, components) = render_start_run_ui_view(&tiers, &refreshed, view);
                 respond_with_view(ctx, &mci, embed, components).await?;
             }
             _ => {
@@ -1801,23 +1798,23 @@ async fn install_stickies_best_effort(
     let Some(tier) = current_tier(pool, tier_id).await.ok().flatten() else {
         return;
     };
-    if let Err(e) = self_organize_listing::ensure_button_message(serenity_ctx, pool, &tier).await {
+    if let Err(e) = start_run_ui_listing::ensure_button_message(serenity_ctx, pool, &tier).await {
         tracing::warn!(
             error = ?e,
             tier_id,
-            "failed to install self-organize button message",
+            "failed to install start-run UI button message",
         );
     }
     let Some(after_button) = current_tier(pool, tier_id).await.ok().flatten() else {
         return;
     };
     if let Err(e) =
-        self_organize_listing::ensure_listing_message(serenity_ctx, pool, &after_button).await
+        start_run_ui_listing::ensure_listing_message(serenity_ctx, pool, &after_button).await
     {
         tracing::warn!(
             error = ?e,
             tier_id,
-            "failed to install self-organize listing message",
+            "failed to install start-run UI listing message",
         );
     }
 }
@@ -1852,7 +1849,7 @@ fn so_preset_options(
         .collect()
 }
 
-fn render_so_view(
+fn render_start_run_ui_view(
     tiers: &[Tier],
     current: &Tier,
     view: SoView,
@@ -1866,32 +1863,28 @@ fn render_so_view(
 fn so_picker_view(tiers: &[Tier], current: &Tier) -> (CreateEmbed, Vec<CreateActionRow>) {
     let mut summary = String::with_capacity(64 * tiers.len());
     for t in tiers {
-        let mark = if t.enable_self_organization {
-            "✅"
-        } else {
-            "⬜"
-        };
+        let mark = if t.enable_start_run_ui { "✅" } else { "⬜" };
         let chan = t
-            .self_organize_channel_id
+            .start_run_ui_channel_id
             .map(|c| format!(" <#{c}>"))
             .unwrap_or_default();
         summary.push_str(&format!("{mark} **{}**{chan}\n", t.name));
     }
 
     let body = format!(
-        "Self-organize is configured per tier. Pick the tier you want to \
+        "Start-run UI is configured per tier. Pick the tier you want to \
          configure below.\n\n{summary}",
     );
 
     let embed = CreateEmbed::new()
-        .title("\u{1F680} Self-organize \u{2014} pick a tier")
+        .title("\u{1F680} Start-run UI \u{2014} pick a tier")
         .description(body)
         .color(0x5865F2);
 
     let options: Vec<serenity::CreateSelectMenuOption> = tiers
         .iter()
         .map(|t| {
-            let label = if t.enable_self_organization {
+            let label = if t.enable_start_run_ui {
                 format!("{} (enabled)", t.name)
             } else {
                 t.name.clone()
@@ -1920,9 +1913,9 @@ fn so_picker_view(tiers: &[Tier], current: &Tier) -> (CreateEmbed, Vec<CreateAct
 }
 
 fn so_config_view(tiers: &[Tier], tier: &Tier) -> (CreateEmbed, Vec<CreateActionRow>) {
-    let enabled = tier.enable_self_organization;
+    let enabled = tier.enable_start_run_ui;
     let channel_line = tier
-        .self_organize_channel_id
+        .start_run_ui_channel_id
         .map(|c| format!("<#{c}>"))
         .unwrap_or_else(|| "_not set_".to_string());
 
@@ -1937,7 +1930,7 @@ fn so_config_view(tiers: &[Tier], tier: &Tier) -> (CreateEmbed, Vec<CreateAction
          \n\
          Anti-troll guardrails (configured below):\n\
          • One raid per (tier, dungeon) at a time\n\
-         • One self-organized raid per leader at a time\n\
+         • One start-run UId raid per leader at a time\n\
          • Idle headcounts auto-cancel after the configured window\n\
          • Cancel cooldown after a leader self-cancels\n\
          • Minimum reactors required to convert HC \u{2192} Run\n\
@@ -1958,13 +1951,13 @@ fn so_config_view(tiers: &[Tier], tier: &Tier) -> (CreateEmbed, Vec<CreateAction
         } else {
             "⬜ disabled"
         },
-        idle = tier.self_organize_idle_minutes,
-        cd = tier.self_organize_cancel_cooldown_seconds,
-        min = tier.self_organize_min_reactors,
+        idle = tier.hc_idle_minutes,
+        cd = tier.hc_cancel_cooldown_seconds,
+        min = tier.hc_min_reactors,
     );
 
     let embed = CreateEmbed::new()
-        .title(format!("\u{1F680} Self-organize \u{2014} {}", tier.name))
+        .title(format!("\u{1F680} Start-run UI \u{2014} {}", tier.name))
         .description(body)
         .color(0x5865F2);
 
@@ -1973,7 +1966,7 @@ fn so_config_view(tiers: &[Tier], tier: &Tier) -> (CreateEmbed, Vec<CreateAction
         CreateSelectMenuKind::Channel {
             channel_types: Some(vec![ChannelType::Text]),
             default_channels: tier
-                .self_organize_channel_id
+                .start_run_ui_channel_id
                 .map(|c| vec![ChannelId::new(c as u64)]),
         },
     )
@@ -1984,7 +1977,7 @@ fn so_config_view(tiers: &[Tier], tier: &Tier) -> (CreateEmbed, Vec<CreateAction
     let idle_select = CreateSelectMenu::new(
         "setup:so:idle",
         CreateSelectMenuKind::String {
-            options: so_preset_options(SO_IDLE_PRESETS, tier.self_organize_idle_minutes, "Idle"),
+            options: so_preset_options(SO_IDLE_PRESETS, tier.hc_idle_minutes, "Idle"),
         },
     )
     .placeholder("Idle window before HCs auto-cancel")
@@ -1996,7 +1989,7 @@ fn so_config_view(tiers: &[Tier], tier: &Tier) -> (CreateEmbed, Vec<CreateAction
         CreateSelectMenuKind::String {
             options: so_preset_options(
                 SO_COOLDOWN_PRESETS,
-                tier.self_organize_cancel_cooldown_seconds,
+                tier.hc_cancel_cooldown_seconds,
                 "Cooldown",
             ),
         },
@@ -2010,7 +2003,7 @@ fn so_config_view(tiers: &[Tier], tier: &Tier) -> (CreateEmbed, Vec<CreateAction
         CreateSelectMenuKind::String {
             options: so_preset_options(
                 SO_MIN_REACTORS_PRESETS,
-                tier.self_organize_min_reactors,
+                tier.hc_min_reactors,
                 "Min reactors",
             ),
         },
@@ -2170,7 +2163,7 @@ async fn back_to_dashboard(
 
 /// Find-or-create a "Raids" category + `{slug}-runs` text channel under
 /// it. Returns `(category_id, runs_id)` so the caller can provision
-/// further channels (e.g. self-organize) under the same category.
+/// further channels (e.g. start-run UI) under the same category.
 /// Idempotent — re-running picks up the existing channel rather than
 /// duplicating. R3 collapsed the old headcount/raid split to a single
 /// channel: both headcounts and runs post here.
@@ -2230,16 +2223,16 @@ async fn create_default_channels(
     Ok((category_id, runs_id))
 }
 
-/// Find-or-create a `🚀self-organize` text channel under the Raids
-/// category. Falls back to a plain `self-organize` name if Discord
+/// Find-or-create a `🚀start-a-run` text channel under the Raids
+/// category. Falls back to a plain `start-run UI` name if Discord
 /// rejects the leading rocket glyph (some guild settings choke on
 /// leading emoji). Idempotent.
-async fn find_or_create_self_organize_channel(
+async fn find_or_create_start_run_ui_channel(
     ctx: BotContext<'_>,
     category_id: ChannelId,
 ) -> Result<ChannelId> {
-    const FANCY: &str = "🚀self-organize";
-    const PLAIN: &str = "self-organize";
+    const FANCY: &str = "🚀start-a-run";
+    const PLAIN: &str = "start-a-run";
 
     let guild_id = require_guild_id(ctx);
     let http = ctx.http();
@@ -2263,7 +2256,7 @@ async fn find_or_create_self_organize_channel(
         Err(e) => {
             tracing::warn!(
                 error = ?e,
-                "self-organize channel with emoji prefix rejected, falling back",
+                "start-a-run channel with emoji prefix rejected, falling back",
             );
             Ok(guild_id
                 .create_channel(

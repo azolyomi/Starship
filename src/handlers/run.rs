@@ -523,15 +523,11 @@ async fn handle_transfer_submit(
         return Ok(());
     }
 
-    // Update the run's leader and (when self-organize is in play) the
-    // claim's leader together — the per-user cap follows the new owner so
-    // the previous leader can immediately start another raid.
-    let mut tx = data.db.begin().await?;
-    db::run::set_leader_tx(&mut tx, run_id, new_leader).await?;
-    if run.is_self_organized {
-        db::self_organize::claim_set_leader(&mut tx, run_id, new_leader).await?;
-    }
-    tx.commit().await?;
+    // Update the run's leader. The per-user cap follows the new owner —
+    // it counts active rows in `headcounts` ∪ `runs` keyed on
+    // `leader_user_id`, so the previous leader can immediately start
+    // another raid once this UPDATE lands.
+    db::run::set_leader(&data.db, run_id, new_leader).await?;
 
     // Run may have been ended concurrently between the transfer commit and
     // this re-read. Skip the rebuild + listing refresh — there's nothing
@@ -550,19 +546,17 @@ async fn handle_transfer_submit(
     };
     rebuild_and_edit_message(ctx, data, &refreshed).await?;
 
-    // Refresh listing if self-organize, so the leader column updates.
-    if run.is_self_organized {
-        if let Ok(Some(tier)) = db::tier::get_by_id(&data.db, run.tier_id).await {
-            if tier.enable_self_organization {
-                if let Err(e) =
-                    services::self_organize_listing::refresh_listing(ctx, &data.db, &tier).await
-                {
-                    tracing::warn!(
-                        error = ?e,
-                        tier_id = tier.id,
-                        "failed to refresh self-organize listing after leader transfer",
-                    );
-                }
+    // Refresh the listing so the leader column updates.
+    if let Ok(Some(tier)) = db::tier::get_by_id(&data.db, run.tier_id).await {
+        if tier.enable_start_run_ui {
+            if let Err(e) =
+                services::start_run_ui_listing::refresh_listing(ctx, &data.db, &tier).await
+            {
+                tracing::warn!(
+                    error = ?e,
+                    tier_id = tier.id,
+                    "failed to refresh start-run-UI listing after leader transfer",
+                );
             }
         }
     }

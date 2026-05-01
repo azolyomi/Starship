@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT expires_at FROM self_organize_user_cooldowns\n          WHERE guild_id = $1 AND tier_id = $2 AND user_id = $3",
+  "query": "SELECT expires_at FROM hc_user_cooldowns\n          WHERE guild_id = $1 AND tier_id = $2 AND user_id = $3",
   "describe": {
     "columns": [
       {
@@ -20,5 +20,5 @@
       false
     ]
   },
-  "hash": "aff1883dabc7271fc936215159479f438e95f9082fb50372ce6af7895a46c8fc"
+  "hash": "40e697e7a93a59a474eddaf2342bfccbcb7c28a23fdd8e6a5210ae36c17ee74f"
 }

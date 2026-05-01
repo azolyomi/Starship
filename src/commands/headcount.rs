@@ -5,7 +5,7 @@ use poise::serenity_prelude as serenity;
 use crate::{
     db, guild_id_i64,
     services::permission::Action,
-    services::{channels as channel_svc, permission as perm_svc, raid},
+    services::{channels as channel_svc, permission as perm_svc, raid, raid_gates},
     BotContext, BotError,
 };
 
@@ -163,6 +163,28 @@ pub async fn headcount(
             resolved_tier.name
         )))
         .await?;
+        return Ok(());
+    }
+
+    // Universal start gate: slot lock, per-user cap, post-cancel cooldown,
+    // stale-HC sweep. Admins / `ManageRuns` bypass the cap and the
+    // cooldown but never the slot lock or the stale sweep — those are
+    // structural invariants. The slash command shares this gate with the
+    // sticky-button path so the protections are uniform across entry
+    // points.
+    let is_org = perm_svc::is_organizer_from_context(ctx, Some(resolved_tier.id)).await?;
+    let caller_id = ctx.author().id.get() as i64;
+    if let Some(block) = raid_gates::check_can_start(
+        ctx.serenity_context(),
+        pool,
+        &resolved_tier,
+        &template,
+        caller_id,
+        is_org,
+    )
+    .await?
+    {
+        ctx.send(ephemeral(block.user_message())).await?;
         return Ok(());
     }
 

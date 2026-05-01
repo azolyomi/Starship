@@ -329,6 +329,26 @@ pub async fn is_organizer(
     .await
 }
 
+/// Convenience wrapper around [`is_organizer`] for slash-command
+/// callers. Pulls the caller's perms + role IDs off `BotContext` and
+/// forwards. Returns `false` when the caller has no member shape (e.g.
+/// the command is somehow run outside a guild) so the gates stay
+/// enforced.
+pub async fn is_organizer_from_context(ctx: BotContext<'_>, tier_id: Option<i32>) -> Result<bool> {
+    let guild_id = ctx
+        .guild_id()
+        .ok_or_else(|| anyhow::anyhow!("This command can only be used in a server."))?
+        .get() as i64;
+    let caller_id = ctx.author().id.get() as i64;
+    let member = ctx.author_member().await;
+    let perms = member.as_ref().and_then(|m| m.permissions);
+    let roles: Vec<i64> = member
+        .as_ref()
+        .map(|m| m.roles.iter().map(|r| r.get() as i64).collect())
+        .unwrap_or_default();
+    is_organizer(&ctx.data().db, guild_id, caller_id, perms, &roles, tier_id).await
+}
+
 /// Convenience wrapper around [`is_organizer`] for `ModalInteraction`
 /// callers (modal submissions don't carry a `ComponentInteraction` shape).
 ///

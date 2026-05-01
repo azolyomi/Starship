@@ -2,19 +2,18 @@ use anyhow::Result;
 use poise::serenity_prelude as serenity;
 use sqlx::PgPool;
 
-use crate::db::models::{DungeonTemplate, Headcount, Run, SlotClaim, Tier};
-use crate::db::self_organize::ClaimOutcome;
+use crate::db::headcount::CreateOutcome;
+use crate::db::models::{DungeonTemplate, Headcount, Run, Tier};
 use crate::embeds::headcount::emoji_rt;
 use crate::services::{reactions, voice};
 use crate::{db, embeds, guild_id_i64, BotContext};
 
 /// Outcome of [`start_headcount_inner`]. The slot may already be held by
-/// another HC or run in self-organize-enabled tiers, in which case the
-/// caller renders a friendly "another raid is already up" message and
-/// the headcount is never created.
+/// another HC, in which case the caller renders a friendly "another HC
+/// is already up" message and the headcount is never created.
 pub enum StartHeadcountOutcome {
     Started(Headcount),
-    SlotInUse(SlotClaim),
+    SlotInUse(Headcount),
 }
 
 /// Prefix the headcount/run message with `@here` and/or the dungeon's
@@ -80,18 +79,16 @@ pub async fn start_headcount(
         tier,
         template,
         channel_id,
-        false,
     )
     .await?
     {
         StartHeadcountOutcome::Started(_) => Ok(()),
         StartHeadcountOutcome::SlotInUse(holder) => {
-            // Only reachable in tiers with self-organize enabled, where
-            // the slot lock applies to staff /headcount too. The lock
-            // could be held by either a self-organized HC/run or another
-            // staff HC started concurrently in a different shard.
+            // The slot lock (UNIQUE index on active headcounts) is
+            // universal — concurrent /hc clicks for the same dungeon
+            // race here, and exactly one wins.
             ctx.say(format!(
-                "Can't start a headcount: another raid for **{}** is already up (led by <@{}>).",
+                "Can't start a headcount: another headcount for **{}** is already up (led by <@{}>).",
                 template.display_name, holder.leader_user_id,
             ))
             .await?;
@@ -105,10 +102,15 @@ pub async fn start_headcount(
 /// per-user DB tracking — the reactions on the message itself are the
 /// signup UI.
 ///
-/// In tiers with `enable_self_organization` set, this also writes a
-/// row to `self_organize_slot_claims` in the same transaction as the HC
-/// insert — a concurrent click that lost the race observes
-/// [`StartHeadcountOutcome::SlotInUse`] without an HC ever existing.
+/// The slot lock is enforced by a UNIQUE index on
+/// `headcounts(guild_id, tier_id, dungeon_template_id)`. A concurrent
+/// click that loses the race observes [`StartHeadcountOutcome::SlotInUse`]
+/// without an HC ever existing for the loser.
+///
+/// `location` / `party` are stashed at create time when the caller
+/// already collected them (e.g. the start-run-UI modal); the slash-
+/// command path passes `None` and lets the leader fill them in at
+/// HC->Run convert time.
 #[allow(clippy::too_many_arguments)]
 pub async fn start_headcount_inner(
     serenity_ctx: &serenity::Context,
@@ -118,13 +120,9 @@ pub async fn start_headcount_inner(
     tier: &Tier,
     template: &DungeonTemplate,
     channel_id: i64,
-    is_self_organized: bool,
 ) -> Result<StartHeadcountOutcome> {
-    // location/party are not collected at headcount-create time — the leader
-    // fills them in via the modal that opens on the Start Run button. Pass
-    // None so the row's columns stay NULL until then.
     let mut tx = pool.begin().await?;
-    let hc = db::headcount::create_tx(
+    let outcome = db::headcount::create_tx(
         &mut tx,
         guild_id,
         tier.id,
@@ -133,38 +131,40 @@ pub async fn start_headcount_inner(
         leader_id,
         None,
         None,
-        is_self_organized,
     )
     .await?;
 
-    // Slot-claim is only written when the tier opts into self-organize
-    // mode. Staff-led HCs in non-self-organize tiers don't participate
-    // in the slot lock at all (legacy behavior preserved).
-    if tier.enable_self_organization {
-        match db::self_organize::claim_for_headcount(
-            &mut tx,
-            guild_id,
-            tier.id,
-            template.id,
-            hc.id,
-            leader_id,
-            is_self_organized,
-        )
-        .await?
-        {
-            ClaimOutcome::Acquired(_) => {}
-            ClaimOutcome::Conflict(holder) => {
-                tx.rollback().await?;
-                tracing::info!(
-                    leader_id = holder.leader_user_id,
-                    holder_hc_id = ?holder.headcount_id,
-                    holder_run_id = ?holder.run_id,
-                    "self-organize slot already held; refusing start",
-                );
-                return Ok(StartHeadcountOutcome::SlotInUse(holder));
-            }
+    let hc = match outcome {
+        CreateOutcome::Created(hc) => hc,
+        CreateOutcome::SlotInUse => {
+            tx.rollback().await?;
+            // Re-query the holder so we can name the leader. Best effort
+            // — if the holder has cleared by the time we read, fall back
+            // to a generic message via a synthetic Headcount with
+            // leader_user_id = 0 (the user_message handles it gracefully
+            // enough; this race is vanishingly rare).
+            let holder = db::headcount::slot_holder(pool, guild_id, tier.id, template.id)
+                .await?
+                .unwrap_or(Headcount {
+                    id: 0,
+                    guild_id,
+                    tier_id: tier.id,
+                    dungeon_template_id: template.id,
+                    channel_id,
+                    message_id: 0,
+                    leader_user_id: 0,
+                    location: None,
+                    party: None,
+                    created_at: chrono::Utc::now(),
+                });
+            tracing::info!(
+                holder_leader_id = holder.leader_user_id,
+                holder_hc_id = holder.id,
+                "headcount slot already held; refusing start",
+            );
+            return Ok(StartHeadcountOutcome::SlotInUse(holder));
         }
-    }
+    };
 
     tx.commit().await?;
     tracing::info!(hc_id = hc.id, "headcount created");
@@ -333,9 +333,9 @@ pub async fn finalize_run_post_create(
     Ok(())
 }
 
-/// Tear down a live run: release any slot claim, delete the row, delete
-/// the temp VC, edit the public message to its ended state, post the
-/// audit log line, and refresh the self-organize listing.
+/// Tear down a live run: delete the row, delete the temp VC, edit the
+/// public message to its ended state, post the audit log line, and
+/// refresh the start-run-UI listing.
 ///
 /// `ended_by`:
 /// - `Some(uid)` — user-driven End click. Audit log mentions the user.
@@ -352,14 +352,10 @@ pub async fn end_run(
     run: &Run,
     ended_by: Option<serenity::UserId>,
 ) -> Result<bool> {
-    let mut tx = pool.begin().await?;
-    db::self_organize::claim_release_by_run(&mut tx, run.id).await?;
-    let row_existed = db::run::delete_tx(&mut tx, run.id).await?;
+    let row_existed = db::run::delete(pool, run.id).await?;
     if !row_existed {
-        tx.rollback().await?;
         return Ok(false);
     }
-    tx.commit().await?;
 
     if let Some(vc_id) = run.voice_channel_id {
         voice::delete_temp_vc(&serenity_ctx.http, serenity::ChannelId::new(vc_id as u64)).await;
@@ -437,15 +433,15 @@ pub async fn end_run(
     }
 
     if let Ok(Some(tier)) = db::tier::get_by_id(pool, run.tier_id).await {
-        if tier.enable_self_organization {
+        if tier.enable_start_run_ui {
             if let Err(e) =
-                crate::services::self_organize_listing::refresh_listing(serenity_ctx, pool, &tier)
+                crate::services::start_run_ui_listing::refresh_listing(serenity_ctx, pool, &tier)
                     .await
             {
                 tracing::warn!(
                     error = ?e,
                     tier_id = tier.id,
-                    "failed to refresh self-organize listing after run end",
+                    "failed to refresh start-run-UI listing after run end",
                 );
             }
         }

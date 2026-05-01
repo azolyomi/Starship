@@ -6,10 +6,10 @@ use crate::db::models::{DungeonTemplate, Tier};
 // The `tiers.*` projection used by every read here. Kept as one constant
 // so adding a new column doesn't require touching five queries.
 const TIER_COLS: &str = "id, guild_id, name, description, runs_channel_id, \
-    enable_self_organization, self_organize_channel_id, \
-    self_organize_button_message_id, self_organize_listing_message_id, \
-    self_organize_idle_minutes, self_organize_cancel_cooldown_seconds, \
-    self_organize_min_reactors, created_at";
+    enable_start_run_ui, start_run_ui_channel_id, \
+    start_run_ui_button_message_id, start_run_ui_listing_message_id, \
+    hc_idle_minutes, hc_cancel_cooldown_seconds, \
+    hc_min_reactors, created_at";
 
 pub async fn create(
     pool: &PgPool,
@@ -40,12 +40,12 @@ pub async fn list(pool: &PgPool, guild_id: i64) -> Result<Vec<Tier>> {
     Ok(tiers)
 }
 
-/// Every tier across every guild with `enable_self_organization = TRUE`.
-/// Used by the boot orphan sweep to repair sticky button + listing
-/// messages and reconcile dangling slot claims.
-pub async fn list_self_organize_enabled(pool: &PgPool) -> Result<Vec<Tier>> {
+/// Every tier across every guild with `enable_start_run_ui = TRUE`.
+/// Used by the boot orphan sweep to repair the sticky button + listing
+/// messages.
+pub async fn list_start_run_ui_enabled(pool: &PgPool) -> Result<Vec<Tier>> {
     let tiers = sqlx::query_as::<_, Tier>(&format!(
-        "SELECT {TIER_COLS} FROM tiers WHERE enable_self_organization = TRUE"
+        "SELECT {TIER_COLS} FROM tiers WHERE enable_start_run_ui = TRUE"
     ))
     .fetch_all(pool)
     .await?;
@@ -95,10 +95,11 @@ pub async fn update(
     Ok(tier)
 }
 
-/// Update self-organize knobs on a tier. Each Option is a partial update
-/// (NULL = leave alone). Used by the `/setup` self-organize sub-step.
+/// Update start-run-UI + universal HC-gate knobs on a tier. Each Option
+/// is a partial update (NULL = leave alone). Used by the `/setup`
+/// start-run-UI sub-step.
 #[allow(clippy::too_many_arguments)]
-pub async fn update_self_organize(
+pub async fn update_start_run_ui(
     pool: &PgPool,
     id: i32,
     enabled: Option<bool>,
@@ -109,11 +110,11 @@ pub async fn update_self_organize(
 ) -> Result<Option<Tier>> {
     let tier = sqlx::query_as::<_, Tier>(&format!(
         "UPDATE tiers
-         SET enable_self_organization              = COALESCE($2, enable_self_organization),
-             self_organize_channel_id              = COALESCE($3, self_organize_channel_id),
-             self_organize_idle_minutes            = COALESCE($4, self_organize_idle_minutes),
-             self_organize_cancel_cooldown_seconds = COALESCE($5, self_organize_cancel_cooldown_seconds),
-             self_organize_min_reactors            = COALESCE($6, self_organize_min_reactors)
+         SET enable_start_run_ui        = COALESCE($2, enable_start_run_ui),
+             start_run_ui_channel_id    = COALESCE($3, start_run_ui_channel_id),
+             hc_idle_minutes            = COALESCE($4, hc_idle_minutes),
+             hc_cancel_cooldown_seconds = COALESCE($5, hc_cancel_cooldown_seconds),
+             hc_min_reactors            = COALESCE($6, hc_min_reactors)
          WHERE id = $1
          RETURNING {TIER_COLS}"
     ))
@@ -129,15 +130,15 @@ pub async fn update_self_organize(
 }
 
 /// Direct setter for the sticky button message ID — bypasses
-/// `update_self_organize` because sticky-repair runs on every config save
+/// `update_start_run_ui` because sticky-repair runs on every config save
 /// and a full COALESCE update is wasteful for a single-column write.
-pub async fn set_self_organize_button_message(
+pub async fn set_start_run_ui_button_message(
     pool: &PgPool,
     id: i32,
     message_id: Option<i64>,
 ) -> Result<()> {
     sqlx::query!(
-        "UPDATE tiers SET self_organize_button_message_id = $1 WHERE id = $2",
+        "UPDATE tiers SET start_run_ui_button_message_id = $1 WHERE id = $2",
         message_id,
         id
     )
@@ -147,14 +148,14 @@ pub async fn set_self_organize_button_message(
 }
 
 /// Direct setter for the sticky listing message ID. See
-/// `set_self_organize_button_message` for the rationale.
-pub async fn set_self_organize_listing_message(
+/// `set_start_run_ui_button_message` for the rationale.
+pub async fn set_start_run_ui_listing_message(
     pool: &PgPool,
     id: i32,
     message_id: Option<i64>,
 ) -> Result<()> {
     sqlx::query!(
-        "UPDATE tiers SET self_organize_listing_message_id = $1 WHERE id = $2",
+        "UPDATE tiers SET start_run_ui_listing_message_id = $1 WHERE id = $2",
         message_id,
         id
     )

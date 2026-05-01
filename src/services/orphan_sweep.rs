@@ -46,7 +46,7 @@ use crate::embeds::headcount::emoji_rt;
 use crate::services::channels::is_not_found;
 use crate::services::raid;
 use crate::services::reactions::{self, reaction_types_match};
-use crate::services::{self_organize_listing, voice};
+use crate::services::{start_run_ui_listing, voice};
 
 /// How long a run can sit without being explicitly ended before the
 /// periodic sweeper auto-ends it. Hardcoded for now — a per-tier knob
@@ -199,8 +199,7 @@ pub async fn run(ctx: &serenity::Context, pool: &PgPool) -> Result<()> {
         }
     }
 
-    let dangling_claims = sweep_dangling_claims(pool).await;
-    let stickies_repaired = sweep_self_organize_stickies(ctx, pool).await;
+    let stickies_repaired = sweep_start_run_ui_stickies(ctx, pool).await;
 
     info!(
         surviving_hcs,
@@ -211,112 +210,32 @@ pub async fn run(ctx: &serenity::Context, pool: &PgPool) -> Result<()> {
         reattached,
         expired_verifications,
         cleared_verify_messages,
-        dangling_claims,
         stickies_repaired,
         "orphan sweep complete",
     );
     Ok(())
 }
 
-/// Reconcile `self_organize_slot_claims` against the (now-swept) HC + Run
-/// queues. With `ON DELETE NO ACTION` + transactional release this list
-/// should always be empty, but a manual `DELETE FROM headcounts` (operator
-/// surgery) or a partially-applied schema change can leak claim rows.
-/// Forces them deleted so the slot doesn't stay locked forever.
-async fn sweep_dangling_claims(pool: &PgPool) -> usize {
-    let claims = match db::self_organize::claim_list_all(pool).await {
-        Ok(c) => c,
-        Err(e) => {
-            warn!(error = ?e, "failed to list self-organize claims for sweep");
-            return 0;
-        }
-    };
-
-    let mut dangling = 0usize;
-    for claim in claims {
-        let alive = match (claim.headcount_id, claim.run_id) {
-            (Some(hc_id), _) => match db::headcount::get(pool, hc_id).await {
-                Ok(Some(_)) => true,
-                Ok(None) => false,
-                Err(e) => {
-                    warn!(
-                        error = ?e,
-                        hc_id,
-                        "failed to probe headcount during claim sweep; leaving claim alone",
-                    );
-                    continue;
-                }
-            },
-            (None, Some(run_id)) => match db::run::get(pool, run_id).await {
-                Ok(Some(_)) => true,
-                Ok(None) => false,
-                Err(e) => {
-                    warn!(
-                        error = ?e,
-                        run_id,
-                        "failed to probe run during claim sweep; leaving claim alone",
-                    );
-                    continue;
-                }
-            },
-            // CHECK constraint should make this unreachable; treat as dangling.
-            (None, None) => false,
-        };
-
-        if alive {
-            continue;
-        }
-
-        match db::self_organize::claim_force_delete(
-            pool,
-            claim.guild_id,
-            claim.tier_id,
-            claim.dungeon_template_id,
-        )
-        .await
-        {
-            Ok(true) => {
-                info!(
-                    guild_id = claim.guild_id,
-                    tier_id = claim.tier_id,
-                    dungeon_template_id = claim.dungeon_template_id,
-                    "deleted dangling self-organize claim",
-                );
-                dangling += 1;
-            }
-            Ok(false) => {}
-            Err(e) => warn!(
-                error = ?e,
-                guild_id = claim.guild_id,
-                tier_id = claim.tier_id,
-                dungeon_template_id = claim.dungeon_template_id,
-                "failed to delete dangling self-organize claim",
-            ),
-        }
-    }
-    dangling
-}
-
-/// For every tier with `enable_self_organization = TRUE`, probe and repair
+/// For every tier with `enable_start_run_ui = TRUE`, probe and repair
 /// the sticky button + listing messages. The `ensure_*_message` helpers
 /// are 404-aware and idempotent — a successful probe is a no-op.
-async fn sweep_self_organize_stickies(ctx: &serenity::Context, pool: &PgPool) -> usize {
-    let tiers = match db::tier::list_self_organize_enabled(pool).await {
+async fn sweep_start_run_ui_stickies(ctx: &serenity::Context, pool: &PgPool) -> usize {
+    let tiers = match db::tier::list_start_run_ui_enabled(pool).await {
         Ok(t) => t,
         Err(e) => {
-            warn!(error = ?e, "failed to list self-organize tiers for sticky repair");
+            warn!(error = ?e, "failed to list start-run-UI tiers for sticky repair");
             return 0;
         }
     };
 
     let mut repaired = 0usize;
     for tier in tiers {
-        if let Err(e) = self_organize_listing::ensure_button_message(ctx, pool, &tier).await {
+        if let Err(e) = start_run_ui_listing::ensure_button_message(ctx, pool, &tier).await {
             warn!(
                 error = ?e,
                 tier_id = tier.id,
                 guild_id = tier.guild_id,
-                "failed to repair self-organize button message",
+                "failed to repair start-run-UI button message",
             );
         } else {
             repaired += 1;
@@ -331,12 +250,12 @@ async fn sweep_self_organize_stickies(ctx: &serenity::Context, pool: &PgPool) ->
                 continue;
             }
         };
-        if let Err(e) = self_organize_listing::ensure_listing_message(ctx, pool, &refreshed).await {
+        if let Err(e) = start_run_ui_listing::ensure_listing_message(ctx, pool, &refreshed).await {
             warn!(
                 error = ?e,
                 tier_id = tier.id,
                 guild_id = tier.guild_id,
-                "failed to repair self-organize listing message",
+                "failed to repair start-run-UI listing message",
             );
         }
     }
@@ -545,33 +464,13 @@ async fn sweep_idle_headcounts(ctx: &serenity::Context, pool: &PgPool) -> usize 
             continue;
         }
 
-        let mut tx = match pool.begin().await {
-            Ok(t) => t,
-            Err(e) => {
-                warn!(error = ?e, hc_id = hc.id, "idle-hc sweep: begin tx failed");
-                continue;
-            }
-        };
-        if let Err(e) = db::self_organize::claim_release_by_headcount(&mut tx, hc.id).await {
-            warn!(error = ?e, hc_id = hc.id, "idle-hc sweep: claim release failed");
-            let _ = tx.rollback().await;
-            continue;
-        }
-        match db::headcount::delete_tx(&mut tx, hc.id).await {
+        match db::headcount::delete(pool, hc.id).await {
             Ok(true) => {}
-            Ok(false) => {
-                let _ = tx.rollback().await;
-                continue;
-            }
+            Ok(false) => continue,
             Err(e) => {
                 warn!(error = ?e, hc_id = hc.id, "idle-hc sweep: delete failed");
-                let _ = tx.rollback().await;
                 continue;
             }
-        }
-        if let Err(e) = tx.commit().await {
-            warn!(error = ?e, hc_id = hc.id, "idle-hc sweep: commit failed");
-            continue;
         }
 
         cancelled += 1;
@@ -588,12 +487,12 @@ async fn sweep_idle_headcounts(ctx: &serenity::Context, pool: &PgPool) -> usize 
 
     for tier_id in tiers_to_refresh {
         match db::tier::get_by_id(pool, tier_id).await {
-            Ok(Some(tier)) if tier.enable_self_organization => {
-                if let Err(e) = self_organize_listing::refresh_listing(ctx, pool, &tier).await {
+            Ok(Some(tier)) if tier.enable_start_run_ui => {
+                if let Err(e) = start_run_ui_listing::refresh_listing(ctx, pool, &tier).await {
                     warn!(
                         error = ?e,
                         tier_id,
-                        "failed to refresh self-organize listing after idle HC sweep",
+                        "failed to refresh start-run-UI listing after idle HC sweep",
                     );
                 }
             }

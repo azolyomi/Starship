@@ -40,28 +40,30 @@ pub struct Tier {
     /// Where headcount + run messages post. `None` = tier still needs
     /// configuration (`/setup` or `/tier edit`).
     pub runs_channel_id: Option<i64>,
-    /// Per-tier opt-in: enables the self-organize flow (sticky button +
-    /// listing channel, anti-troll guardrails). When false, only
-    /// permission-gated `/headcount` works in this tier.
-    pub enable_self_organization: bool,
+    /// Per-tier opt-in for the start-run UI: a sticky "Start a run" button
+    /// plus an auto-updating active-raids listing in the configured
+    /// channel. The headcount protection gates (slot lock, per-user cap,
+    /// post-cancel cooldown, min-reactor convert gate) are universal and
+    /// apply regardless of this flag.
+    pub enable_start_run_ui: bool,
     /// Channel hosting the sticky "Start a run" button + active-raids
-    /// listing. Only meaningful when `enable_self_organization` is true.
-    pub self_organize_channel_id: Option<i64>,
+    /// listing. Only meaningful when `enable_start_run_ui` is true.
+    pub start_run_ui_channel_id: Option<i64>,
     /// Message ID of the sticky button. `None` until installed; reposted
     /// when 404'd.
-    pub self_organize_button_message_id: Option<i64>,
+    pub start_run_ui_button_message_id: Option<i64>,
     /// Message ID of the sticky active-raids listing. Edited in-place on
     /// every state transition.
-    pub self_organize_listing_message_id: Option<i64>,
+    pub start_run_ui_listing_message_id: Option<i64>,
     /// HC age beyond which the slot is considered stale and may be
-    /// displaced by a new self-organize start.
-    pub self_organize_idle_minutes: i32,
-    /// Cooldown applied after a leader cancels their own self-organized
-    /// HC, blocking another start in the same tier.
-    pub self_organize_cancel_cooldown_seconds: i32,
-    /// Minimum distinct non-bot reactors required for HC->Run conversion
-    /// in self-organized headcounts.
-    pub self_organize_min_reactors: i32,
+    /// displaced by a new headcount start for the same dungeon.
+    pub hc_idle_minutes: i32,
+    /// Cooldown applied after a leader cancels their own headcount,
+    /// blocking another start in the same tier. Bypassed for organizers.
+    pub hc_cancel_cooldown_seconds: i32,
+    /// Minimum distinct non-bot reactors required for HC->Run conversion.
+    /// Bypassed for organizers (admins / ManageRuns).
+    pub hc_min_reactors: i32,
     pub created_at: DateTime<Utc>,
 }
 
@@ -138,9 +140,6 @@ pub struct Headcount {
     pub leader_user_id: i64,
     pub location: Option<String>,
     pub party: Option<String>,
-    /// True when the headcount was created via the self-organize sticky
-    /// button. Drives idle-sweep eligibility and per-user-cap counting.
-    pub is_self_organized: bool,
     pub created_at: DateTime<Utc>,
 }
 
@@ -185,25 +184,5 @@ pub struct Run {
     pub party: Option<String>,
     pub voice_channel_id: Option<i64>,
     pub is_vc_raid: bool,
-    /// True when the run originated from a self-organized headcount.
-    /// Drives the per-user-cap count and the listing-refresh path.
-    pub is_self_organized: bool,
     pub created_at: DateTime<Utc>,
-}
-
-/// A held self-organize slot lock. Exists for the entire lifetime of a
-/// raid — written when the HC is created, updated to point at the run on
-/// HC->Run conversion, deleted when the run ends (or when an HC is
-/// cancelled before conversion). `headcount_id` and `run_id` are mutually
-/// exclusive: exactly one is non-null at any time.
-#[derive(Debug, sqlx::FromRow)]
-pub struct SlotClaim {
-    pub guild_id: i64,
-    pub tier_id: i32,
-    pub dungeon_template_id: i32,
-    pub leader_user_id: i64,
-    pub is_self_organized: bool,
-    pub headcount_id: Option<i32>,
-    pub run_id: Option<i32>,
-    pub acquired_at: DateTime<Utc>,
 }

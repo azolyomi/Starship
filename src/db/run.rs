@@ -7,12 +7,13 @@ use crate::db::models::Run;
 // truth so adding a column doesn't require touching multiple queries.
 const RUN_COLS: &str = "id, guild_id, tier_id, dungeon_template_id, \
     channel_id, message_id, leader_user_id, location, party, \
-    voice_channel_id, is_vc_raid, is_self_organized, created_at";
+    voice_channel_id, is_vc_raid, created_at";
 
 /// Insert a run row inside an existing transaction. The HC->Run convert
-/// path swaps the slot-claim FK from `headcount_id` to `run_id` in the
-/// same tx that creates the run, so the slot lock never gets released.
-#[allow(clippy::too_many_arguments)]
+/// path deletes the headcount and inserts the run in the same tx, so the
+/// slot lock (a UNIQUE index on active headcounts) is released atomically
+/// with the run's creation — letting the next group form for the same
+/// dungeon while this one runs.
 pub async fn create_tx(
     tx: &mut Transaction<'_, Postgres>,
     guild_id: i64,
@@ -21,13 +22,12 @@ pub async fn create_tx(
     channel_id: i64,
     leader_user_id: i64,
     is_vc_raid: bool,
-    is_self_organized: bool,
 ) -> Result<Run> {
     let row = sqlx::query_as::<_, Run>(&format!(
         "INSERT INTO runs
             (guild_id, tier_id, dungeon_template_id,
-             channel_id, message_id, leader_user_id, is_vc_raid, is_self_organized)
-         VALUES ($1, $2, $3, $4, 0, $5, $6, $7)
+             channel_id, message_id, leader_user_id, is_vc_raid)
+         VALUES ($1, $2, $3, $4, 0, $5, $6)
          RETURNING {RUN_COLS}"
     ))
     .bind(guild_id)
@@ -36,7 +36,6 @@ pub async fn create_tx(
     .bind(channel_id)
     .bind(leader_user_id)
     .bind(is_vc_raid)
-    .bind(is_self_organized)
     .fetch_one(&mut **tx)
     .await?;
     Ok(row)
@@ -71,15 +70,6 @@ pub async fn delete(pool: &PgPool, id: i32) -> Result<bool> {
     Ok(rows.rows_affected() > 0)
 }
 
-/// Transactional variant of [`delete`]. Pairs with the slot-claim release
-/// in the self-organize flow.
-pub async fn delete_tx(tx: &mut Transaction<'_, Postgres>, id: i32) -> Result<bool> {
-    let rows = sqlx::query!("DELETE FROM runs WHERE id = $1", id)
-        .execute(&mut **tx)
-        .await?;
-    Ok(rows.rows_affected() > 0)
-}
-
 pub async fn set_location(pool: &PgPool, id: i32, location: Option<&str>) -> Result<()> {
     sqlx::query!("UPDATE runs SET location = $1 WHERE id = $2", location, id)
         .execute(pool)
@@ -94,21 +84,13 @@ pub async fn set_party(pool: &PgPool, id: i32, party: Option<&str>) -> Result<()
     Ok(())
 }
 
-/// Transactional setter so the leader change can ride in the same tx as
-/// the self-organize claim's `claim_set_leader` — keeps the per-user cap
-/// in sync without exposing a window where the run and the claim disagree
-/// on who the leader is.
-pub async fn set_leader_tx(
-    tx: &mut Transaction<'_, Postgres>,
-    id: i32,
-    leader_user_id: i64,
-) -> Result<()> {
+pub async fn set_leader(pool: &PgPool, id: i32, leader_user_id: i64) -> Result<()> {
     sqlx::query!(
         "UPDATE runs SET leader_user_id = $1 WHERE id = $2",
         leader_user_id,
         id
     )
-    .execute(&mut **tx)
+    .execute(pool)
     .await?;
     Ok(())
 }
@@ -134,6 +116,18 @@ pub async fn list_all(pool: &PgPool) -> Result<Vec<Run>> {
     let rows = sqlx::query_as::<_, Run>(&format!("SELECT {RUN_COLS} FROM runs"))
         .fetch_all(pool)
         .await?;
+    Ok(rows)
+}
+
+/// Live runs for a single tier, newest first. Used by the start-run-UI
+/// listing renderer.
+pub async fn list_for_tier(pool: &PgPool, tier_id: i32) -> Result<Vec<Run>> {
+    let rows = sqlx::query_as::<_, Run>(&format!(
+        "SELECT {RUN_COLS} FROM runs WHERE tier_id = $1 ORDER BY created_at DESC"
+    ))
+    .bind(tier_id)
+    .fetch_all(pool)
+    .await?;
     Ok(rows)
 }
 

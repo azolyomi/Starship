@@ -2,20 +2,20 @@
 //!
 //! Click flow:
 //!
-//!   so:btn:<tier_id>                       sticky button on the tier's
+//!   srui:btn:<tier_id>                       sticky button on the tier's
 //!                                          self-organize channel — opens an
 //!                                          ephemeral dungeon picker (page 0).
-//!   so:page:<tier_id>:<page>               Prev/Next click on the picker —
+//!   srui:page:<tier_id>:<page>               Prev/Next click on the picker —
 //!                                          re-renders the ephemeral with
 //!                                          a different slice of the tier's
 //!                                          dungeons. Ephemeral-only.
-//!   so:dpick:<tier_id>                     StringSelect submission — opens
+//!   srui:dpick:<tier_id>                     StringSelect submission — opens
 //!                                          a location/party modal whose ID
 //!                                          encodes the chosen dungeon.
-//!   so:start:<tier_id>:<template_id>       modal submit — runs the
+//!   srui:start:<tier_id>:<template_id>       modal submit — runs the
 //!                                          anti-troll gate, calls
 //!                                          `start_headcount_inner` with
-//!                                          `is_self_organized = true`, and
+//!                                          encodes the chosen dungeon, and
 //!                                          refreshes the listing.
 //!
 //! Permissions are intentionally absent: any guild member who can click the
@@ -35,7 +35,7 @@ use sqlx::PgPool;
 
 use crate::db::models::Tier;
 use crate::services::raid::StartHeadcountOutcome;
-use crate::services::{self_organize, self_organize_listing};
+use crate::services::{raid_gates, start_run_ui_listing};
 use crate::{db, services, BotData, BotError};
 
 /// One page of the dungeon picker. Discord's hard cap on StringSelect
@@ -62,7 +62,7 @@ pub async fn handle_component(
     match parts[1] {
         "btn" => handle_button(ctx, mci, data, tier_id).await,
         "page" => {
-            // so:page:<tier_id>:<page>
+            // srui:page:<tier_id>:<page>
             let page: usize = parts.get(3).and_then(|p| p.parse().ok()).unwrap_or(0);
             handle_page(ctx, mci, data, tier_id, page).await
         }
@@ -77,7 +77,7 @@ pub async fn handle_modal(
     data: &BotData,
 ) -> Result<(), BotError> {
     let parts: Vec<&str> = modal.data.custom_id.split(':').collect();
-    // so:start:<tier_id>:<template_id>
+    // srui:start:<tier_id>:<template_id>
     if parts.len() < 4 || parts[1] != "start" {
         return Ok(());
     }
@@ -131,11 +131,11 @@ async fn load_tier_and_check_enabled(
         .await?;
         return Ok(None);
     };
-    if !tier.enable_self_organization {
+    if !tier.enable_start_run_ui {
         mci.create_response(
             ctx,
             ephemeral_msg(
-                "Self-organized raids are no longer enabled for this tier. \
+                "The start-run UI is no longer enabled for this tier. \
                  Ask a server admin to re-enable in `/setup` if you'd like to use it.",
             ),
         )
@@ -282,7 +282,7 @@ async fn render_picker_page(
     }
 
     let menu = CreateSelectMenu::new(
-        format!("so:dpick:{}", tier.id),
+        format!("srui:dpick:{}", tier.id),
         CreateSelectMenuKind::String { options },
     )
     .placeholder("Pick a dungeon")
@@ -292,11 +292,11 @@ async fn render_picker_page(
     let mut components = vec![CreateActionRow::SelectMenu(menu)];
 
     if total_pages > 1 {
-        let prev = CreateButton::new(format!("so:page:{}:{}", tier.id, page.saturating_sub(1)))
+        let prev = CreateButton::new(format!("srui:page:{}:{}", tier.id, page.saturating_sub(1)))
             .label("\u{2190} Prev")
             .style(ButtonStyle::Secondary)
             .disabled(page == 0);
-        let next = CreateButton::new(format!("so:page:{}:{}", tier.id, page + 1))
+        let next = CreateButton::new(format!("srui:page:{}:{}", tier.id, page + 1))
             .label("Next \u{2192}")
             .style(ButtonStyle::Secondary)
             .disabled(page + 1 >= total_pages);
@@ -360,7 +360,7 @@ async fn handle_dpick(
     }
 
     let modal = CreateModal::new(
-        format!("so:start:{tier_id}:{template_id}"),
+        format!("srui:start:{tier_id}:{template_id}"),
         "Start a headcount",
     )
     .components(vec![
@@ -418,12 +418,12 @@ async fn handle_start(
             .await?;
         return Ok(());
     };
-    if !tier.enable_self_organization {
+    if !tier.enable_start_run_ui {
         modal
             .create_followup(
                 ctx,
                 CreateInteractionResponseFollowup::new()
-                    .content("Self-organized raids are no longer enabled for this tier.")
+                    .content("The start-run UI is no longer enabled for this tier.")
                     .ephemeral(true),
             )
             .await?;
@@ -491,11 +491,11 @@ async fn handle_start(
     .await?
     .unwrap_or(false);
 
-    // Anti-troll gate. Runs *outside* the tx because it does its own
-    // best-effort sweep of stale claims (which itself opens a tx) and
+    // Start gate. Runs *outside* the tx because it does its own
+    // best-effort sweep of stale HCs (which itself opens a tx) and
     // Postgres doesn't allow nested tx without savepoints.
     if let Some(block) =
-        self_organize::check_can_start(ctx, pool, &tier, &template, caller_id, is_org).await?
+        raid_gates::check_can_start(ctx, pool, &tier, &template, caller_id, is_org).await?
     {
         modal
             .create_followup(
@@ -531,7 +531,6 @@ async fn handle_start(
         &tier,
         &template,
         channel_id,
-        true, // is_self_organized
     )
     .await?;
 
@@ -554,11 +553,11 @@ async fn handle_start(
 
             // Refresh the listing best-effort — the HC is already up, so a
             // listing failure is purely cosmetic and shouldn't bubble.
-            if let Err(e) = self_organize_listing::refresh_listing(ctx, pool, &tier).await {
+            if let Err(e) = start_run_ui_listing::refresh_listing(ctx, pool, &tier).await {
                 tracing::warn!(
                     error = ?e,
                     tier_id = tier.id,
-                    "failed to refresh self-organize listing after start",
+                    "failed to refresh start-run-UI listing after start",
                 );
             }
 
@@ -581,7 +580,7 @@ async fn handle_start(
                 .create_followup(
                     ctx,
                     CreateInteractionResponseFollowup::new()
-                        .content(self_organize::SelfOrganizeBlock::SlotInUse(holder).user_message())
+                        .content(raid_gates::RaidStartBlock::SlotInUse(holder).user_message())
                         .ephemeral(true),
                 )
                 .await?;

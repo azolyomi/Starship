@@ -237,36 +237,30 @@ async fn handle_cancel(
         return Ok(());
     }
 
-    // Atomic claim + slot-claim release in one tx. The release is a no-op
-    // for HCs in non-self-organize tiers (no claim row exists), so this
-    // path is uniform for both flows.
-    let mut tx = data.db.begin().await?;
-    db::self_organize::claim_release_by_headcount(&mut tx, hc_id).await?;
-    let row_existed = db::headcount::delete_tx(&mut tx, hc_id).await?;
+    let row_existed = db::headcount::delete(&data.db, hc_id).await?;
     if !row_existed {
-        tx.rollback().await?;
         mci.create_response(ctx, ephemeral_msg("This headcount is no longer active."))
             .await?;
         return Ok(());
     }
-    tx.commit().await?;
 
     let canceller_id = mci.user.id.get() as i64;
 
-    // Self-cancel cooldown: only when a self-organized HC is cancelled by
-    // its own leader. Staff overrides (ManageRuns) don't count — those are
-    // a moderation action, not a misuse signal.
-    if hc.is_self_organized && canceller_id == hc.leader_user_id {
+    // Self-cancel cooldown applies whenever a leader cancels their own
+    // HC. Staff overrides (ManageRuns) are a moderation action, not a
+    // misuse signal — they leave no cooldown.
+    if canceller_id == hc.leader_user_id {
         if let Some(tier) = db::tier::get_by_id(&data.db, hc.tier_id).await? {
             if let Err(e) =
-                services::self_organize::record_self_cancel(&data.db, &tier, canceller_id).await
+                services::raid_gates::record_post_cancel_cooldown(&data.db, &tier, canceller_id)
+                    .await
             {
                 tracing::warn!(
                     error = ?e,
                     hc_id,
                     user_id = canceller_id,
                     tier_id = hc.tier_id,
-                    "failed to record self-organize cancel cooldown",
+                    "failed to record post-cancel cooldown",
                 );
             }
         }
@@ -294,17 +288,17 @@ async fn handle_cancel(
     )
     .await?;
 
-    // Refresh the listing for self-organize tiers so the cancelled raid
-    // disappears from the active-raids view. Best-effort.
+    // Refresh the listing for tiers with the start-run UI so the
+    // cancelled raid disappears from the active-raids view. Best-effort.
     if let Ok(Some(tier)) = db::tier::get_by_id(&data.db, hc.tier_id).await {
-        if tier.enable_self_organization {
+        if tier.enable_start_run_ui {
             if let Err(e) =
-                services::self_organize_listing::refresh_listing(ctx, &data.db, &tier).await
+                services::start_run_ui_listing::refresh_listing(ctx, &data.db, &tier).await
             {
                 tracing::warn!(
                     error = ?e,
                     tier_id = tier.id,
-                    "failed to refresh self-organize listing after HC cancel",
+                    "failed to refresh start-run-UI listing after HC cancel",
                 );
             }
         }
@@ -398,46 +392,43 @@ async fn handle_confirm_start(
     }
 
     // Self-organize min-reactors gate. Only enforced for HCs that originated
-    // from the self-organize button; staff `/headcount` in self-organize
-    // tiers is already trust-gated by the StartHeadcount permission and
-    // doesn't need the anti-troll floor. Organizers (ManageRuns / superadmin
-    // / Discord admin) also bypass the floor — `check_can_convert` skips
-    // the count comparison for trusted operators.
-    if hc.is_self_organized {
-        // None (caller left the guild) → treat as not-organizer so the
-        // anti-troll min-reactors floor stays enforced.
-        let is_org = services::permission::is_organizer_from_modal(
-            ctx,
-            &data.db,
-            hc.guild_id,
-            modal,
-            Some(hc.tier_id),
-        )
-        .await?
-        .unwrap_or(false);
-        let count = match services::reactions::count_distinct_non_bot_reactors(
-            &ctx.http,
-            serenity::ChannelId::new(hc.channel_id as u64),
-            MessageId::new(hc.message_id as u64),
-        )
-        .await
-        {
-            Ok(n) => n,
-            Err(e) => {
-                tracing::warn!(
-                    error = ?e,
-                    hc_id,
-                    "failed to count reactors for min-reactors gate; proceeding without",
-                );
-                tier.self_organize_min_reactors as i64
-            }
-        };
-        if let Some(block) = services::self_organize::check_can_convert(&tier, count, is_org) {
-            modal
-                .create_response(ctx, ephemeral_msg(block.user_message()))
-                .await?;
-            return Ok(());
+    // Min-reactor convert gate. Applies to every HC; organizers
+    // (ManageRuns / superadmin / Discord admin) bypass the floor.
+    // None (caller left the guild) → treat as not-organizer so the
+    // floor stays enforced.
+    let is_org = services::permission::is_organizer_from_modal(
+        ctx,
+        &data.db,
+        hc.guild_id,
+        modal,
+        Some(hc.tier_id),
+    )
+    .await?
+    .unwrap_or(false);
+    let count = match services::reactions::count_distinct_non_bot_reactors(
+        &ctx.http,
+        serenity::ChannelId::new(hc.channel_id as u64),
+        MessageId::new(hc.message_id as u64),
+    )
+    .await
+    {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::warn!(
+                error = ?e,
+                hc_id,
+                "failed to count reactors for min-reactors gate; proceeding without",
+            );
+            // Fall back to the floor so the gate stays enforced when the
+            // count fails — better to make the leader retry than to skip.
+            tier.hc_min_reactors as i64
         }
+    };
+    if let Some(block) = services::raid_gates::check_can_convert(&tier, count, is_org) {
+        modal
+            .create_response(ctx, ephemeral_msg(block.user_message()))
+            .await?;
+        return Ok(());
     }
 
     let location_raw = extract_input(modal, "location").unwrap_or_default();
@@ -455,40 +446,11 @@ async fn handle_confirm_start(
         Some(party_trim)
     };
 
-    // Unified HC->Run convert. One transaction creates the run row,
-    // migrates any slot claim off the HC, then deletes the HC. Order
-    // matters: the slot_claim FK to headcounts is `ON DELETE NO ACTION`,
-    // so the HC delete fails immediately if a claim still references it.
-    // Both convert variants share this skeleton — the only difference is
-    // whether we *swap* the claim to the new run (preserves the slot
-    // lock through the convert) or *release* it (tier is no longer
-    // self-organize, lock is meaningless).
+    // HC->Run convert. One transaction deletes the HC and inserts the
+    // run. The HC delete frees the slot lock (UNIQUE index on active
+    // headcounts); the run insert has no slot constraint, so a fresh /hc
+    // for the same dungeon can start immediately afterward.
     let mut tx = data.db.begin().await?;
-    let mut run = db::run::create_tx(
-        &mut tx,
-        hc.guild_id,
-        tier.id,
-        template.id,
-        raid_channel_id,
-        hc.leader_user_id,
-        template.requires_vc,
-        hc.is_self_organized,
-    )
-    .await?;
-
-    // Migrate or release the slot claim BEFORE deleting the HC. Both
-    // helpers are no-ops when no claim row exists (e.g. HC was created
-    // when the tier was non-SO); that's fine — without a referencing
-    // claim there's nothing to violate the FK with either.
-    if tier.enable_self_organization {
-        db::self_organize::claim_swap_to_run(&mut tx, hc.id, run.id).await?;
-    } else {
-        // Stale claim defence: if the tier was SO at HC creation but
-        // disabled before convert, a claim still references the HC.
-        // Release it so the HC delete passes the FK check.
-        db::self_organize::claim_release_by_headcount(&mut tx, hc.id).await?;
-    }
-
     let row_existed = db::headcount::delete_tx(&mut tx, hc_id).await?;
     if !row_existed {
         tx.rollback().await?;
@@ -497,6 +459,16 @@ async fn handle_confirm_start(
             .await?;
         return Ok(());
     }
+    let mut run = db::run::create_tx(
+        &mut tx,
+        hc.guild_id,
+        tier.id,
+        template.id,
+        raid_channel_id,
+        hc.leader_user_id,
+        template.requires_vc,
+    )
+    .await?;
     tx.commit().await?;
 
     // Persist location/party as follow-up UPDATEs outside the tx (no
@@ -541,14 +513,13 @@ async fn handle_confirm_start(
     services::raid::finalize_run_post_create(ctx, &data.db, &mut run, &template, raid_channel_id)
         .await?;
 
-    // Listing refresh only matters when the tier is currently SO.
-    if tier.enable_self_organization {
-        if let Err(e) = services::self_organize_listing::refresh_listing(ctx, &data.db, &tier).await
+    if tier.enable_start_run_ui {
+        if let Err(e) = services::start_run_ui_listing::refresh_listing(ctx, &data.db, &tier).await
         {
             tracing::warn!(
                 error = ?e,
                 tier_id = tier.id,
-                "failed to refresh self-organize listing after HC convert",
+                "failed to refresh start-run-UI listing after HC convert",
             );
         }
     }
