@@ -66,14 +66,39 @@ pub async fn list_for_guild(pool: &PgPool, guild_id: i64) -> Result<Vec<Permissi
     Ok(rows)
 }
 
-/// Roles that hold the `StartHeadcount` grant scoped exactly to this tier.
-/// Used by the setup wizard to render "current leader roles" — the wizard
-/// keeps the seven `LEADER_ACTIONS` in lockstep, so any one of them is a
-/// reliable proxy for "this role is a leader of this tier".
+/// Roles that hold leader-grade access scoped exactly to this tier.
+/// `ConvertHeadcount` is the proxy: the wizard grants the full
+/// `LEADER_ACTIONS` set in lockstep when a role is added as a leader,
+/// and *only leaders* hold `ConvertHeadcount` — a member-tier grant
+/// gives `StartHeadcount` alone. Using `ConvertHeadcount` rather than
+/// `StartHeadcount` keeps members from showing up in the leader list.
 pub async fn list_leader_roles_for_tier(pool: &PgPool, tier_id: i32) -> Result<Vec<i64>> {
     let roles = sqlx::query_scalar!(
         "SELECT DISTINCT role_id FROM permissions
+         WHERE tier_id = $1 AND action = 'ConvertHeadcount'
+         ORDER BY role_id",
+        tier_id
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(roles)
+}
+
+/// Roles that hold a member-grade `StartHeadcount` grant scoped to this
+/// tier — they can `/hc` and click the start-run button, but can't
+/// convert / cancel / manage someone else's raid. Filters out roles
+/// that also hold `ConvertHeadcount` (those are leaders, surfaced by
+/// [`list_leader_roles_for_tier`]).
+pub async fn list_member_roles_for_tier(pool: &PgPool, tier_id: i32) -> Result<Vec<i64>> {
+    let roles = sqlx::query_scalar!(
+        "SELECT DISTINCT role_id FROM permissions p
          WHERE tier_id = $1 AND action = 'StartHeadcount'
+           AND NOT EXISTS (
+               SELECT 1 FROM permissions q
+               WHERE q.role_id = p.role_id
+                 AND q.tier_id = p.tier_id
+                 AND q.action = 'ConvertHeadcount'
+           )
          ORDER BY role_id",
         tier_id
     )

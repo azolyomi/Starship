@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT DISTINCT role_id FROM permissions\n         WHERE tier_id = $1 AND action = 'StartHeadcount'\n         ORDER BY role_id",
+  "query": "SELECT DISTINCT role_id FROM permissions\n         WHERE tier_id = $1 AND action = 'ConvertHeadcount'\n         ORDER BY role_id",
   "describe": {
     "columns": [
       {
@@ -18,5 +18,5 @@
       false
     ]
   },
-  "hash": "2f463de302b0f62297a3a400b159a21e6ea3c1f6fee7c65f1aa0f65a350ae9e5"
+  "hash": "f1027af87c4a26abfddbe329ae20db898ad9b10c7590073f20eee7e41ac34a4f"
 }

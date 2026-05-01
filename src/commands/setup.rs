@@ -790,6 +790,10 @@ async fn summary_view(ctx: BotContext<'_>) -> Result<CreateEmbed> {
 struct TierDraft {
     runs_channel: Option<ChannelId>,
     leader_roles: Vec<RoleId>,
+    /// Roles granted *only* `StartHeadcount` for this tier. They can
+    /// open headcounts via `/hc` or the start-run button but can't
+    /// convert/cancel/manage other people's raids.
+    member_roles: Vec<RoleId>,
 }
 
 async fn section_first_tier(
@@ -804,15 +808,18 @@ async fn section_first_tier(
 
     let mut draft = match &existing {
         Some(t) => {
-            let roles = db::permission::list_leader_roles_for_tier(pool, t.id).await?;
+            let leader = db::permission::list_leader_roles_for_tier(pool, t.id).await?;
+            let member = db::permission::list_member_roles_for_tier(pool, t.id).await?;
             TierDraft {
                 runs_channel: t.runs_channel_id.map(|id| ChannelId::new(id as u64)),
-                leader_roles: roles.into_iter().map(|r| RoleId::new(r as u64)).collect(),
+                leader_roles: leader.into_iter().map(|r| RoleId::new(r as u64)).collect(),
+                member_roles: member.into_iter().map(|r| RoleId::new(r as u64)).collect(),
             }
         }
         None => TierDraft {
             runs_channel: None,
             leader_roles: Vec::new(),
+            member_roles: Vec::new(),
         },
     };
 
@@ -843,6 +850,14 @@ async fn section_first_tier(
             "setup:tier:roles" => {
                 if let ComponentInteractionDataKind::RoleSelect { values } = &mci.data.kind {
                     draft.leader_roles = values.clone();
+                }
+                let (embed, components) =
+                    tier_view(existing.as_ref(), &draft, global_dungeons.len());
+                respond_with_view(ctx, &mci, embed, components).await?;
+            }
+            "setup:tier:member_roles" => {
+                if let ComponentInteractionDataKind::RoleSelect { values } = &mci.data.kind {
+                    draft.member_roles = values.clone();
                 }
                 let (embed, components) =
                     tier_view(existing.as_ref(), &draft, global_dungeons.len());
@@ -910,6 +925,7 @@ async fn section_first_tier(
                 };
 
                 sync_leader_roles(pool, guild_id, tier_id, &draft.leader_roles).await?;
+                sync_member_roles(pool, guild_id, tier_id, &draft.member_roles).await?;
 
                 back_to_dashboard(ctx, &mci).await?;
                 return Ok(());
@@ -951,6 +967,43 @@ async fn sync_leader_roles(
     Ok(())
 }
 
+/// Reconcile the set of member-tier roles for a tier: each desired role gets
+/// just `StartHeadcount` scoped to this tier (no convert/cancel/manage), and
+/// any role previously in the member list but absent from `desired` has that
+/// grant revoked. Roles also present in the leader list pass through
+/// untouched: `list_member_roles_for_tier` filters them out, so they never
+/// appear in `existing` here.
+async fn sync_member_roles(
+    pool: &sqlx::PgPool,
+    guild_id: i64,
+    tier_id: i32,
+    desired: &[RoleId],
+) -> Result<()> {
+    let existing: std::collections::HashSet<i64> =
+        db::permission::list_member_roles_for_tier(pool, tier_id)
+            .await?
+            .into_iter()
+            .collect();
+    let desired_set: std::collections::HashSet<i64> =
+        desired.iter().map(|r| r.get() as i64).collect();
+
+    for add in desired_set.difference(&existing) {
+        db::permission::grant(pool, guild_id, *add, "StartHeadcount", Some(tier_id), None).await?;
+    }
+    for remove in existing.difference(&desired_set) {
+        db::permission::revoke(
+            pool,
+            guild_id,
+            *remove,
+            "StartHeadcount",
+            Some(tier_id),
+            None,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
 fn tier_view(
     existing: Option<&Tier>,
     draft: &TierDraft,
@@ -963,11 +1016,21 @@ fn tier_view(
         .runs_channel
         .map(|c| format!("<#{c}>"))
         .unwrap_or_else(|| "_required — pick one below_".to_string());
-    let roles_display = if draft.leader_roles.is_empty() {
+    let leader_display = if draft.leader_roles.is_empty() {
         "_none — only Discord admins / the bot superadmin can lead raids in this tier_".to_string()
     } else {
         draft
             .leader_roles
+            .iter()
+            .map(|r| format!("<@&{r}>"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let member_display = if draft.member_roles.is_empty() {
+        "_none — leaders and admins can already start headcounts via `/hc`_".to_string()
+    } else {
+        draft
+            .member_roles
             .iter()
             .map(|r| format!("<@&{r}>"))
             .collect::<Vec<_>>()
@@ -997,7 +1060,10 @@ fn tier_view(
          \n\
          **Runs channel** — where headcount + run messages post\n{runs_display}\n\
          \n\
-         **Leader roles** — who can `/headcount` and run raids in this tier\n{roles_display}\n\
+         **Leader roles** — full raid management (start, convert, cancel, end)\n{leader_display}\n\
+         \n\
+         **Headcount roles** — can start a headcount (`/hc` or sticky button) but \
+         can't manage other people's raids\n{member_display}\n\
          \n\
          {dungeon_line}{create_hint}"
     );
@@ -1018,7 +1084,7 @@ fn tier_view(
     .min_values(1)
     .max_values(1);
 
-    let role_select = CreateSelectMenu::new(
+    let leader_select = CreateSelectMenu::new(
         "setup:tier:roles",
         CreateSelectMenuKind::Role {
             default_roles: if draft.leader_roles.is_empty() {
@@ -1028,7 +1094,21 @@ fn tier_view(
             },
         },
     )
-    .placeholder("Leader roles (who can run raids in this tier)")
+    .placeholder("Leader roles (full raid management)")
+    .min_values(0)
+    .max_values(10);
+
+    let member_select = CreateSelectMenu::new(
+        "setup:tier:member_roles",
+        CreateSelectMenuKind::Role {
+            default_roles: if draft.member_roles.is_empty() {
+                None
+            } else {
+                Some(draft.member_roles.clone())
+            },
+        },
+    )
+    .placeholder("Headcount roles (can start, can't manage others)")
     .min_values(0)
     .max_values(10);
 
@@ -1075,7 +1155,8 @@ fn tier_view(
         embed,
         vec![
             CreateActionRow::SelectMenu(runs_select),
-            CreateActionRow::SelectMenu(role_select),
+            CreateActionRow::SelectMenu(leader_select),
+            CreateActionRow::SelectMenu(member_select),
             actions,
         ],
     )

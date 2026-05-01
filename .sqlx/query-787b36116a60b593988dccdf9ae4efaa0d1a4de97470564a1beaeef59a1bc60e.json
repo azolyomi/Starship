@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT role_id FROM permissions p\n         WHERE tier_id = $1 AND action = 'StartHeadcount'\n           AND NOT EXISTS (\n               SELECT 1 FROM permissions q\n               WHERE q.role_id = p.role_id\n                 AND q.tier_id = p.tier_id\n                 AND q.action = 'ConvertHeadcount'\n           )\n         ORDER BY role_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "role_id",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "787b36116a60b593988dccdf9ae4efaa0d1a4de97470564a1beaeef59a1bc60e"
+}
