@@ -472,10 +472,14 @@ fn init_tracing() -> mpsc::Receiver<services::error_dm::DmEvent> {
 /// Framework command_check: bail out of any non-`/setup` command when the
 /// guild row doesn't exist yet, with a friendly prompt to run `/setup`.
 async fn ensure_setup(ctx: BotContext<'_>) -> Result<bool, BotError> {
-    // `setup` is the whole point of this gate; `upload-emoji` is operator-only
-    // and touches the bot-wide application-emoji set, not guild config, so it
-    // works even in guilds that haven't been /setup'd yet.
-    if matches!(ctx.command().name.as_str(), "setup" | "upload-emoji") {
+    // `setup` is the whole point of this gate; `upload-emoji` and
+    // `sync-wiki` are operator-only and touch the bot-wide application-emoji
+    // set, not guild config, so they work even in guilds that haven't been
+    // /setup'd yet.
+    if matches!(
+        ctx.command().name.as_str(),
+        "setup" | "upload-emoji" | "sync-wiki"
+    ) {
         return Ok(true);
     }
     let Some(guild_id) = ctx.guild_id() else {
