@@ -19,6 +19,7 @@
 
 use std::time::{Duration, Instant};
 
+use poise::serenity_prelude::CreateEmbed;
 use poise::CreateReply;
 use sqlx::PgPool;
 use tracing::{error, info};
@@ -112,11 +113,7 @@ pub async fn sync_wiki(
     let started_at = Instant::now();
     let mut state = ProgressState::new(dry_run, purge_confirmed);
     let handle = ctx
-        .send(
-            CreateReply::default()
-                .content(state.render(started_at))
-                .ephemeral(true),
-        )
+        .send(embeds_reply(state.build_embeds(started_at, RenderStatus::Running)).ephemeral(true))
         .await?;
 
     let (progress, mut rx) = Progress::channel();
@@ -155,10 +152,8 @@ pub async fn sync_wiki(
                 }
             }
             _ = tick.tick() => {
-                if let Err(e) = handle
-                    .edit(ctx, CreateReply::default().content(state.render(started_at)))
-                    .await
-                {
+                let reply = embeds_reply(state.build_embeds(started_at, RenderStatus::Running));
+                if let Err(e) = handle.edit(ctx, reply).await {
                     // Most likely the 15-min interaction token expired.
                     // Don't abort the run — it's still side-effecting
                     // correctly; we just lose the live UI. error_dm
@@ -181,15 +176,12 @@ pub async fn sync_wiki(
         state.apply(event);
     }
 
-    let final_content = match &summary_result {
-        Ok(summary) => state.render_done(started_at, summary),
-        Err(e) => state.render_failed(started_at, e),
+    let final_status = match &summary_result {
+        Ok(summary) => RenderStatus::Complete(summary),
+        Err(e) => RenderStatus::Failed(e),
     };
-
-    if let Err(e) = handle
-        .edit(ctx, CreateReply::default().content(final_content))
-        .await
-    {
+    let final_reply = embeds_reply(state.build_embeds(started_at, final_status));
+    if let Err(e) = handle.edit(ctx, final_reply).await {
         error!(error = ?e, "sync-wiki: failed to post final summary");
     }
 
@@ -239,8 +231,31 @@ impl SyncWikiLock {
 }
 
 // ---------------------------------------------------------------------------
-// Progress aggregator + ephemeral renderer.
+// Progress aggregator + ephemeral embed renderer.
 // ---------------------------------------------------------------------------
+
+/// Embed colors. Yellow during a run, green on success, red on failure —
+/// the bar down the left of the embed reads the run state at a glance.
+const COLOR_RUNNING: u32 = 0xFEE75C;
+const COLOR_OK: u32 = 0x57F287;
+const COLOR_FAIL: u32 = 0xED4245;
+
+/// Per-message Discord caps (combined across all embeds): 6000 chars,
+/// max 10 embeds. We leave headroom for embed titles and small overhead
+/// the budget tracker doesn't account for individually.
+const MAX_TOTAL_DESC_CHARS: usize = 5500;
+const MAX_DESC_CHARS: usize = 3900;
+const MAX_EMBEDS: usize = 9;
+
+/// One newly-uploaded emoji, captured from `ProgressEvent::UploadNew` so
+/// the renderer can build `<:name:id>` markup directly without
+/// re-parsing the event stream.
+#[derive(Clone)]
+struct AddedEmoji {
+    discord_name: String,
+    emoji_id: u64,
+    animated: bool,
+}
 
 #[derive(Default, Clone)]
 struct ProgressState {
@@ -248,11 +263,10 @@ struct ProgressState {
     purge: bool,
     phase: String,
     current_dungeon: Option<(String, usize, usize)>,
-    uploads_new: usize,
     uploads_reused: usize,
     uploads_skipped: usize,
-    warnings: usize,
-    last_warning: Option<String>,
+    added: Vec<AddedEmoji>,
+    warnings_log: Vec<String>,
 }
 
 impl ProgressState {
@@ -272,11 +286,16 @@ impl ProgressState {
                 self.phase = "processing dungeons".into();
                 self.current_dungeon = Some((name, index, total));
             }
-            ProgressEvent::Warning(msg) => {
-                self.warnings += 1;
-                self.last_warning = Some(msg);
-            }
-            ProgressEvent::UploadNew => self.uploads_new += 1,
+            ProgressEvent::Warning(msg) => self.warnings_log.push(msg),
+            ProgressEvent::UploadNew {
+                discord_name,
+                emoji_id,
+                animated,
+            } => self.added.push(AddedEmoji {
+                discord_name,
+                emoji_id,
+                animated,
+            }),
             ProgressEvent::UploadReused => self.uploads_reused += 1,
             ProgressEvent::UploadSkipped => self.uploads_skipped += 1,
         }
@@ -297,72 +316,243 @@ impl ProgressState {
         }
     }
 
-    fn render(&self, started_at: Instant) -> String {
-        let elapsed = format_elapsed(started_at.elapsed());
-        let mut out = format!(
-            "**Running `/sync-wiki`** [{flags}] — {elapsed} elapsed\nPhase: {phase}\n",
-            flags = self.flags_line(),
-            phase = self.phase,
-        );
-        if let Some((name, idx, total)) = &self.current_dungeon {
-            out.push_str(&format!("Current: {name} ({idx}/{total})\n"));
+    /// Build the chain of embeds for the live ephemeral message.
+    /// Always includes a status embed; optionally adds one or more
+    /// "Added emojis" embeds (each holding a slice of the new emojis as
+    /// `<:name:id>` markup) and one or more "Warnings" embeds. When the
+    /// per-message char budget is exhausted, a `…and N more` marker is
+    /// appended to the last description chunk and any further entries
+    /// are dropped (they remain in the journal logs).
+    fn build_embeds(&self, started_at: Instant, status: RenderStatus<'_>) -> Vec<CreateEmbed> {
+        let mut budget = EmbedBudget::default();
+        let mut embeds = Vec::with_capacity(3);
+
+        embeds.push(self.status_embed(started_at, status, &mut budget));
+
+        if !self.added.is_empty() {
+            embeds.extend(self.added_embeds(status.color(), &mut budget));
         }
-        out.push_str(&format!(
-            "Uploads: {} new, {} reused",
-            self.uploads_new, self.uploads_reused,
+
+        if !self.warnings_log.is_empty() {
+            embeds.extend(self.warnings_embeds(&mut budget));
+        }
+
+        embeds
+    }
+
+    fn status_embed(
+        &self,
+        started_at: Instant,
+        status: RenderStatus<'_>,
+        budget: &mut EmbedBudget,
+    ) -> CreateEmbed {
+        let elapsed = format_elapsed(started_at.elapsed());
+        let title = match status {
+            RenderStatus::Running => format!("Running /sync-wiki — {elapsed} elapsed"),
+            RenderStatus::Complete(_) => format!("Done — /sync-wiki in {elapsed}"),
+            RenderStatus::Failed(_) => format!("Failed — /sync-wiki after {elapsed}"),
+        };
+
+        let mut desc = format!("Flags: `{}`\nPhase: {}\n", self.flags_line(), self.phase);
+        if let Some((name, idx, total)) = &self.current_dungeon {
+            desc.push_str(&format!("Current: {name} ({idx}/{total})\n"));
+        }
+        if let RenderStatus::Complete(summary) = status {
+            desc.push_str(&format!("Dungeons scraped: {}\n", summary.dungeons_scraped));
+        }
+        desc.push_str(&format!(
+            "Uploads: **{}** new, {} reused",
+            self.added.len(),
+            self.uploads_reused,
         ));
         if self.dry_run {
-            out.push_str(&format!(", {} would-upload", self.uploads_skipped));
+            desc.push_str(&format!(", {} would-upload", self.uploads_skipped));
         }
-        out.push('\n');
-        out.push_str(&format!("Warnings: {}", self.warnings));
-        if let Some(last) = &self.last_warning {
-            out.push_str(&format!(" (latest: `{}`)", truncate(last, 160)));
-        }
-        out.push('\n');
-        out
-    }
+        desc.push('\n');
+        desc.push_str(&format!("Warnings: **{}**", self.warnings_log.len()));
 
-    fn render_done(&self, started_at: Instant, summary: &SyncSummary) -> String {
-        let elapsed = format_elapsed(started_at.elapsed());
-        let mut out = format!(
-            "**Done — `/sync-wiki`** [{flags}] in {elapsed}\n\
-             Dungeons scraped: {dungeons}\n\
-             Uploads: {new} new, {reused} reused",
-            flags = self.flags_line(),
-            dungeons = summary.dungeons_scraped,
-            new = summary.uploads_new,
-            reused = summary.uploads_reused,
-        );
-        if self.dry_run {
-            out.push_str(&format!(
-                ", {} would-upload, {} bot_emoji rows skipped",
-                summary.uploads_skipped_dry, summary.upserts_skipped_dry,
+        if let RenderStatus::Failed(err) = status {
+            desc.push_str(&format!(
+                "\n\nError: ```\n{}\n```",
+                truncate(&format!("{err:#}"), 1500),
             ));
         }
-        out.push('\n');
-        out.push_str(&format!("Warnings: {}", summary.warnings));
-        if let Some(last) = &self.last_warning {
-            out.push_str(&format!(" (latest: `{}`)", truncate(last, 160)));
-        }
-        out.push_str(
-            "\n\nFull logs are in the bot's journal. \
-             `templates::load_and_seed` re-reads `wiki_dump.json` on the next bot restart.",
-        );
-        out
+
+        budget.record(&desc);
+        CreateEmbed::new()
+            .title(title)
+            .description(desc)
+            .color(status.color())
     }
 
-    fn render_failed(&self, started_at: Instant, err: &anyhow::Error) -> String {
-        let elapsed = format_elapsed(started_at.elapsed());
-        format!(
-            "**Failed — `/sync-wiki`** [{flags}] after {elapsed}\nPhase at failure: {phase}\n\
-             Error: `{err}`\nWarnings before failure: {warnings}",
-            flags = self.flags_line(),
-            phase = self.phase,
-            err = truncate(&format!("{err:#}"), 1500),
-            warnings = self.warnings,
-        )
+    fn added_embeds(&self, color: u32, budget: &mut EmbedBudget) -> Vec<CreateEmbed> {
+        let total = self.added.len();
+        let mut chunks: Vec<String> = Vec::new();
+        let mut idx = 0;
+
+        while idx < total && chunks.len() + 1 < MAX_EMBEDS {
+            let mut desc = String::new();
+            let entries_start = idx;
+
+            while idx < total {
+                let line = format_added_line(&self.added[idx]);
+                let line_chars = line.chars().count();
+                if desc.chars().count() + line_chars > MAX_DESC_CHARS {
+                    break;
+                }
+                if line_chars > budget.remaining() {
+                    break;
+                }
+                budget.record(&line);
+                desc.push_str(&line);
+                idx += 1;
+            }
+
+            if entries_start == idx {
+                break;
+            }
+            chunks.push(desc);
+        }
+
+        if idx < total {
+            append_truncation_marker(&mut chunks, total - idx, budget);
+        }
+
+        let n = chunks.len();
+        chunks
+            .into_iter()
+            .enumerate()
+            .map(|(i, desc)| {
+                let title = if n == 1 {
+                    format!("Added emojis ({total})")
+                } else {
+                    format!("Added emojis ({total}) — part {}/{n}", i + 1)
+                };
+                CreateEmbed::new()
+                    .title(title)
+                    .description(desc)
+                    .color(color)
+            })
+            .collect()
     }
+
+    fn warnings_embeds(&self, budget: &mut EmbedBudget) -> Vec<CreateEmbed> {
+        let total = self.warnings_log.len();
+        let mut chunks: Vec<String> = Vec::new();
+        let mut idx = 0;
+
+        while idx < total && chunks.len() + 1 < MAX_EMBEDS {
+            let mut desc = String::new();
+            let entries_start = idx;
+
+            while idx < total {
+                let line = format!("- {}\n", truncate(&self.warnings_log[idx], 240));
+                let line_chars = line.chars().count();
+                if desc.chars().count() + line_chars > MAX_DESC_CHARS {
+                    break;
+                }
+                if line_chars > budget.remaining() {
+                    break;
+                }
+                budget.record(&line);
+                desc.push_str(&line);
+                idx += 1;
+            }
+
+            if entries_start == idx {
+                break;
+            }
+            chunks.push(desc);
+        }
+
+        if idx < total {
+            append_truncation_marker(&mut chunks, total - idx, budget);
+        }
+
+        let n = chunks.len();
+        chunks
+            .into_iter()
+            .enumerate()
+            .map(|(i, desc)| {
+                let title = if n == 1 {
+                    format!("Warnings ({total})")
+                } else {
+                    format!("Warnings ({total}) — part {}/{n}", i + 1)
+                };
+                CreateEmbed::new()
+                    .title(title)
+                    .description(desc)
+                    .color(COLOR_FAIL)
+            })
+            .collect()
+    }
+}
+
+/// Render one added emoji as a single description line: the emoji
+/// itself followed by its slug for at-a-glance identification.
+fn format_added_line(emoji: &AddedEmoji) -> String {
+    let prefix = if emoji.animated { "a" } else { "" };
+    format!(
+        "<{prefix}:{name}:{id}> `{name}`\n",
+        name = emoji.discord_name,
+        id = emoji.emoji_id,
+    )
+}
+
+fn append_truncation_marker(chunks: &mut [String], remaining: usize, budget: &mut EmbedBudget) {
+    let marker = format!("\n_…and {remaining} more — see journal logs_");
+    let chars = marker.chars().count();
+    if let Some(last) = chunks.last_mut() {
+        if budget.remaining() >= chars {
+            budget.record(&marker);
+            last.push_str(&marker);
+        }
+    }
+}
+
+#[derive(Copy, Clone)]
+enum RenderStatus<'a> {
+    Running,
+    Complete(&'a SyncSummary),
+    Failed(&'a anyhow::Error),
+}
+
+impl<'a> RenderStatus<'a> {
+    fn color(self) -> u32 {
+        match self {
+            RenderStatus::Running => COLOR_RUNNING,
+            RenderStatus::Complete(_) => COLOR_OK,
+            RenderStatus::Failed(_) => COLOR_FAIL,
+        }
+    }
+}
+
+/// Tracks total characters spent across all embed descriptions for the
+/// live message. We don't account for titles separately — the headroom
+/// between [`MAX_TOTAL_DESC_CHARS`] and Discord's actual 6000 cap covers
+/// the ~9 × ~50-char titles plus padding.
+#[derive(Default)]
+struct EmbedBudget {
+    used: usize,
+}
+
+impl EmbedBudget {
+    fn record(&mut self, text: &str) {
+        self.used += text.chars().count();
+    }
+
+    fn remaining(&self) -> usize {
+        MAX_TOTAL_DESC_CHARS.saturating_sub(self.used)
+    }
+}
+
+/// Fold a chain of embeds into a `CreateReply`. `poise::CreateReply` in
+/// 0.6 doesn't expose an `.embeds(vec)` builder — only `.embed(one)`
+/// which pushes — so we feed them in via a fold.
+fn embeds_reply(embeds: Vec<CreateEmbed>) -> CreateReply {
+    embeds
+        .into_iter()
+        .fold(CreateReply::default(), |reply, e| reply.embed(e))
 }
 
 fn format_elapsed(d: Duration) -> String {
@@ -378,7 +568,7 @@ fn format_elapsed(d: Duration) -> String {
 
 /// Char-aware truncation with an ellipsis. Discord renders multibyte
 /// glyphs (e.g. status-effect names with apostrophes via slug→display)
-/// so a byte-based slice can split a codepoint.
+/// so a byte-based slice could split a codepoint.
 fn truncate(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         s.to_string()

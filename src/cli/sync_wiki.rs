@@ -241,8 +241,14 @@ pub enum ProgressEvent {
     /// A non-fatal warning was emitted. `message` is the human-readable
     /// log line minus the `tracing` prefix.
     Warning(String),
-    /// One emoji was freshly uploaded to Discord.
-    UploadNew,
+    /// One emoji was freshly uploaded to Discord. Carries enough info to
+    /// render the emoji inline (`<:name:id>` / `<a:name:id>`) so the live
+    /// status message can show the actual sprite as it lands.
+    UploadNew {
+        discord_name: String,
+        emoji_id: u64,
+        animated: bool,
+    },
     /// One emoji was already on Discord; we reused the existing ID.
     UploadReused,
     /// Dry-run only: one upload was skipped.
@@ -892,7 +898,11 @@ async fn upload_if_new(
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
     summary.uploads_new += 1;
-    progress.emit(ProgressEvent::UploadNew);
+    progress.emit(ProgressEvent::UploadNew {
+        discord_name: discord_name.to_string(),
+        emoji_id: result.0,
+        animated: result.1,
+    });
 
     // TODO: overflow path — if we hit the 2000 application emoji cap, fall
     // back to uploading to a guild emoji server and set source_guild_id.
