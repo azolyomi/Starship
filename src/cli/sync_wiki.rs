@@ -13,6 +13,8 @@ use image::imageops::FilterType;
 use once_cell::sync::Lazy;
 use reqwest::Client;
 use scraper::{Html, Selector};
+use sqlx::PgPool;
+use tokio::sync::mpsc;
 use tracing::{info, warn};
 
 use crate::config::Config;
@@ -189,14 +191,92 @@ struct ItemBagInfo {
 }
 
 // ---------------------------------------------------------------------------
-// Entry point.
+// Public surface for callers (CLI + Discord command).
 // ---------------------------------------------------------------------------
 
-#[derive(Default)]
-struct DrySummary {
-    existing_reused: usize,
-    would_upload: usize,
-    would_upsert_emoji: usize,
+/// Caller-supplied options for a sync run. Both `dry_run` and `purge` are
+/// expected to be pre-confirmed: `run_core` does not prompt the user.
+/// The CLI entry [`run`] handles the stdin Y/N prompt; the Discord command
+/// requires the operator to type the literal string `PURGE` as a slash
+/// command parameter.
+#[derive(Debug, Clone, Copy)]
+pub struct SyncOptions {
+    pub dry_run: bool,
+    pub purge: bool,
+}
+
+/// Aggregate counters returned from a sync run. Tracks both real and
+/// dry-run paths so callers can render a single unified summary.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct SyncSummary {
+    /// Number of dungeons returned by `scrape_dungeon_list`.
+    pub dungeons_scraped: usize,
+    /// Emojis newly POSTed to Discord this run.
+    pub uploads_new: usize,
+    /// Emojis already present on Discord that we reused.
+    pub uploads_reused: usize,
+    /// Dry-run only: emojis we would have uploaded.
+    pub uploads_skipped_dry: usize,
+    /// Dry-run only: bot_emoji rows we would have upserted.
+    pub upserts_skipped_dry: usize,
+    /// Count of warnings emitted during the run (failed scrapes, failed
+    /// uploads, etc.). Each one is logged via `tracing::warn!` and also
+    /// pushed through the progress channel as a [`ProgressEvent::Warning`].
+    pub warnings: usize,
+}
+
+/// Progress events emitted by [`run_core`] while a sync is in flight.
+/// Consumers (e.g. the Discord ephemeral renderer) keep a rolling state
+/// machine and re-render on each event.
+#[derive(Debug, Clone)]
+pub enum ProgressEvent {
+    /// A new top-level phase started (e.g. "scraping dungeon list").
+    Phase(String),
+    /// Beginning work on a specific dungeon. `index` is 1-based.
+    DungeonStart {
+        name: String,
+        index: usize,
+        total: usize,
+    },
+    /// A non-fatal warning was emitted. `message` is the human-readable
+    /// log line minus the `tracing` prefix.
+    Warning(String),
+    /// One emoji was freshly uploaded to Discord.
+    UploadNew,
+    /// One emoji was already on Discord; we reused the existing ID.
+    UploadReused,
+    /// Dry-run only: one upload was skipped.
+    UploadSkipped,
+}
+
+/// Wrapper around an optional [`mpsc::Sender`] so call sites can emit
+/// progress events without `if let Some(tx) = …` plumbing. `try_send` is
+/// non-blocking: if the consumer falls behind we drop events rather than
+/// stalling the scrape (the final summary is the source of truth, the
+/// stream is best-effort).
+#[derive(Clone, Default)]
+pub struct Progress(Option<mpsc::Sender<ProgressEvent>>);
+
+impl Progress {
+    /// No-op sink for the CLI path where nobody is listening.
+    pub fn noop() -> Self {
+        Self(None)
+    }
+
+    /// Build a `(Progress, Receiver)` pair. The Discord command holds the
+    /// receiver and drives an ephemeral message edit loop from it.
+    pub fn channel() -> (Self, mpsc::Receiver<ProgressEvent>) {
+        let (tx, rx) = mpsc::channel(64);
+        (Self(Some(tx)), rx)
+    }
+
+    fn emit(&self, event: ProgressEvent) {
+        if let Some(tx) = &self.0 {
+            // Non-blocking: drop on full / closed. Final summary still
+            // reaches the caller through `run_core`'s return value.
+            let _ = tx.try_send(event);
+        }
+    }
 }
 
 enum UploadOutcome {
@@ -208,21 +288,35 @@ enum UploadOutcome {
     WouldUpload,
 }
 
-pub async fn run(dry_run: bool, purge: bool) -> Result<()> {
-    let config = Config::from_env()?;
+/// Helper used at every fallible side-effect inside `run_core` that we
+/// want to surface to a watching operator: log via `tracing::warn!`, bump
+/// the warning counter, and push a `Warning` event onto the progress
+/// channel. Centralising the three steps keeps every warn site honest.
+fn track_warn(progress: &Progress, summary: &mut SyncSummary, msg: String) {
+    warn!("{msg}");
+    summary.warnings += 1;
+    progress.emit(ProgressEvent::Warning(msg));
+}
 
-    // In dry-run we never touch the DB: no migrate, no writes.
-    // sync-wiki only writes `bot_emoji` (emoji mappings) + `data/wiki_dump.json`.
-    // Dungeon templates + reactions are seeded separately on bot boot from
-    // the dump + `data/dungeon_overrides.json` via `templates::load_and_seed`.
-    let pool = if dry_run {
+/// Core sync pipeline. Caller is responsible for loading config, opening
+/// (and migrating) the pool, and confirming any destructive flags. Returns
+/// a [`SyncSummary`] so the Discord command can render counts back to the
+/// operator without rescanning the run.
+///
+/// Pass `Progress::noop()` when nobody is listening (CLI path); pass a
+/// channel-backed `Progress` to receive a stream of [`ProgressEvent`]s for
+/// a live status display.
+pub async fn run_core(
+    config: &Config,
+    pool: Option<&PgPool>,
+    opts: SyncOptions,
+    progress: &Progress,
+) -> Result<SyncSummary> {
+    let SyncOptions { dry_run, purge } = opts;
+
+    if dry_run {
         info!("dry-run mode: no Discord POSTs and no DB writes will be performed");
-        None
-    } else {
-        let p = db::create_pool(&config.database_url).await?;
-        sqlx::migrate!("./migrations").run(&p).await?;
-        Some(p)
-    };
+    }
 
     let client = Client::builder()
         .user_agent(&config.realmeye_user_agent)
@@ -242,7 +336,8 @@ pub async fn run(dry_run: bool, purge: bool) -> Result<()> {
         if dry_run {
             info!("[dry-run] --purge would delete all application emojis and TRUNCATE bot_emoji");
         } else {
-            purge_all(&emoji_api, pool.as_ref()).await?;
+            progress.emit(ProgressEvent::Phase("purging existing emojis".into()));
+            purge_all_unprompted(&emoji_api, pool).await?;
         }
     }
 
@@ -250,6 +345,9 @@ pub async fn run(dry_run: bool, purge: bool) -> Result<()> {
     // new uploads succeed so the same logical emoji isn't uploaded twice in
     // a single run — e.g. `potion_of_wisdom` appears in many dungeons'
     // drops-of-interest tables and Discord 400s on duplicate names.
+    progress.emit(ProgressEvent::Phase(
+        "listing existing application emojis".into(),
+    ));
     info!("fetching existing application emojis…");
     let mut existing = emoji_api.list().await.unwrap_or_else(|e| {
         warn!("could not list application emojis: {e:#} — will attempt all uploads");
@@ -264,17 +362,29 @@ pub async fn run(dry_run: bool, purge: bool) -> Result<()> {
     // Bag tiers we've already uploaded an icon for this run.
     let mut uploaded_bag_tiers: HashSet<String> = HashSet::new();
 
+    progress.emit(ProgressEvent::Phase(
+        "scraping dungeon list from RealmEye".into(),
+    ));
     info!("scraping dungeon list from RealmEye wiki…");
     let dungeons = scrape_dungeon_list(&client).await?;
     info!("found {} dungeons", dungeons.len());
 
-    let mut summary = DrySummary::default();
+    let mut summary = SyncSummary {
+        dungeons_scraped: dungeons.len(),
+        ..Default::default()
+    };
     let mut dump = WikiDump {
         generated_at: Some(chrono::Utc::now()),
         dungeons: Vec::with_capacity(dungeons.len()),
     };
 
-    for dungeon in &dungeons {
+    let total_dungeons = dungeons.len();
+    for (idx, dungeon) in dungeons.iter().enumerate() {
+        progress.emit(ProgressEvent::DungeonStart {
+            name: dungeon.display_name.clone(),
+            index: idx + 1,
+            total: total_dungeons,
+        });
         info!("processing: {}", dungeon.display_name);
 
         let mut dump_dungeon = WikiDungeon {
@@ -302,12 +412,13 @@ pub async fn run(dry_run: bool, purge: bool) -> Result<()> {
                 url,
                 dry_run,
                 &mut summary,
+                progress,
             )
             .await
             {
                 Ok(UploadOutcome::Existing(emoji_id, animated))
                 | Ok(UploadOutcome::Uploaded(emoji_id, animated)) => {
-                    if let Some(pool) = &pool {
+                    if let Some(pool) = pool {
                         db::emoji::upsert(
                             pool,
                             &portal_emoji_name,
@@ -326,9 +437,13 @@ pub async fn run(dry_run: bool, purge: bool) -> Result<()> {
                     info!(
                         "[dry-run] would upsert bot_emoji name={portal_emoji_name} category=portal"
                     );
-                    summary.would_upsert_emoji += 1;
+                    summary.upserts_skipped_dry += 1;
                 }
-                Err(e) => warn!("portal emoji {portal_discord_name}: {e:#}"),
+                Err(e) => track_warn(
+                    progress,
+                    &mut summary,
+                    format!("portal emoji {portal_discord_name}: {e:#}"),
+                ),
             }
         }
 
@@ -348,12 +463,13 @@ pub async fn run(dry_run: bool, purge: bool) -> Result<()> {
                 url,
                 dry_run,
                 &mut summary,
+                progress,
             )
             .await
             {
                 Ok(UploadOutcome::Existing(emoji_id, animated))
                 | Ok(UploadOutcome::Uploaded(emoji_id, animated)) => {
-                    if let Some(pool) = &pool {
+                    if let Some(pool) = pool {
                         db::emoji::upsert(
                             pool,
                             &name,
@@ -370,9 +486,9 @@ pub async fn run(dry_run: bool, purge: bool) -> Result<()> {
                 }
                 Ok(UploadOutcome::WouldUpload) => {
                     info!("[dry-run] would upsert bot_emoji name={name} category=key");
-                    summary.would_upsert_emoji += 1;
+                    summary.upserts_skipped_dry += 1;
                 }
-                Err(e) => warn!("key emoji {dname}: {e:#}"),
+                Err(e) => track_warn(progress, &mut summary, format!("key emoji {dname}: {e:#}")),
             }
         }
 
@@ -380,7 +496,11 @@ pub async fn run(dry_run: bool, purge: bool) -> Result<()> {
         let details = match scrape_dungeon_page(&client, &dungeon.wiki_path).await {
             Ok(d) => d,
             Err(e) => {
-                warn!("failed to scrape {}: {e:#}", dungeon.display_name);
+                track_warn(
+                    progress,
+                    &mut summary,
+                    format!("failed to scrape {}: {e:#}", dungeon.display_name),
+                );
                 DungeonDetails { drop_items: vec![] }
             }
         };
@@ -408,14 +528,21 @@ pub async fn run(dry_run: bool, purge: bool) -> Result<()> {
             let bag_info = match &item.item_wiki_path {
                 Some(path) => {
                     if !item_page_cache.contains_key(&item.img_url) {
-                        let info = scrape_item_page(&client, path).await.unwrap_or_else(|e| {
-                            warn!("item page fetch {path} failed: {e:#}");
-                            ItemBagInfo {
-                                tier: None,
-                                bag_image_url: None,
-                                shiny_image_url: None,
+                        let info = match scrape_item_page(&client, path).await {
+                            Ok(info) => info,
+                            Err(e) => {
+                                track_warn(
+                                    progress,
+                                    &mut summary,
+                                    format!("item page fetch {path} failed: {e:#}"),
+                                );
+                                ItemBagInfo {
+                                    tier: None,
+                                    bag_image_url: None,
+                                    shiny_image_url: None,
+                                }
                             }
-                        });
+                        };
                         item_page_cache.insert(item.img_url.clone(), info);
                     }
                     item_page_cache.get(&item.img_url)
@@ -440,12 +567,13 @@ pub async fn run(dry_run: bool, purge: bool) -> Result<()> {
                         bag_url,
                         dry_run,
                         &mut summary,
+                        progress,
                     )
                     .await
                     {
                         Ok(UploadOutcome::Existing(id, animated))
                         | Ok(UploadOutcome::Uploaded(id, animated)) => {
-                            if let Some(pool) = &pool {
+                            if let Some(pool) = pool {
                                 db::emoji::upsert(
                                     pool,
                                     &bag_name,
@@ -465,10 +593,14 @@ pub async fn run(dry_run: bool, purge: bool) -> Result<()> {
                             info!(
                                 "[dry-run] would upsert bot_emoji name={bag_name} category=ui (bag icon for tier {tier})"
                             );
-                            summary.would_upsert_emoji += 1;
+                            summary.upserts_skipped_dry += 1;
                             uploaded_bag_tiers.insert(tier.to_string());
                         }
-                        Err(e) => warn!("bag icon {bag_dname}: {e:#}"),
+                        Err(e) => track_warn(
+                            progress,
+                            &mut summary,
+                            format!("bag icon {bag_dname}: {e:#}"),
+                        ),
                     }
                 }
             }
@@ -491,12 +623,13 @@ pub async fn run(dry_run: bool, purge: bool) -> Result<()> {
                 &item.img_url,
                 dry_run,
                 &mut summary,
+                progress,
             )
             .await
             {
                 Ok(UploadOutcome::Existing(emoji_id, animated))
                 | Ok(UploadOutcome::Uploaded(emoji_id, animated)) => {
-                    if let Some(pool) = &pool {
+                    if let Some(pool) = pool {
                         db::emoji::upsert(
                             pool,
                             &item.logical_name,
@@ -516,9 +649,9 @@ pub async fn run(dry_run: bool, purge: bool) -> Result<()> {
                         "[dry-run] would upsert bot_emoji name={} category={category} bag_tier={:?}",
                         item.logical_name, bag_tier
                     );
-                    summary.would_upsert_emoji += 1;
+                    summary.upserts_skipped_dry += 1;
                 }
-                Err(e) => warn!("drop emoji {dname}: {e:#}"),
+                Err(e) => track_warn(progress, &mut summary, format!("drop emoji {dname}: {e:#}")),
             }
 
             // If the item page has a shiny sprite, upload it as a
@@ -536,12 +669,13 @@ pub async fn run(dry_run: bool, purge: bool) -> Result<()> {
                     shiny_url,
                     dry_run,
                     &mut summary,
+                    progress,
                 )
                 .await
                 {
                     Ok(UploadOutcome::Existing(id, animated))
                     | Ok(UploadOutcome::Uploaded(id, animated)) => {
-                        if let Some(pool) = &pool {
+                        if let Some(pool) = pool {
                             db::emoji::upsert(
                                 pool,
                                 &shiny_logical,
@@ -564,13 +698,17 @@ pub async fn run(dry_run: bool, purge: bool) -> Result<()> {
                         info!(
                             "[dry-run] would upsert bot_emoji name={shiny_logical} category=drop_shiny bag_tier=shiny"
                         );
-                        summary.would_upsert_emoji += 1;
+                        summary.upserts_skipped_dry += 1;
                         dump_dungeon.drops.push(WikiEmoji {
                             logical_name: shiny_logical,
                             img_url: shiny_url.to_string(),
                         });
                     }
-                    Err(e) => warn!("shiny emoji {shiny_dname}: {e:#}"),
+                    Err(e) => track_warn(
+                        progress,
+                        &mut summary,
+                        format!("shiny emoji {shiny_dname}: {e:#}"),
+                    ),
                 }
             }
         }
@@ -592,9 +730,10 @@ pub async fn run(dry_run: bool, purge: bool) -> Result<()> {
         &client,
         &emoji_api,
         &mut existing,
-        pool.as_ref(),
+        pool,
         dry_run,
         &mut summary,
+        progress,
     )
     .await?;
     upload_catalogue(
@@ -604,12 +743,14 @@ pub async fn run(dry_run: bool, purge: bool) -> Result<()> {
         &client,
         &emoji_api,
         &mut existing,
-        pool.as_ref(),
+        pool,
         dry_run,
         &mut summary,
+        progress,
     )
     .await?;
 
+    progress.emit(ProgressEvent::Phase("writing wiki dump".into()));
     if !dry_run {
         dump.save()?;
         info!("wrote wiki dump → data/wiki_dump.json");
@@ -620,17 +761,89 @@ pub async fn run(dry_run: bool, purge: bool) -> Result<()> {
         );
     }
 
+    info!("sync-wiki complete");
+    Ok(summary)
+}
+
+/// CLI entry point used by `starship sync-wiki`. Loads config + opens (and
+/// migrates) the pool, prompts for `--purge` confirmation on stdin if
+/// requested, then defers to [`run_core`]. The Discord command does not
+/// reuse this function — it skips env loading (it has live `BotData`
+/// already) and uses a slash-command parameter for purge confirmation
+/// rather than stdin.
+pub async fn run(dry_run: bool, purge: bool) -> Result<()> {
+    let config = Config::from_env()?;
+
+    // In dry-run we never touch the DB: no migrate, no writes.
+    // sync-wiki only writes `bot_emoji` (emoji mappings) + `data/wiki_dump.json`.
+    // Dungeon templates + reactions are seeded separately on bot boot from
+    // the dump + `data/dungeon_overrides.json` via `templates::load_and_seed`.
+    let pool = if dry_run {
+        None
+    } else {
+        let p = db::create_pool(&config.database_url).await?;
+        sqlx::migrate!("./migrations").run(&p).await?;
+        Some(p)
+    };
+
+    // The CLI prompts on stdin before doing anything destructive. Dry-run
+    // logs the would-be action but skips the prompt — the operator hasn't
+    // committed to anything yet.
+    let purge_confirmed = if purge && !dry_run {
+        confirm_purge_via_stdin(&config).await?
+    } else {
+        purge
+    };
+
+    let opts = SyncOptions {
+        dry_run,
+        purge: purge_confirmed,
+    };
+    let progress = Progress::noop();
+    let summary = run_core(&config, pool.as_ref(), opts, &progress).await?;
+
     if dry_run {
         info!(
-            "[dry-run] summary: {} existing emojis reused, {} new uploads skipped, {} bot_emoji rows skipped",
-            summary.existing_reused,
-            summary.would_upload,
-            summary.would_upsert_emoji,
+            "[dry-run] summary: {} existing emojis reused, {} new uploads skipped, {} bot_emoji rows skipped, {} warnings",
+            summary.uploads_reused,
+            summary.uploads_skipped_dry,
+            summary.upserts_skipped_dry,
+            summary.warnings,
         );
     }
 
-    info!("sync-wiki complete");
     Ok(())
+}
+
+/// Interactive purge confirmation for the CLI path. Lists the application
+/// emojis we'd delete, then prompts `[y/N]`. Lives outside [`run_core`]
+/// because the Discord variant uses a typed parameter (`PURGE`) instead.
+async fn confirm_purge_via_stdin(config: &Config) -> Result<bool> {
+    use std::io::Write;
+
+    let client = Client::builder()
+        .user_agent(&config.realmeye_user_agent)
+        .build()?;
+    let emoji_api =
+        ApplicationEmojiClient::new(client, &config.discord_token, config.discord_application_id);
+
+    let existing = emoji_api.list().await.unwrap_or_else(|e| {
+        warn!("could not list application emojis for purge prompt: {e:#}");
+        HashMap::new()
+    });
+
+    print!(
+        "--purge will DELETE {} application emoji(s) and TRUNCATE bot_emoji. Proceed? [y/N] ",
+        existing.len()
+    );
+    std::io::stdout().flush().ok();
+    let mut answer = String::new();
+    std::io::stdin().read_line(&mut answer)?;
+    let confirmed = matches!(answer.trim().to_lowercase().as_str(), "y" | "yes");
+    if !confirmed {
+        info!("purge aborted by user");
+    }
+    Ok(confirmed)
 }
 
 // ---------------------------------------------------------------------------
@@ -645,6 +858,7 @@ pub async fn run(dry_run: bool, purge: bool) -> Result<()> {
 /// In dry-run mode, the function performs no writes and returns
 /// `UploadOutcome::WouldUpload` for new emojis (existing emojis still return
 /// their real ID so the dry-run log shows accurate reuse decisions).
+#[allow(clippy::too_many_arguments)]
 async fn upload_if_new(
     http: &Client,
     api: &ApplicationEmojiClient,
@@ -652,19 +866,20 @@ async fn upload_if_new(
     discord_name: &str,
     img_url: &str,
     dry_run: bool,
-    summary: &mut DrySummary,
+    summary: &mut SyncSummary,
+    progress: &Progress,
 ) -> Result<UploadOutcome> {
     if let Some(&(id, animated)) = existing.get(discord_name) {
         info!("skipping {discord_name} (already registered as {id})");
-        if dry_run {
-            summary.existing_reused += 1;
-        }
+        summary.uploads_reused += 1;
+        progress.emit(ProgressEvent::UploadReused);
         return Ok(UploadOutcome::Existing(id, animated));
     }
 
     if dry_run {
         info!("[dry-run] would upload emoji {discord_name} from {img_url}");
-        summary.would_upload += 1;
+        summary.uploads_skipped_dry += 1;
+        progress.emit(ProgressEvent::UploadSkipped);
         return Ok(UploadOutcome::WouldUpload);
     }
 
@@ -675,6 +890,9 @@ async fn upload_if_new(
 
     // Brief pause to stay under the application emoji rate limits.
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    summary.uploads_new += 1;
+    progress.emit(ProgressEvent::UploadNew);
 
     // TODO: overflow path — if we hit the 2000 application emoji cap, fall
     // back to uploading to a guild emoji server and set source_guild_id.
@@ -697,12 +915,18 @@ async fn upload_catalogue(
     existing: &mut std::collections::HashMap<String, (u64, bool)>,
     pool: Option<&sqlx::PgPool>,
     dry_run: bool,
-    summary: &mut DrySummary,
+    summary: &mut SyncSummary,
+    progress: &Progress,
 ) -> Result<()> {
+    progress.emit(ProgressEvent::Phase(format!("uploading {label} catalogue")));
     let entries = match scrape_result {
         Ok(v) => v,
         Err(e) => {
-            warn!("failed to scrape {label}: {e:#}");
+            track_warn(
+                progress,
+                summary,
+                format!("failed to scrape {label}: {e:#}"),
+            );
             return Ok(());
         }
     };
@@ -718,6 +942,7 @@ async fn upload_catalogue(
             &entry.img_url,
             dry_run,
             summary,
+            progress,
         )
         .await
         {
@@ -743,9 +968,9 @@ async fn upload_catalogue(
                     "[dry-run] would upsert bot_emoji name={} category={category} ({})",
                     entry.logical_name, entry.display_name
                 );
-                summary.would_upsert_emoji += 1;
+                summary.upserts_skipped_dry += 1;
             }
-            Err(e) => warn!("{label} emoji {dname}: {e:#}"),
+            Err(e) => track_warn(progress, summary, format!("{label} emoji {dname}: {e:#}")),
         }
     }
 
@@ -1366,29 +1591,23 @@ fn absolute_url(src: &str) -> String {
 // Purge: wipe every application emoji + every bot_emoji row.
 //
 // Used once after the apostrophe-slug fix so stale `oryx_s_*` names don't
-// linger on the Discord application. Interactive: prompts for Y/N before
-// touching anything. Never auto-invoked; gated behind --purge flag.
+// linger on the Discord application. The CLI gates this behind a stdin
+// Y/N prompt (see [`confirm_purge_via_stdin`]); the Discord command gates
+// it behind a slash-command parameter that must equal the literal string
+// "PURGE". Never auto-invoked.
 // ---------------------------------------------------------------------------
 
-async fn purge_all(emoji_api: &ApplicationEmojiClient, pool: Option<&sqlx::PgPool>) -> Result<()> {
-    use std::io::Write;
-
+/// Delete every application emoji this bot owns, then TRUNCATE
+/// `bot_emoji`. Caller is responsible for any UX confirmation — this
+/// function does not prompt.
+async fn purge_all_unprompted(
+    emoji_api: &ApplicationEmojiClient,
+    pool: Option<&sqlx::PgPool>,
+) -> Result<()> {
     let existing = emoji_api.list().await.unwrap_or_else(|e| {
         warn!("could not list application emojis for purge: {e:#}");
         HashMap::new()
     });
-
-    print!(
-        "--purge will DELETE {} application emoji(s) and TRUNCATE bot_emoji. Proceed? [y/N] ",
-        existing.len()
-    );
-    std::io::stdout().flush().ok();
-    let mut answer = String::new();
-    std::io::stdin().read_line(&mut answer)?;
-    if !matches!(answer.trim().to_lowercase().as_str(), "y" | "yes") {
-        info!("purge aborted by user");
-        return Ok(());
-    }
 
     info!("purging {} application emojis…", existing.len());
     for (name, (id, _animated)) in &existing {
